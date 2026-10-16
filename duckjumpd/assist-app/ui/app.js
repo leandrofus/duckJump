@@ -232,9 +232,9 @@ async function startSession(server, token, code) {
 }
 
 const ENDED = {
-  local: ["Asistencia finalizada", "Usted finalizó la asistencia. El técnico ya no tiene acceso a su equipo."],
-  server: ["Asistencia finalizada", "El técnico o el servidor cerraron la sesión."],
-  expired: ["La sesión ya no está disponible", "La sesión ya había finalizado o expiró. Pida un nuevo enlace a su técnico."],
+  local: ["Asistencia desconectada", "El técnico ya no tiene acceso a su equipo. Si necesita seguir, vuelva a abrir el enlace: sirve hasta que expire, con un código nuevo."],
+  server: ["Asistencia finalizada", "El técnico cerró la sesión o se perdió la conexión. Si fue un corte, vuelva a abrir el enlace."],
+  expired: ["El enlace ya no es válido", "El técnico cerró esta sesión o el enlace expiró. Pídale uno nuevo."],
   not_found: ["Código no válido", "El código o enlace de soporte no existe. Revise que lo haya copiado completo."],
 };
 

@@ -16,13 +16,11 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
-use duckjump_assist::{run_session, CancellationToken, EndReason, SessionConfig};
+use duckjump_assist::{run_session, CancellationToken, SessionConfig};
 use duckjump_assist_client::{identity, invite, sso, AccountType, AuthProviders, Gateway, Identity, Invite, LoginOutcome, SupportRequest, SupportSession, User};
 
 /// How often the gateway is asked whether the session still stands.
 const STATUS_EVERY: Duration = Duration::from_secs(3);
-/// How long closing the window waits to tell the gateway.
-const END_ON_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 type CmdResult<T> = Result<T, String>;
 
@@ -31,7 +29,6 @@ fn msg(e: impl std::fmt::Display) -> String {
 }
 
 struct Active {
-    server: String,
     token: String,
     cancel: CancellationToken,
 }
@@ -69,12 +66,19 @@ fn take_pending_invite(state: State<'_, AppState>) -> Option<Invite> {
 
 /// Links from the OS (at start, or forwarded by a second instance).
 fn open_links(app: &AppHandle, links: Vec<String>) {
-    let Some(link) = links.into_iter().find(|l| l.starts_with(invite::SCHEME)) else { return };
+    if let Some(link) = links.into_iter().find(|l| l.starts_with(invite::SCHEME)) {
+        open_invite(app, invite::parse_app_link(&link));
+    }
+}
+
+/// A session to join, from a link or from `--server … --token …` (the
+/// gateway's launch script): the window asks the user to confirm it.
+fn open_invite(app: &AppHandle, inv: Result<Invite, String>) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
-    match invite::parse_app_link(&link) {
+    match inv {
         Ok(inv) => {
             *app.state::<AppState>().pending_invite.lock().unwrap() = Some(inv.clone());
             let _ = app.emit("invite", inv);
@@ -157,7 +161,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, server: Strin
         if active.is_some() {
             return Err("ya hay una asistencia en curso".into());
         }
-        *active = Some(Active { server: server.clone(), token: token.clone(), cancel: cancel.clone() });
+        *active = Some(Active { token: token.clone(), cancel: cancel.clone() });
     }
 
     // Session events → window.
@@ -194,7 +198,7 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, server: Strin
 
     let run_app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let cfg = SessionConfig { server: server.clone(), token: token.clone(), code, width: 1280, height: 800 };
+        let cfg = SessionConfig { server, token: token.clone(), code, width: 1280, height: 800 };
         let result = run_session(cfg, tx, cancel.clone()).await;
         cancel.cancel(); // stops the status poll
         let state = run_app.state::<AppState>();
@@ -204,28 +208,19 @@ async fn start_session(app: AppHandle, state: State<'_, AppState>, server: Strin
                 *active = None;
             }
         }
+        // A disconnect does not end the session at the gateway: its link
+        // works again until it expires (with a new code).
         let payload = match result {
-            Ok(reason) => {
-                if reason == EndReason::Local {
-                    if let Ok(gw) = Gateway::new(&server) {
-                        let _ = gw.end_support(&token).await;
-                    }
-                }
-                json!({"type": "ended", "reason": reason})
-            }
-            Err(e) => {
-                if let Ok(gw) = Gateway::new(&server) {
-                    let _ = gw.end_support(&token).await;
-                }
-                json!({"type": "ended", "reason": "error", "error": format!("{e:#}")})
-            }
+            Ok(reason) => json!({"type": "ended", "reason": reason}),
+            Err(e) => json!({"type": "ended", "reason": "error", "error": format!("{e:#}")}),
         };
         let _ = run_app.emit("assist", payload);
     });
     Ok(())
 }
 
-/// The user's stop button: ends the session here and at the gateway.
+/// The user's stop button: disconnects this machine (the technician loses
+/// access at once; the link keeps working until it expires).
 #[tauri::command]
 async fn stop_session(state: State<'_, AppState>) -> CmdResult<()> {
     if let Some(a) = state.active.lock().await.as_ref() {
@@ -242,10 +237,15 @@ fn main() {
     tauri::Builder::default()
         // First: a second launch (opening a link) hands its link over to the
         // running app and exits.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.set_focus();
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            match invite::from_args(argv) {
+                Some(inv) => open_invite(app, inv),
+                None => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
+                    }
+                }
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
@@ -260,6 +260,8 @@ fn main() {
             let handle = app.handle().clone();
             if let Ok(Some(urls)) = app.deep_link().get_current() {
                 open_links(&handle, urls.iter().map(|u| u.to_string()).collect());
+            } else if let Some(inv) = invite::from_args(std::env::args()) {
+                open_invite(&handle, inv);
             }
             app.deep_link().on_open_url(move |ev| open_links(&handle, ev.urls().iter().map(|u| u.to_string()).collect()));
             Ok(())
@@ -278,15 +280,12 @@ fn main() {
             stop_session,
         ])
         .on_window_event(|window, event| {
-            // Closing the window is a stop too, and the gateway must know.
+            // Closing the window is a stop too.
             if let WindowEvent::CloseRequested { .. } = event {
                 let state = window.state::<AppState>();
                 let active = tauri::async_runtime::block_on(state.active.lock()).take();
                 if let Some(a) = active {
                     a.cancel.cancel();
-                    if let Ok(gw) = Gateway::new(&a.server) {
-                        let _ = tauri::async_runtime::block_on(tokio::time::timeout(END_ON_CLOSE_TIMEOUT, gw.end_support(&a.token)));
-                    }
                 }
             }
         })

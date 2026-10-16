@@ -32,12 +32,43 @@ pub fn parse_app_link(link: &str) -> Result<Invite, String> {
     let get = |k: &str| u.query_pairs().find(|(n, _)| n == k).map(|(_, v)| v.into_owned());
     let token = get("token").filter(|t| valid_token(t)).ok_or("el enlace no trae un token de soporte válido")?;
     let server = get("server").ok_or("el enlace no indica el servidor")?;
-    let su = Url::parse(&server).map_err(|_| "el servidor del enlace es inválido".to_string())?;
+    Ok(Invite { server: Some(server_origin(&server)?), token })
+}
+
+/// http(s)://host[:port] of a server named by a link or the command line.
+fn server_origin(server: &str) -> Result<String, String> {
+    let su = Url::parse(server).map_err(|_| "el servidor indicado es inválido".to_string())?;
     if (su.scheme() != "http" && su.scheme() != "https") || su.host_str().is_none() || !su.username().is_empty() {
-        return Err("el servidor del enlace debe ser http:// o https://".into());
+        return Err("el servidor debe ser http:// o https://".into());
     }
-    let origin = su.origin().ascii_serialization();
-    Ok(Invite { server: Some(origin), token })
+    Ok(su.origin().ascii_serialization())
+}
+
+/// `--server URL --token TOKEN` (or `--server=URL`), as the gateway's
+/// launcher starts the app. None when neither is given.
+pub fn from_args<I: IntoIterator<Item = String>>(args: I) -> Option<Result<Invite, String>> {
+    let (mut server, mut token) = (None, None);
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        let (key, inline) = match a.split_once('=') {
+            Some((k, v)) => (k.to_string(), Some(v.to_string())),
+            None => (a, None),
+        };
+        let slot = match key.as_str() {
+            "--server" | "-s" => &mut server,
+            "--token" | "-t" => &mut token,
+            _ => continue,
+        };
+        *slot = inline.or_else(|| it.next());
+    }
+    if server.is_none() && token.is_none() {
+        return None;
+    }
+    Some((|| {
+        let server = server.ok_or("falta --server")?;
+        let token = token.filter(|t| valid_token(t)).ok_or("falta un --token válido")?;
+        Ok(Invite { server: Some(server_origin(&server)?), token })
+    })())
 }
 
 pub fn parse(input: &str) -> Result<Invite, String> {
@@ -86,6 +117,20 @@ mod tests {
         assert!(parse("https://gw/support/join/../../x").is_err());
         assert!(parse("file:///support/join/abc").is_err());
         assert!(parse("tok en").is_err());
+    }
+
+    #[test]
+    fn command_line() {
+        let a = |v: &[&str]| from_args(v.iter().map(|s| s.to_string()));
+        assert_eq!(a(&["app"]), None);
+        assert_eq!(
+            a(&["app", "--server", "http://10.10.0.3:8088/", "--token", "084fb6"]),
+            Some(Ok(Invite { server: Some("http://10.10.0.3:8088".into()), token: "084fb6".into() }))
+        );
+        assert_eq!(a(&["app", "--server=https://gw", "--token=t"]).unwrap().unwrap().server.as_deref(), Some("https://gw"));
+        assert!(a(&["app", "--token", "t"]).unwrap().is_err());
+        assert!(a(&["app", "--server", "ftp://gw", "--token", "t"]).unwrap().is_err());
+        assert!(a(&["app", "--server", "http://gw", "--token"]).unwrap().is_err());
     }
 
     #[test]

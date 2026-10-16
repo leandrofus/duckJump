@@ -246,3 +246,24 @@ func (q *Queries) MarkSupportSessionConnected(ctx context.Context, arg MarkSuppo
 	)
 	return err
 }
+
+const releaseSupportSession = `-- name: ReleaseSupportSession :exec
+UPDATE config_support_sessions
+SET status = 'pending',
+    connected_at = NULL,
+    activated_at = NULL,
+    totp_secret = $1
+WHERE id = $2 AND status IN ('connected', 'active')
+`
+
+type ReleaseSupportSessionParams struct {
+	TotpSecret string
+	ID         string
+}
+
+// The agent went away: the link stays usable until it expires, under a new
+// verification code (the operator must hear it from the user again).
+func (q *Queries) ReleaseSupportSession(ctx context.Context, arg ReleaseSupportSessionParams) error {
+	_, err := q.db.ExecContext(ctx, releaseSupportSession, arg.TotpSecret, arg.ID)
+	return err
+}
