@@ -88,7 +88,7 @@ test-oidc: ## SSO tests against Keycloak in a container
 	@if [ -n "$(SKIP_OIDC)" ]; then echo "test-oidc: skipped (SKIP_OIDC)"; exit 0; fi; \
 	if ! command -v docker >/dev/null && ! command -v podman >/dev/null; then echo "test-oidc: skipped (no docker or podman)"; exit 0; fi; \
 	started=; \
-	if ! curl -fs $(KEYCLOAK_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1; then deploy/keycloak.sh start && started=1; fi; \
+	if ! curl -fs $(KEYCLOAK_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1; then deploy/keycloak.sh start || exit 1; started=1; fi; \
 	cd gateway && DUCKJUMP_TEST_KEYCLOAK=$(KEYCLOAK_ISSUER) go test -count=1 -run 'Keycloak' ./internal/server/; rc=$$?; \
 	cd .. && if [ -n "$$started" ]; then deploy/keycloak.sh stop; fi; exit $$rc
 
@@ -98,7 +98,7 @@ test-postgres: ## Gateway tests against PostgreSQL in a container
 	@if [ -n "$(SKIP_PG)" ]; then echo "test-postgres: skipped (SKIP_PG)"; exit 0; fi; \
 	if ! command -v docker >/dev/null && ! command -v podman >/dev/null; then echo "test-postgres: skipped (no docker or podman)"; exit 0; fi; \
 	started=; \
-	if ! (docker exec duckjump-postgres pg_isready -q || podman exec duckjump-postgres pg_isready -q) >/dev/null 2>&1; then deploy/postgres.sh start && started=1; fi; \
+	if ! (docker exec duckjump-postgres pg_isready -q || podman exec duckjump-postgres pg_isready -q) >/dev/null 2>&1; then deploy/postgres.sh start || exit 1; started=1; fi; \
 	cd gateway && DUCKJUMP_TEST_POSTGRES='$(POSTGRES_URL)' go test -count=1 ./internal/...; rc=$$?; \
 	cd .. && if [ -n "$$started" ]; then deploy/postgres.sh stop; fi; exit $$rc
 
@@ -108,7 +108,7 @@ test-s3: ## Recording storage tests against MinIO in a container
 	@if [ -n "$(SKIP_S3)" ]; then echo "test-s3: skipped (SKIP_S3)"; exit 0; fi; \
 	if ! command -v docker >/dev/null && ! command -v podman >/dev/null; then echo "test-s3: skipped (no docker or podman)"; exit 0; fi; \
 	started=; \
-	if ! curl -fs http://127.0.0.1:19000/minio/health/ready >/dev/null 2>&1; then deploy/minio.sh start && started=1; fi; \
+	if ! curl -fs http://127.0.0.1:19000/minio/health/ready >/dev/null 2>&1; then deploy/minio.sh start || exit 1; started=1; fi; \
 	eval "$$(deploy/minio.sh env)"; export DUCKJUMP_TEST_S3=1; \
 	(cd duckjumpd && cargo test -q -p duckjumpd s3 && cargo test -q -p duckjumpd --test daemon recording_moves_to_s3) && \
 	(cd gateway && go test -count=1 -run 'S3' ./internal/server/); rc=$$?; \
@@ -119,7 +119,7 @@ test-sftp: ## File transfer tests against OpenSSH in a container
 	@if [ -n "$(SKIP_SFTP)" ]; then echo "test-sftp: skipped (SKIP_SFTP)"; exit 0; fi; \
 	if ! command -v docker >/dev/null && ! command -v podman >/dev/null; then echo "test-sftp: skipped (no docker or podman)"; exit 0; fi; \
 	started=; \
-	if ! (exec 3<>/dev/tcp/127.0.0.1/12222) 2>/dev/null; then deploy/sshd.sh start && started=1; fi; \
+	if ! (exec 3<>/dev/tcp/127.0.0.1/12222) 2>/dev/null; then deploy/sshd.sh start || exit 1; started=1; fi; \
 	(cd duckjumpd && DUCKJUMP_TEST_SSH=127.0.0.1:12222 cargo test -q -p duckjumpd --test daemon sftp_session); rc=$$?; \
 	if [ -n "$$started" ]; then deploy/sshd.sh stop; fi; exit $$rc
 

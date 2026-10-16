@@ -1,25 +1,32 @@
-# On a version tag (v1.2.3, v1.2.3-rc1): run the tests, build the rpm/deb
-# packages and a tarball, and publish them as a GitHub release.
+# After ci passes on a version tag (v1.2.3, v1.2.3-rc1): build the rpm/deb
+# packages and a tarball, and publish them as a GitHub release. The tests are
+# not run again. workflow_run only fires for this file as it is on main.
 name: release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    uses: ./.github/workflows/ci.yml
-
   build:
-    needs: test
+    # For a tag push, head_branch is the tag name; ci runs on no branch but main.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ github.event.workflow_run.head_branch }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: gateway/go.mod
@@ -29,7 +36,7 @@ jobs:
           bun-version: 1.2.23
 
       - name: Version from the tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
       # UI, static Go binaries, Rust built in a Debian 11 container (glibc 2.31),
       # then rpm + deb with nfpm. Binaries land in dist/pkg, packages in dist/packages.
@@ -56,5 +63,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           pre=; case $VERSION in *-*) pre=--prerelease ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/packages/* \
+          gh release create "$TAG" dist/packages/* --repo "$GITHUB_REPOSITORY" \
             --title "duckJump $VERSION" --generate-notes --verify-tag $pre
