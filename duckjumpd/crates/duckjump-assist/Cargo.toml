@@ -22,6 +22,6 @@ hmac = "0.13"
 sha1 = "0.11"
 tokio-tungstenite = "0.30.0"
 x11rb = "0.14.0"
-ashpd = "0.13.13"
+ashpd = { version = "0.13.13", features = ["remote_desktop", "screencast"] }
 png = "0.18"
 enigo = "0.6.1"

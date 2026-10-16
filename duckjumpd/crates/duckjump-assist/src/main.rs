@@ -12,6 +12,7 @@ use crate::capture::ScreenCapturer;
 mod capture;
 mod input;
 mod totp;
+mod wayland;
 
 #[derive(Parser, Debug)]
 #[command(name = "duckjump-assist", about = "duckJump on-demand remote support agent")]
@@ -212,8 +213,51 @@ async fn main() -> anyhow::Result<()> {
     let last_rtt_writer = last_rtt_us.clone();
     let last_rtt_reader = last_rtt_us.clone();
 
-    let mut input_ctrl = input::InputController::new();
-    input_ctrl.set_enabled(true);
+    enum ActiveInputBackend {
+        X11(input::InputController),
+        Wayland(Arc<tokio::sync::Mutex<wayland::WaylandSession>>),
+    }
+
+    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+        || std::env::var("XDG_SESSION_TYPE").map(|s| s.to_lowercase() == "wayland").unwrap_or(false);
+
+    let (mut capturer, input_backend): (Box<dyn ScreenCapturer>, ActiveInputBackend) = if is_wayland {
+        println!("🚀 Sesión Wayland detectada. Inicializando Portal RemoteDesktop nativo...");
+        match wayland::WaylandSession::init().await {
+            Ok(wayland_sess) => {
+                let node_id = wayland_sess.node_id;
+                let w = wayland_sess.width;
+                let h = wayland_sess.height;
+                match wayland::WaylandPipeWireCapturer::start(node_id, w, h) {
+                    Ok(pw_cap) => {
+                        let sess_arc = Arc::new(tokio::sync::Mutex::new(wayland_sess));
+                        (Box::new(pw_cap), ActiveInputBackend::Wayland(sess_arc))
+                    }
+                    Err(e) => {
+                        eprintln!("\n❌ Error iniciando pipeline de captura PipeWire: {:#}\n", e);
+                        return Ok(());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("\n❌ Error en Portal Wayland: {:#}\n", e);
+                return Ok(());
+            }
+        }
+    } else {
+        println!("⚡ Sesión X11 detectada. Usando capturador de memoria directa X11...");
+        let cap = match capture::create_best_capturer(args.width, args.height) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("\n❌ {}\n", e);
+                return Ok(());
+            }
+        };
+        let mut ctrl = input::InputController::new();
+        ctrl.set_enabled(true);
+        (cap, ActiveInputBackend::X11(ctrl))
+    };
+    println!("🔍 [TRACE] Motor de captura inicializado: {}", capturer.name());
 
     let verified = Arc::new(AtomicBool::new(false));
     let verified_writer = verified.clone();
@@ -253,6 +297,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Display incoming events (input from operator + client render ACKs)
+    let mut input_backend_task = input_backend;
     let mut input_task = tokio::spawn(async move {
         while let Some(msg) = disp_read.next().await {
             match msg {
@@ -276,7 +321,14 @@ async fn main() -> anyhow::Result<()> {
                                     }
                                 }
                                 other => {
-                                    input_ctrl.handle_remote_input(other);
+                                    match &mut input_backend_task {
+                                        ActiveInputBackend::X11(ctrl) => {
+                                            ctrl.handle_remote_input(other);
+                                        }
+                                        ActiveInputBackend::Wayland(sess) => {
+                                            sess.lock().await.handle_remote_input(other).await;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -292,16 +344,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Main capture loop (Adaptive up to 60 FPS with real-time telemetry traces)
     println!("Presione Ctrl+C en cualquier momento para finalizar.");
-    let mut capturer = match capture::create_best_capturer(args.width, args.height) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("\n❌ {}\n", e);
-            return Ok(());
-        }
-    };
-    println!("🔍 [TRACE] Motor de captura inicializado: {}", capturer.name());
 
     let mut sent_initial = false;
     let mut frame_counter: u32 = 0;

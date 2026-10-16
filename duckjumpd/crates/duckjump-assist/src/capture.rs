@@ -29,7 +29,7 @@ pub trait ScreenCapturer: Send {
 
 /// Compares `fb.rgb` with `prev_rgb` in 64x64 blocks, coalescing only contiguous horizontal spans.
 /// Crucially, disjoint changed areas are NEVER collapsed into a full-screen bounding box.
-fn detect_damage(fb: &Framebuffer, prev_rgb: &mut Vec<u8>) -> Vec<Damage> {
+pub fn detect_damage(fb: &Framebuffer, prev_rgb: &mut Vec<u8>) -> Vec<Damage> {
     if prev_rgb.len() != fb.rgb.len() {
         *prev_rgb = fb.rgb.clone();
         return vec![Damage::Pixels {
