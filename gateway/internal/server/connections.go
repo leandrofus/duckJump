@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // openapi:schema ConnectionRequest
@@ -19,7 +20,7 @@ import (
 //   host: { type: string }
 //   port: { type: integer, minimum: 1, maximum: 65535, description: 'Defaults: ssh 22, rdp 3389, vnc 5900.' }
 //   folder_id: { type: [string, 'null'], format: uuid }
-//   site_id: { type: [string, 'null'], format: uuid, description: null means reachable directly from paltad. }
+//   site_id: { type: [string, 'null'], format: uuid, description: null means reachable directly from duckjumpd. }
 //   environment: { type: string, examples: [prod, staging, dev] }
 //   description: { type: string }
 //   tags: { type: array, items: { type: string, pattern: '^[a-z0-9][a-z0-9._-]{0,31}$' } }
@@ -123,8 +124,8 @@ func checkConnection(ctx context.Context, q *db.Queries, c *db.ConfigConnection)
 	if c.Host == "" {
 		return badRequest("host is required")
 	}
-	if c.Backend != "paltad" && c.Backend != "guacd" {
-		return badRequest("backend must be paltad or guacd")
+	if c.Backend != store.BackendNative && c.Backend != "guacd" {
+		return badRequest("backend must be duckjumpd or guacd")
 	}
 	if c.CredentialMode != "vault" && c.CredentialMode != "prompt" {
 		return badRequest("credential_mode must be vault or prompt")
@@ -225,7 +226,7 @@ func (s *Server) createConnection(w http.ResponseWriter, r *http.Request, p prin
 		Params: string(req.Params), Record: req.Record == nil || *req.Record, RecordInput: req.RecordInput,
 	}
 	if c.Backend == "" {
-		c.Backend = "paltad"
+		c.Backend = store.BackendNative
 	}
 	if c.CredentialMode == "" {
 		c.CredentialMode = "vault"
@@ -406,7 +407,9 @@ func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request, p prin
 
 // openapi:operation
 // summary: Forget the pinned host key
-// description: The next session pins whatever key the host presents (trust on first use).
+// description: >-
+//   The next session reports the key the host presents, to be approved (or,
+//   with trust on first use, pins it).
 // tags: [connections]
 // responses:
 //   '204': { description: Host key cleared }
@@ -430,6 +433,55 @@ func (s *Server) clearHostKey(w http.ResponseWriter, r *http.Request, p principa
 		}
 		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.host_key_cleared", ObjectType: "connection", ObjectID: id,
 			Details: map[string]any{"name": c.Name, "previous": old}})
+	})
+	if err != nil {
+		return err
+	}
+	return noContent(w)
+}
+
+// openapi:schema ApproveHostKeyRequest
+// type: object
+// required: [fingerprint]
+// additionalProperties: false
+// properties:
+//   fingerprint: { type: string, pattern: '^SHA256:', description: 'The key to pin, as checked on the server itself (ssh-keygen -lf, or the certificate key for RDP and VNC). Usually the host_key_pending value.' }
+
+type approveHostKeyRequest struct {
+	Fingerprint string `json:"fingerprint"`
+}
+
+// openapi:operation
+// summary: Approve (pin) a host key
+// description: >-
+//   Pins the fingerprint as the key sessions must find on the server. Use it
+//   after comparing host_key_pending with the key shown on the server itself,
+//   or to pin a known key up front. Replaces a pinned key.
+// tags: [connections]
+// requestBody: { schema: ApproveHostKeyRequest }
+// responses:
+//   '204': { description: Host key pinned }
+
+func (s *Server) approveHostKey(w http.ResponseWriter, r *http.Request, p principal) error {
+	var req approveHostKeyRequest
+	if err := decode(r, &req); err != nil {
+		return err
+	}
+	fp := strings.TrimSpace(req.Fingerprint)
+	if !strings.HasPrefix(fp, "SHA256:") || len(fp) < 20 || len(fp) > 200 {
+		return badRequest("fingerprint must look like SHA256:...")
+	}
+	ctx, id := r.Context(), r.PathValue("id")
+	err := s.tx(ctx, func(q *db.Queries) error {
+		c, err := q.GetConnection(ctx, id)
+		if err != nil {
+			return fromStore(err, "connection")
+		}
+		if _, err := q.ApproveHostKey(ctx, db.ApproveHostKeyParams{ID: id, HostKey: store.NullString(fp), Now: store.Now()}); err != nil {
+			return err
+		}
+		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.host_key_approved", ObjectType: "connection", ObjectID: id,
+			Details: map[string]any{"name": c.Name, "fingerprint": fp, "previous": c.HostKey.String, "was_pending": c.HostKeyPending.String == fp}})
 	})
 	if err != nil {
 		return err

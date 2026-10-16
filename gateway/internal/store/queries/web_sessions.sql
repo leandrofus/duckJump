@@ -9,7 +9,7 @@ SELECT * FROM config_web_sessions WHERE id_hash = @id_hash;
 UPDATE config_web_sessions SET last_seen_at = @now WHERE id_hash = @id_hash;
 
 -- name: CompleteWebSessionMFA :exec
-UPDATE config_web_sessions SET mfa_pending = 0, last_seen_at = @now WHERE id_hash = @id_hash;
+UPDATE config_web_sessions SET mfa_pending = false, last_seen_at = @now WHERE id_hash = @id_hash;
 
 -- name: DeleteWebSession :exec
 DELETE FROM config_web_sessions WHERE id_hash = @id_hash;

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/leandrofus/palta/gateway/internal/server/ui"
+	"github.com/leandrofus/duckjump/gateway/internal/server/ui"
 )
 
 //go:embed web/index.html

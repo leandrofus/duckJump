@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds the rpm and deb packages (amd64) into dist/packages:
-#   duckjump        gateway + paltad + RDP worker, systemd services
+#   duckjump        gateway + duckjumpd + RDP worker, systemd services
 #   duckjump-agent  edge agent, systemd service
 # Go builds static (CGO off). Rust builds in a Debian 11 container so the
 # binaries need only glibc 2.31: RHEL/Rocky/Alma 9+, Debian 11+, Ubuntu 22.04+.
@@ -17,23 +17,23 @@ mkdir -p "$OUT" dist/packages dist/build
 echo "→ UI"
 make -s web >/dev/null
 
-echo "→ palta-gw, palta-agent (Go, static)"
+echo "→ duckjump-gw, duckjump-agent (Go, static)"
 (cd gateway &&
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$OUT/palta-gw" ./cmd/palta-gw &&
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$OUT/palta-agent" ./cmd/palta-agent)
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$OUT/duckjump-gw" ./cmd/duckjump-gw &&
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$OUT/duckjump-agent" ./cmd/duckjump-agent)
 
-echo "→ paltad, paltad-rdp (Rust, $RUST_IMAGE)"
+echo "→ duckjumpd, duckjumpd-rdp (Rust, $RUST_IMAGE)"
 mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
 $ENGINE run --rm --security-opt label=disable \
 	-v "$PWD:/src" -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git" \
 	-w /src "$RUST_IMAGE" sh -euc '
-		cargo build --release --locked --manifest-path paltad/Cargo.toml --target-dir dist/build/target
-		cargo build --release --locked --manifest-path paltad/rdp/Cargo.toml --target-dir dist/build/target-rdp
-		strip dist/build/target/release/paltad dist/build/target-rdp/release/paltad-rdp'
-cp dist/build/target/release/paltad dist/build/target-rdp/release/paltad-rdp "$OUT/"
+		cargo build --release --locked --manifest-path duckjumpd/Cargo.toml --target-dir dist/build/target
+		cargo build --release --locked --manifest-path duckjumpd/rdp/Cargo.toml --target-dir dist/build/target-rdp
+		strip dist/build/target/release/duckjumpd dist/build/target-rdp/release/duckjumpd-rdp'
+cp dist/build/target/release/duckjumpd dist/build/target-rdp/release/duckjumpd-rdp "$OUT/"
 
 # guard: highest glibc symbol version the Rust binaries need
-for f in "$OUT/paltad" "$OUT/paltad-rdp"; do
+for f in "$OUT/duckjumpd" "$OUT/duckjumpd-rdp"; do
 	max=$(strings "$f" | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n -u | tail -1)
 	echo "  $f needs $max"
 	case $max in GLIBC_2.3[2-9] | GLIBC_2.[4-9]*) echo "glibc too new: $max" >&2; exit 1 ;; esac

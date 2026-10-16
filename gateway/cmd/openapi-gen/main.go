@@ -230,7 +230,12 @@ func buildOperation(r route, path string, block string) (map[string]any, error) 
 		op["parameters"] = params
 	}
 
-	if rb, ok := op["requestBody"].(map[string]any); ok {
+	if rb, ok := op["requestBody"].(map[string]any); ok && rb["content"] != nil {
+		// Explicit content (non-JSON bodies, e.g. file uploads): as written.
+		if _, has := rb["required"]; !has {
+			rb["required"] = true
+		}
+	} else if ok {
 		sch, has := rb["schema"]
 		if !has {
 			return nil, fmt.Errorf("requestBody needs schema")
@@ -301,7 +306,7 @@ func buildOperation(r route, path string, block string) (map[string]any, error) 
 		for i, x := range r.roles {
 			roles[i] = x
 		}
-		op["x-palta-roles"] = roles
+		op["x-duckjump-roles"] = roles
 		note := "Roles: " + strings.Join(r.roles, ", ") + "."
 		if d, ok := op["description"].(string); ok && d != "" {
 			op["description"] = strings.TrimRight(d, "\n") + "\n\n" + note
@@ -309,7 +314,7 @@ func buildOperation(r route, path string, block string) (map[string]any, error) 
 			op["description"] = note
 		}
 	case accessPending:
-		op["x-palta-mfa-pending-allowed"] = true
+		op["x-duckjump-mfa-pending-allowed"] = true
 	}
 	return op, nil
 }

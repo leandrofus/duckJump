@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/leandrofus/palta/gateway/internal/auth"
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/auth"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // openapi:schema CreateUserRequest
@@ -201,6 +201,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, p principal)
 		if req.Email.Set {
 			next.Email = req.Email.V
 			changes["email"] = next.Email
+		}
+		if req.Role.Set && req.Role.V != u.Role && u.Source == "oidc" && s.OIDC != nil && s.OIDC.RolesClaim != "" {
+			return conflict("the role of %s comes from the identity provider (%s)", u.Username, s.OIDC.RolesClaim)
 		}
 		if req.Role.Set {
 			if !roles[req.Role.V] {

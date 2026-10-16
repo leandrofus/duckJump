@@ -21,7 +21,7 @@ cat <<'MSG'
 duckjump-agent is installed. To connect it:
   1. In DuckJump: Sites → New site (edge agent), copy the token
   2. sudo sh -c 'umask 077; echo TOKEN > /etc/duckjump-agent/token'
-  3. Set PALTA_AGENT_SERVER and PALTA_AGENT_ALLOW in /etc/duckjump-agent/agent.env
+  3. Set DUCKJUMP_AGENT_SERVER and DUCKJUMP_AGENT_ALLOW in /etc/duckjump-agent/agent.env
   4. sudo systemctl restart duckjump-agent   (logs: journalctl -u duckjump-agent -f)
 
 MSG

@@ -1,11 +1,14 @@
 import { t } from '../i18n'
 import { useEffect, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, FolderInput } from 'lucide-react'
+import { FilesPanel } from '../components/FilesPanel'
 import type { PortalConnection } from '../lib/api'
 import { useResource } from '../lib/store'
 import { usePref } from '../lib/prefs'
 import { href } from '../lib/router'
-import { getMe } from '../lib/session'
+import { getMe, isAdmin } from '../lib/session'
+import { api, enc } from '../lib/api'
+import { confirm, toast } from '../ui/overlays'
 import { Spinner } from '../ui/common'
 import { TerminalSession } from '../components/Terminal'
 import { RemoteSession } from '../components/RemoteSession'
@@ -32,6 +35,29 @@ export function SessionView({ id }: { id: string }) {
         ? t('The server needs your credentials before the session starts (it requires NLA).')
         : code === 'auth_failed' ? t('Wrong username or password, or the account may not sign in remotely.') : reason,
     })
+  // A server key nobody approved: admins can check it and approve it here.
+  const [attempt, setAttempt] = useState(0)
+  const [files, setFiles] = useState(false)
+  const unverifiedKey = async (fp: string) => {
+    if (!isAdmin()) return
+    const ok = await confirm({
+      title: t('Approve the key of {0}?', c?.name ?? id),
+      body: (<>
+        <p>{t('The server presented this key. Compare it with the key on the server itself before approving it: a different key means someone may be intercepting the connection.')}</p>
+        <p className="mono small">{fp}</p>
+        <p className="help">{t('SSH: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the server. RDP and VNC: the fingerprint of its TLS certificate.')}</p>
+      </>),
+      confirm: t('Approve and connect'),
+    })
+    if (!ok) return
+    try {
+      await api.put(`/connections/${enc(id)}/host-key`, { fingerprint: fp })
+      toast.ok(t('Key approved'))
+      setAttempt((n) => n + 1)
+    } catch (e) {
+      toast.err(e)
+    }
+  }
   useEffect(() => {
     if (!c) return
     document.title = `${c.name} · DuckJump`
@@ -56,6 +82,12 @@ export function SessionView({ id }: { id: string }) {
         <ChevronRight size={13} />
         {c?.folder_path && (<><span className="muted">{c.folder_path}</span><ChevronRight size={13} /></>)}
         <span>{c?.name ?? id}</span>
+        {c && (c.can_upload || c.can_download) && (
+          <>
+            <span className="grow" />
+            <button className={`btn btn-sm${files ? ' on' : ''}`} onClick={() => setFiles(!files)}><FolderInput size={14} /> {t('Files')}</button>
+          </>
+        )}
       </div>
       {ask && c && (
         <CredentialsDialog title={c.name} protocol={c.protocol} reason={ask.reason} initial={creds && { ...creds, password: '' }}
@@ -65,9 +97,12 @@ export function SessionView({ id }: { id: string }) {
       {c?.credentials === 'prompt' && !creds ? (
         <div className="terminal session-terminal waiting">{!ask && <button className="btn btn-primary" onClick={() => setAsk({})}>{t('Enter credentials')}</button>}</div>
       ) : c?.protocol === 'vnc' || c?.protocol === 'rdp' ? (
-        <RemoteSession connectionId={id} title={c.name} recorded={c.record} protocol={c.protocol} credentials={creds} onNeedCredentials={needCredentials} />
+        <RemoteSession key={attempt} connectionId={id} title={c.name} recorded={c.record} protocol={c.protocol} credentials={creds} onNeedCredentials={needCredentials} onUnverifiedKey={unverifiedKey} />
       ) : (
-        <TerminalSession connectionId={id} title={c?.name ?? id} recorded={c?.record ?? true} credentials={creds} onNeedCredentials={needCredentials} />
+        <div className="session-with-files">
+          <TerminalSession key={attempt} connectionId={id} title={c?.name ?? id} recorded={c?.record ?? true} credentials={creds} onNeedCredentials={needCredentials} onUnverifiedKey={unverifiedKey} />
+          {files && c && <FilesPanel conn={c} credentials={creds && { username: creds.username, password: creds.password }} onClose={() => setFiles(false)} />}
+        </div>
       )}
     </div>
   )

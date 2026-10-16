@@ -8,14 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 func TestParseAllow(t *testing.T) {
@@ -41,10 +40,11 @@ func TestParseAllow(t *testing.T) {
 func TestRelayThroughAgent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	st, closeDB, err := store.OpenTemp(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer closeDB()
 	tok := NewToken()
 	site := store.NewID()
 	if err := st.Q.CreateSite(ctx, db.CreateSiteParams{

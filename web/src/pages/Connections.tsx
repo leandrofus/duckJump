@@ -159,6 +159,8 @@ export function connectionActions(c: Connection): MenuEntry[] {
     { label: t('Connect'), icon: <TerminalSquare size={14} />, onClick: () => go('session', c.id) },
     'sep',
     { label: t('Copy host'), icon: <Copy size={14} />, onClick: () => copy(`${c.host}:${c.port}`) },
+    c.host_key_pending && { label: t('Approve pending key…'), icon: <Fingerprint size={14} />, onClick: () => approveHostKey(c, c.host_key_pending!) },
+    { label: c.host_key ? t('Replace host key…') : t('Pin a host key…'), icon: <Fingerprint size={14} />, onClick: () => pinHostKey(c) },
     c.host_key && { label: t('Forget host key…'), icon: <Fingerprint size={14} />, onClick: () => forgetHostKey(c) },
     {
       label: t('Delete'), icon: <Trash2 size={14} />, danger: true, onClick: async () => {
@@ -169,8 +171,28 @@ export function connectionActions(c: Connection): MenuEntry[] {
   ]
 }
 
+async function approveHostKey(c: Connection, fp: string) {
+  const ok = await confirm({
+    title: t('Approve the key of {0}?', c.name),
+    body: (<>
+      <p>{t('The server presented this key. Compare it with the key on the server itself before approving it: a different key means someone may be intercepting the connection.')}</p>
+      <p className="mono small">{fp}</p>
+    </>),
+    confirm: t('Approve'),
+  })
+  if (!ok) return
+  api.put(`/connections/${c.id}/host-key`, { fingerprint: fp }).then(() => (invalidate('/connections'), toast.ok(t('Key approved'))), toast.err)
+}
+
+async function pinHostKey(c: Connection) {
+  const fp = await prompt({ title: t('Pin a host key for {0}', c.name), label: t('Fingerprint'), placeholder: 'SHA256:…', confirm: t('Pin'),
+    help: t('As shown on the server itself, e.g. ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub. Sessions then accept only this key.') })
+  if (!fp) return
+  api.put(`/connections/${c.id}/host-key`, { fingerprint: fp.trim() }).then(() => (invalidate('/connections'), toast.ok(t('Key pinned'))), toast.err)
+}
+
 async function forgetHostKey(c: Connection) {
-  if (!(await confirm({ title: t('Forget the host key of {0}?', c.name), body: t('The next session trusts whatever key the host presents and pins it. Do it only if you know why the key changed.'), confirm: t('Forget') }))) return
+  if (!(await confirm({ title: t('Forget the host key of {0}?', c.name), body: t('The next session reports whatever key the host presents, and waits for an admin to approve it. Do it only if you know why the key changed.'), confirm: t('Forget') }))) return
   api.del(`/connections/${c.id}/host-key`).then(() => (invalidate('/connections'), toast.ok(t('Host key cleared'))), toast.err)
 }
 
@@ -208,11 +230,17 @@ function ConnectionDrawer({ id, onClose }: { id: string; onClose: () => void }) 
           <Section title={t('Properties')}>
             <Props items={[
               [t('Host'), <span className="mono">{c.host}:{c.port}</span>, () => [{ label: t('Copy'), onClick: () => copy(`${c.host}:${c.port}`) }]],
-              [t('Site'), c.site_id ? sites.map.get(c.site_id)?.name ?? c.site_id : t('direct (reachable from paltad)')],
+              [t('Site'), c.site_id ? sites.map.get(c.site_id)?.name ?? c.site_id : t('direct (reachable from duckjumpd)')],
               [t('Credential'), c.secret_id ? (<span className="row gap"><KeyRound size={13} /> {secrets.map.get(c.secret_id)?.name ?? '?'} <span className="muted small">({secrets.map.get(c.secret_id)?.username})</span></span>) : <span className="tone-warn">{t('none: sessions will fail')}</span>],
               [t('Credential mode'), c.credential_mode === 'vault' ? t('injected from the vault') : t('asked at connect time')],
               [t('Session recording'), c.record ? (c.record_input ? t('output and keystrokes') : t('output')) : t('off')],
-              [t('Host key'), c.host_key ? <span className="mono small">{c.host_key}</span> : <span className="muted">{t('not pinned yet (trust on first use)')}</span>],
+              [t('Host key'), c.host_key ? <span className="mono small">{c.host_key}</span> : c.host_key_pending ? (
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span className="tone-warn">{t('waiting for approval:')}</span>
+                  <span className="mono small">{c.host_key_pending}</span>
+                  <span><button className="btn btn-sm" onClick={() => approveHostKey(c, c.host_key_pending!)}><Fingerprint size={13} /> {t('Verify and approve…')}</button></span>
+                </span>
+              ) : <span className="muted">{t('not pinned yet: the first session asks for approval')}</span>],
               [t('Backend'), c.backend],
               [t('Updated'), <span title={dateTime(c.updated_at)}>{ago(c.updated_at)}</span>],
             ]} />
@@ -266,6 +294,7 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
   })
   const initialParams = (initial?.params ?? {}) as { domain?: string; security?: string }
   const [rdp, setRdp] = useState({ domain: initialParams.domain ?? '', security: initialParams.security ?? 'any' })
+  const [vncSecurity, setVncSecurity] = useState(initialParams.security ?? 'any')
   const [busy, setBusy] = useState(false)
   const set = (p: Partial<typeof v>) => setV({ ...v, ...p })
   const save = async () => {
@@ -275,7 +304,8 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
       folder_id: v.folder_id || null, site_id: v.site_id || null,
       credential_mode: v.credential_mode, secret_id: v.credential_mode === 'prompt' ? null : v.secret_id || null,
       environment: v.environment.trim(), description: v.description.trim(), tags: v.tags, record: v.record, record_input: v.record_input,
-      params: v.protocol === 'rdp' ? { ...(initial?.params ?? {}), domain: rdp.domain.trim(), security: rdp.security } : (initial?.params ?? {}),
+      params: v.protocol === 'rdp' ? { ...(initial?.params ?? {}), domain: rdp.domain.trim(), security: rdp.security }
+        : v.protocol === 'vnc' ? { ...(initial?.params ?? {}), security: vncSecurity } : (initial?.params ?? {}),
     }
     try {
       const saved = initial ? await api.patch<Connection>(`/connections/${initial.id}`, body) : await api.post<Connection>('/connections', body)
@@ -306,7 +336,7 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
         <Field label={t('Folder')}><FolderSelect folders={folders.rows} value={v.folder_id} onChange={(x) => set({ folder_id: x })} /></Field>
         <Field label={t('Site')} help={t('Hosts behind an edge agent belong to an agent site.')}>
           <select value={v.site_id} onChange={(e) => set({ site_id: e.target.value })}>
-            <option value="">{t('(direct: reachable from paltad)')}</option>
+            <option value="">{t('(direct: reachable from duckjumpd)')}</option>
             {sites.rows.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.kind === 'agent' ? t('agent') : t('direct')})</option>)}
           </select>
         </Field>
@@ -333,6 +363,14 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
               </select>
             </Field>
           </>
+        )}
+        {v.protocol === 'vnc' && (
+          <Field label={t('Security')} help={t('TLS uses VeNCrypt with an X.509 certificate (TigerVNC, x11vnc -ssl…); its key is pinned like an SSH host key. Plain VNC sends the screen and keystrokes unencrypted.')}>
+            <select value={vncSecurity} onChange={(e) => setVncSecurity(e.target.value)}>
+              <option value="any">{t('TLS when the server offers it')}</option>
+              <option value="tls">{t('TLS only')}</option>
+            </select>
+          </Field>
         )}
         <Field label={t('Environment')}><input value={v.environment} placeholder="prod" onChange={(e) => set({ environment: e.target.value })} /></Field>
         <Field label={t('Tags')} span help={t('Access can be granted on a tag: it then covers every connection carrying it.')}><TagsInput value={v.tags} onChange={(tags) => set({ tags })} /></Field>

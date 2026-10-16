@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // GrantedConnections lists the connections a user may open.
@@ -42,6 +42,31 @@ func (s *Store) CanViewRecordings(ctx context.Context, userID, connID string) (b
 	}
 	for _, p := range ps {
 		if p.CanViewRecordings {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// CanUpload reports whether any unexpired grant on the connection allows
+// sending files to it.
+func (s *Store) CanUpload(ctx context.Context, userID, connID string) (bool, error) {
+	return s.anyGrant(ctx, userID, connID, func(p db.ConfigPolicy) bool { return p.CanUpload })
+}
+
+// CanDownload reports whether any unexpired grant on the connection allows
+// taking files from it.
+func (s *Store) CanDownload(ctx context.Context, userID, connID string) (bool, error) {
+	return s.anyGrant(ctx, userID, connID, func(p db.ConfigPolicy) bool { return p.CanDownload })
+}
+
+func (s *Store) anyGrant(ctx context.Context, userID, connID string, ok func(db.ConfigPolicy) bool) (bool, error) {
+	ps, err := s.Grants(ctx, userID, connID)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range ps {
+		if ok(p) {
 			return true, nil
 		}
 	}

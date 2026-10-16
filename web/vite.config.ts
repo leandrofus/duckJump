@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // `bun run dev` proxies the API (and session WebSockets) to a running
-// `palta-gw serve` on :8088 (deploy/dev.sh). `bun run build` writes into the
+// `duckjump-gw serve` on :8088 (deploy/dev.sh). `bun run build` writes into the
 // gateway, which embeds the result.
 export default defineConfig({
   plugins: [react()],

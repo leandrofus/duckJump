@@ -3,12 +3,12 @@ package server
 import (
 	"net/http"
 
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // openapi:schema PortalConnection
 // type: object
-// required: [id, name, protocol, environment, description, folder_path, tags, record, credentials]
+// required: [id, name, protocol, environment, description, folder_path, tags, record, credentials, can_upload, can_download]
 // properties:
 //   id: { type: string, format: uuid }
 //   name: { type: string }
@@ -19,6 +19,8 @@ import (
 //   tags: { type: array, items: { type: string } }
 //   record: { type: boolean, description: Sessions are recorded; the UI tells the user. }
 //   credentials: { type: string, enum: [vault, prompt, none], description: 'vault: injected, nothing to ask. prompt: ask the user before connecting. none: try without; the server may answer credentials_required.' }
+//   can_upload: { type: boolean, description: May send files from the tray to this host. }
+//   can_download: { type: boolean, description: May take files from this host into the tray. }
 
 type portalConnectionDTO struct {
 	ID          string   `json:"id"`
@@ -30,6 +32,8 @@ type portalConnectionDTO struct {
 	Tags        []string `json:"tags"`
 	Record      bool     `json:"record"`
 	Credentials string   `json:"credentials"`
+	CanUpload   bool     `json:"can_upload"`
+	CanDownload bool     `json:"can_download"`
 }
 
 // openapi:operation
@@ -98,7 +102,17 @@ func (s *Server) portalConnections(w http.ResponseWriter, r *http.Request, p pri
 		case c.CredentialMode == "prompt" || c.Protocol == "ssh":
 			creds = "prompt"
 		}
-		out = append(out, portalConnectionDTO{c.ID, c.Name, c.Protocol, c.Environment, c.Description, path(c.FolderID.String), t, c.Record, creds})
+		up, down := p.Dev, p.Dev
+		if !p.Dev && c.Protocol == "ssh" {
+			grants, err := s.Store.Grants(ctx, p.User.ID, c.ID)
+			if err != nil {
+				return err
+			}
+			for _, g := range grants {
+				up, down = up || g.CanUpload, down || g.CanDownload
+			}
+		}
+		out = append(out, portalConnectionDTO{c.ID, c.Name, c.Protocol, c.Environment, c.Description, path(c.FolderID.String), t, c.Record, creds, up, down})
 	}
 	return ok(w, out)
 }

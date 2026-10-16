@@ -1,6 +1,6 @@
 #!/bin/sh
 # duckjump: administration CLI (users, credentials, connections, grants).
-# Runs palta-gw as the service user against the service's database, e.g.:
+# Runs duckjump-gw as the service user against the service's database, e.g.:
 #   sudo duckjump user -name ana -password '...' -role admin
 set -e
 if [ "$(id -u)" != 0 ]; then
@@ -10,8 +10,11 @@ fi
 case "${1:-}" in
 serve) echo "the gateway runs as a service: systemctl status duckjump" >&2; exit 2 ;;
 esac
-PALTA_DB=/var/lib/duckjump/palta.db
-PALTA_MASTER_KEY=$(cat /etc/duckjump/master.key)
-export PALTA_DB PALTA_MASTER_KEY
+# The database the service uses: DUCKJUMP_DB from duckjump.env (PostgreSQL after
+# migrate-to-postgres), else the SQLite file.
+DUCKJUMP_DB=$(sed -n 's/^DUCKJUMP_DB=//p' /etc/duckjump/duckjump.env 2>/dev/null | tail -n 1)
+DUCKJUMP_DB=${DUCKJUMP_DB:-/var/lib/duckjump/duckjump.db}
+DUCKJUMP_MASTER_KEY=$(cat /etc/duckjump/master.key)
+export DUCKJUMP_DB DUCKJUMP_MASTER_KEY
 cd /var/lib/duckjump
-exec runuser -u duckjump -- /usr/libexec/duckjump/palta-gw "$@"
+exec runuser -u duckjump -- /usr/libexec/duckjump/duckjump-gw "$@"

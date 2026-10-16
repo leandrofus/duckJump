@@ -17,15 +17,32 @@ import (
 	"strings"
 	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/objstore"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
-// Recording files live in RecordingsDir, written by paltad: "<id>.cast"
+// Recording files live in RecordingsDir, written by duckjumpd: "<id>.cast"
 // (terminal sessions, asciicast) or "<id>.gfx" (graphical sessions) while
 // the session runs, gzipped to "<id>.cast.gz" / "<id>.gfx.gz" once it ends.
 
 const retentionKey = "recordings.retention_days"
+
+// recordingsConfigured: recordings can be found somewhere (disk or bucket).
+func (s *Server) recordingsConfigured() bool { return s.RecordingsDir != "" || s.Objects != nil }
+
+// recordingSize is the stored size of a recording: on disk (still being
+// written, or a shared directory) or in the bucket.
+func (s *Server) recordingSize(ctx context.Context, name string) (int64, error) {
+	if _, _, size, err := s.recordingFile(name); err == nil {
+		return size, nil
+	}
+	if s.Objects == nil {
+		return 0, os.ErrNotExist
+	}
+	o, err := s.Objects.Stat(ctx, filepath.Base(name))
+	return o.Size, err
+}
 
 // recordingFile finds a recording on disk. gz tells which form it is in.
 func (s *Server) recordingFile(name string) (path string, gz bool, size int64, err error) {
@@ -49,7 +66,7 @@ func acceptsGzip(r *http.Request) bool {
 // summary: Download a session recording
 // description: >-
 //   asciicast v2 for terminal sessions (playable with asciinema); for VNC and
-//   RDP the DuckJump graphical format (DJGFX1, see paltad recording.rs).
+//   RDP the DuckJump graphical format (DJGFX1, see duckjumpd recording.rs).
 //   Served gzip-compressed when the
 //   client accepts it. For a session still open it returns what has been
 //   recorded so far. 410 when the retention policy already deleted it.
@@ -85,7 +102,27 @@ func (s *Server) getRecording(w http.ResponseWriter, r *http.Request, p principa
 	}
 	path, gz, _, err := s.recordingFile(x.Recording.String)
 	if err != nil {
-		return notFound("recording file")
+		// Finished and moved to the bucket by duckjumpd?
+		if s.Objects == nil {
+			return notFound("recording file")
+		}
+		o, err := s.Objects.Stat(ctx, filepath.Base(x.Recording.String))
+		if errors.Is(err, objstore.ErrNotFound) {
+			return notFound("recording file")
+		}
+		if err != nil {
+			return err
+		}
+		body, err := s.Objects.Open(ctx, o.Key)
+		if err != nil {
+			return err
+		}
+		defer body.Close()
+		if err := s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "recording.view", ObjectType: "session", ObjectID: x.ID}); err != nil {
+			return err
+		}
+		recordingHeaders(w, x.ID, o.Gfx)
+		return serveGzipped(w, r, body)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -96,49 +133,90 @@ func (s *Server) getRecording(w http.ResponseWriter, r *http.Request, p principa
 		return err
 	}
 
+	recordingHeaders(w, x.ID, strings.Contains(path, ".gfx"))
 	h := w.Header()
-	if strings.Contains(path, ".gfx") {
-		h.Set("Content-Type", "application/octet-stream")
-		h.Set("Content-Disposition", `attachment; filename="`+x.ID+`.gfx"`)
-	} else {
-		h.Set("Content-Type", "application/x-asciicast")
-		h.Set("Content-Disposition", `attachment; filename="`+x.ID+`.cast"`)
-	}
-	h.Set("Cache-Control", "private, no-store")
-	h.Set("Vary", "Accept-Encoding")
 
 	if gz {
-		if acceptsGzip(r) {
-			h.Set("Content-Encoding", "gzip")
-			_, err = io.Copy(w, f)
-			return nil
-		}
-		zr, err := gzip.NewReader(f)
-		if err != nil {
-			return err
-		}
-		io.Copy(w, zr)
-		return nil
+		return serveGzipped(w, r, f)
 	}
 
-	// Plain file: a session still recording, or one paltad never closed.
-	data, err := io.ReadAll(f)
+	// Plain file: a session still recording, or one duckjumpd never closed.
+	// Streamed up to what was on disk when the request came, so a recording
+	// of many hours never sits in memory.
+	n, err := servableLen(f, strings.HasSuffix(path, ".cast"))
 	if err != nil {
 		return err
 	}
-	if strings.HasSuffix(path, ".cast") {
-		if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
-			data = data[:i+1] // drop a line still being written
-		}
-	} // .gfx: the player ignores a record still being written
+	src := io.LimitReader(f, n)
 	if acceptsGzip(r) {
 		h.Set("Content-Encoding", "gzip")
 		zw := gzip.NewWriter(w)
-		zw.Write(data)
-		return zw.Close()
+		if _, err := io.Copy(zw, src); err != nil {
+			return nil // client gone; headers are out already
+		}
+		zw.Close()
+		return nil
 	}
-	w.Write(data)
+	h.Set("Content-Length", strconv.FormatInt(n, 10))
+	io.Copy(w, src)
 	return nil
+}
+
+func recordingHeaders(w http.ResponseWriter, id string, gfx bool) {
+	h := w.Header()
+	if gfx {
+		h.Set("Content-Type", "application/octet-stream")
+		h.Set("Content-Disposition", `attachment; filename="`+id+`.gfx"`)
+	} else {
+		h.Set("Content-Type", "application/x-asciicast")
+		h.Set("Content-Disposition", `attachment; filename="`+id+`.cast"`)
+	}
+	h.Set("Cache-Control", "private, no-store")
+	h.Set("Vary", "Accept-Encoding")
+}
+
+// serveGzipped sends a gzip stream as is when the client takes gzip, or
+// inflated.
+func serveGzipped(w http.ResponseWriter, r *http.Request, body io.Reader) error {
+	if acceptsGzip(r) {
+		w.Header().Set("Content-Encoding", "gzip")
+		io.Copy(w, body)
+		return nil
+	}
+	zr, err := gzip.NewReader(body)
+	if err != nil {
+		return err
+	}
+	io.Copy(w, zr)
+	return nil
+}
+
+// servableLen is how much of a recording still being written can be served:
+// the whole file now, except for an asciicast line still being written
+// (everything after the last newline). The player ignores a .gfx record
+// still being written.
+func servableLen(f *os.File, cast bool) (int64, error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := fi.Size()
+	if !cast {
+		return size, nil
+	}
+	buf := make([]byte, 64<<10)
+	for end := size; end > 0; {
+		start := max(end-int64(len(buf)), 0)
+		chunk := buf[:end-start]
+		if _, err := f.ReadAt(chunk, start); err != nil {
+			return 0, err
+		}
+		if i := bytes.LastIndexByte(chunk, '\n'); i >= 0 {
+			return start + int64(i) + 1, nil
+		}
+		end = start
+	}
+	return 0, nil
 }
 
 // ---- retention ----
@@ -188,10 +266,19 @@ func (s *Server) recordingUsage(ctx context.Context, days int) (recordingUsage, 
 		return u, err
 	}
 	cutoff := retentionCutoff(days)
+	var inBucket map[string]int64
+	if s.Objects != nil {
+		if inBucket, err = s.Objects.Sizes(ctx); err != nil {
+			return u, err
+		}
+	}
 	for _, r := range rows {
 		_, _, size, err := s.recordingFile(r.Recording.String)
 		if err != nil {
-			continue // not on disk (or not readable from here)
+			var ok bool
+			if size, ok = inBucket[filepath.Base(r.Recording.String)]; !ok {
+				continue // neither on disk nor in the bucket (or not readable from here)
+			}
 		}
 		u.Recordings++
 		u.Bytes += size
@@ -214,8 +301,8 @@ func (s *Server) PurgeRecordings(ctx context.Context, actor store.Actor) (int, i
 	if err != nil || days == 0 {
 		return 0, 0, err
 	}
-	if s.RecordingsDir == "" {
-		return 0, 0, errors.New("retention is set but the gateway has no -recordings directory")
+	if !s.recordingsConfigured() {
+		return 0, 0, errors.New("retention is set but the gateway has no -recordings directory or S3 bucket")
 	}
 	cutoff := retentionCutoff(days)
 	reason := fmt.Sprintf("retention policy: %d days", days)
@@ -231,8 +318,18 @@ func (s *Server) PurgeRecordings(ctx context.Context, actor store.Actor) (int, i
 		}
 		for _, r := range batch {
 			var size int64
+			if s.Objects != nil {
+				freed, err := s.Objects.Delete(ctx, filepath.Base(r.Recording.String))
+				if err != nil {
+					return n, total, fmt.Errorf("deleting %s from the bucket: %w", r.Recording.String, err)
+				}
+				size += freed
+			}
 			base := filepath.Join(s.RecordingsDir, filepath.Base(r.Recording.String))
 			for _, f := range []string{base + ".cast.gz", base + ".cast", base + ".gfx.gz", base + ".gfx"} {
+				if s.RecordingsDir == "" {
+					break
+				}
 				fi, err := os.Stat(f)
 				if err != nil {
 					continue
@@ -266,6 +363,11 @@ func (s *Server) RetentionLoop(ctx context.Context) {
 			slog.Error("recording retention", "err", err)
 		} else if n > 0 {
 			slog.Info("recordings purged by retention", "count", n, "bytes", b)
+		}
+		if n, err := s.PurgeFiles(ctx); err != nil {
+			slog.Error("file tray retention", "err", err)
+		} else if n > 0 {
+			slog.Info("expired tray files deleted", "count", n)
 		}
 	}
 	run()
@@ -334,7 +436,7 @@ func (s *Server) getRecordingSettings(w http.ResponseWriter, r *http.Request, p 
 	if err != nil {
 		return err
 	}
-	return ok(w, recordingSettings{RetentionDays: days, Usage: u, RecordingsDirConfigured: s.RecordingsDir != ""})
+	return ok(w, recordingSettings{RetentionDays: days, Usage: u, RecordingsDirConfigured: s.recordingsConfigured()})
 }
 
 // openapi:operation
@@ -354,7 +456,7 @@ func (s *Server) setRecordingSettings(w http.ResponseWriter, r *http.Request, p 
 	if req.RetentionDays < 0 || req.RetentionDays > 3650 {
 		return badRequest("retention_days must be 0-3650")
 	}
-	if req.RetentionDays > 0 && s.RecordingsDir == "" {
+	if req.RetentionDays > 0 && !s.recordingsConfigured() {
 		return conflict("the gateway runs without -recordings, so it cannot delete recording files")
 	}
 	ctx := r.Context()
