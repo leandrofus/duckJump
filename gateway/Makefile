@@ -19,7 +19,7 @@ $(SQLC):
 openapi:
 	go run ./cmd/openapi-gen
 
-# Builds the React UI into internal/server/ui/dist (embedded by palta-gw).
+# Builds the React UI into internal/server/ui/dist (embedded by duckjump-gw).
 web:
 	cd ../web && bun install --frozen-lockfile && bun run gen-api && bun run build
 	touch internal/server/ui/dist/.gitkeep
@@ -28,5 +28,5 @@ test:
 	go test ./...
 
 build:
-	go build -o bin/palta-gw ./cmd/palta-gw
-	CGO_ENABLED=0 go build -ldflags='-s -w' -o bin/palta-agent ./cmd/palta-agent
+	go build -o bin/duckjump-gw ./cmd/duckjump-gw
+	CGO_ENABLED=0 go build -ldflags='-s -w' -o bin/duckjump-agent ./cmd/duckjump-agent

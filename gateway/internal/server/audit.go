@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 func limitParam(r *http.Request) (int64, error) {
@@ -111,24 +111,10 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request, p principa
 	if err != nil {
 		return err
 	}
-	purged := map[string]bool{}
-	if len(rows) > 0 {
-		ids := make([]string, len(rows))
-		for i, x := range rows {
-			ids[i] = x.ID
-		}
-		pids, err := s.Store.Q.ListPurgedSessionIDs(ctx, ids)
-		if err != nil {
-			return err
-		}
-		for _, id := range pids {
-			purged[id] = true
-		}
-	}
 	out := make([]sessionDTO, 0, len(rows))
 	for _, x := range rows {
 		var pt time.Time
-		if purged[x.ID] {
+		if x.Recording.Valid {
 			if p, err := s.Store.Q.GetRecordingPurge(ctx, x.ID); err == nil {
 				pt = p.PurgedAt
 			}
@@ -160,7 +146,7 @@ func (s *Server) getSessionRecord(w http.ResponseWriter, r *http.Request, p prin
 	}
 	d := toSession(x, pt, days)
 	if d.HasRecording {
-		if _, _, size, err := s.recordingFile(x.Recording.String); err == nil {
+		if size, err := s.recordingSize(ctx, x.Recording.String); err == nil {
 			d.Bytes = &size
 		}
 	}

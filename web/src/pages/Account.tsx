@@ -25,6 +25,11 @@ export function Account() {
           <p><strong>{u.display_name || u.username}</strong> <span className="muted mono">{u.username}</span> <RoleTag role={u.role} /></p>
           {me.groups && me.groups.length > 0 && <p className="tags">{me.groups.map((g) => <Tag key={g.id}>{g.name}</Tag>)}</p>}
         </Section>
+        {u.source !== 'local' ? (
+          <Section title={t('Sign-in')}>
+            <p className="muted">{t('You sign in through the identity provider: your password, second factor, role and groups are managed there.')}</p>
+          </Section>
+        ) : (<>
         <Section title={t('Password')}>
           <PasswordForm />
         </Section>
@@ -41,6 +46,7 @@ export function Account() {
             </div>
           )}
         </Section>
+        </>)}
       </div>
     </div>
   )

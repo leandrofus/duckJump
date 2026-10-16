@@ -21,11 +21,18 @@ UPDATE config_connections SET
     name = @name, protocol = @protocol, host = @host, port = @port, folder_id = @folder_id,
     site_id = @site_id, environment = @environment, description = @description, backend = @backend,
     credential_mode = @credential_mode, secret_id = @secret_id, params = @params, record = @record,
-    record_input = @record_input, host_key = @host_key, updated_at = @now
+    record_input = @record_input, host_key = @host_key, host_key_pending = NULL, updated_at = @now
 WHERE id = @id;
 
 -- name: PinHostKey :exec
-UPDATE config_connections SET host_key = @host_key WHERE id = @id AND host_key IS NULL;
+UPDATE config_connections SET host_key = @host_key, host_key_pending = NULL WHERE id = @id AND host_key IS NULL;
+
+-- name: SetPendingHostKey :exec
+UPDATE config_connections SET host_key_pending = @host_key_pending WHERE id = @id AND host_key IS NULL;
+
+-- name: ApproveHostKey :execrows
+-- Pins a fingerprint an admin checked (replacing any pinned one).
+UPDATE config_connections SET host_key = @host_key, host_key_pending = NULL, updated_at = @now WHERE id = @id;
 
 -- name: DeleteConnection :execrows
 DELETE FROM config_connections WHERE id = @id;

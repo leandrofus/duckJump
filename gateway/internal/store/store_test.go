@@ -2,22 +2,44 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
+
+func TestMain(m *testing.M) {
+	SetAuditKey([]byte("test audit key, 32 bytes long..."))
+	os.Exit(m.Run())
+}
 
 func open(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	s, closeDB, err := OpenTemp(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(closeDB)
 	return s
+}
+
+// unprotect lets a test play the attacker with direct database access.
+func unprotect(t *testing.T, s *Store) {
+	t.Helper()
+	q := `DROP TRIGGER audit_events_no_update`
+	if s.Postgres {
+		q = `ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only`
+	}
+	if _, err := s.DB.Exec(q); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func must(t *testing.T, err error) {
@@ -47,7 +69,7 @@ func TestGrants(t *testing.T) {
 		id := NewID()
 		must(t, q.CreateConnection(ctx, db.CreateConnectionParams{
 			ID: id, Name: name, Protocol: "ssh", Host: "h", Port: 22, FolderID: NullString(folder),
-			Backend: "paltad", CredentialMode: "vault", Params: "{}", Now: now,
+			Backend: BackendNative, CredentialMode: "vault", Params: "{}", Now: now,
 		}))
 		for _, tg := range tags {
 			must(t, q.AddConnectionTag(ctx, db.AddConnectionTagParams{ConnectionID: id, Tag: tg}))
@@ -133,14 +155,85 @@ func TestAuditChain(t *testing.T) {
 	}
 
 	// Someone with file access drops the trigger and edits a row: detected.
-	_, err = s.DB.Exec(`DROP TRIGGER audit_events_no_update`)
-	must(t, err)
+	unprotect(t, s)
 	_, err = s.DB.Exec(`UPDATE audit_events SET details = '{"n":99}' WHERE id = 2`)
 	must(t, err)
 	res, err = s.VerifyAudit(ctx)
 	must(t, err)
 	if res.OK || res.BrokenAt != 2 {
 		t.Fatalf("tampering not detected: %+v", res)
+	}
+}
+
+// An attacker with the database (not the key) rewrites an event and
+// recomputes every hash after it: the hash chain verifies, the MACs do not.
+func TestAuditMACDetectsRewrite(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	for _, a := range []string{"auth.login", "user.create", "session.start"} {
+		must(t, s.AuditTx(ctx, Event{Actor: Actor{Name: "ana"}, Action: a}))
+	}
+	unprotect(t, s)
+	rows, err := s.Q.AuditEventsFrom(ctx, db.AuditEventsFromParams{Lim: 10})
+	must(t, err)
+	prev := GenesisHash
+	for _, e := range rows {
+		if e.ID == 2 {
+			e.Action = "user.nothing_to_see"
+		}
+		b, _ := json.Marshal(canonical{TS: e.Ts.UTC().Format(time.RFC3339Nano), ActorID: e.ActorID.String, ActorName: e.ActorName,
+			ActorIP: e.ActorIP, Action: e.Action, ObjectType: e.ObjectType, ObjectID: e.ObjectID, Details: json.RawMessage(e.Details)})
+		sum := sha256.Sum256(append([]byte(prev), b...))
+		h := hex.EncodeToString(sum[:])
+		_, err := s.DB.Exec(`UPDATE audit_events SET action = $1, prev_hash = $2, hash = $3 WHERE id = $4`, e.Action, prev, h, e.ID)
+		must(t, err)
+		prev = h
+	}
+	res, err := s.VerifyAudit(ctx)
+	must(t, err)
+	if res.OK || res.BrokenAt != 2 || !strings.Contains(res.Reason, "MAC") {
+		t.Fatalf("rewrite with recomputed hashes not detected: %+v", res)
+	}
+
+	// Stripping the MACs does not help either.
+	_, err = s.DB.Exec(`UPDATE audit_events SET mac = NULL`)
+	must(t, err)
+	if res, _ = s.VerifyAudit(ctx); res.OK || res.Sealed {
+		t.Fatalf("chain without MACs verified: %+v", res)
+	}
+}
+
+// Events from before MACs existed are authenticated by sealing the chain.
+func TestAuditSealLegacy(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	_, err := s.DB.Exec(`INSERT INTO audit_events (ts, actor_name, action, details, prev_hash, hash) VALUES ($1, 'old', 'legacy.event', '{}', $2, 'h1')`,
+		Now(), GenesisHash)
+	must(t, err)
+	// A legacy hash that does not chain: rewrite it so it does.
+	rows, _ := s.Q.AuditEventsFrom(ctx, db.AuditEventsFromParams{Lim: 1})
+	e := rows[0]
+	b, _ := json.Marshal(canonical{TS: e.Ts.UTC().Format(time.RFC3339Nano), ActorName: e.ActorName, Action: e.Action, Details: json.RawMessage("{}")})
+	sum := sha256.Sum256(append([]byte(GenesisHash), b...))
+	unprotect(t, s)
+	_, err = s.DB.Exec(`UPDATE audit_events SET hash = $1 WHERE id = 1`, hex.EncodeToString(sum[:]))
+	must(t, err)
+
+	// Unsealed: new events stay without MAC, and verification says why.
+	must(t, s.AuditTx(ctx, Event{Action: "auth.login"}))
+	if res, _ := s.VerifyAudit(ctx); res.OK || res.Sealed {
+		t.Fatalf("unsealed chain verified: %+v", res)
+	}
+	n, err := s.SealAudit(ctx, Actor{Name: "cli"})
+	must(t, err)
+	must(t, s.AuditTx(ctx, Event{Action: "auth.login"}))
+	res, err := s.VerifyAudit(ctx)
+	must(t, err)
+	if n != 2 || !res.OK || !res.Sealed || res.Authenticated != 4 {
+		t.Fatalf("after seal: n=%d %+v", n, res)
+	}
+	if _, err := s.SealAudit(ctx, Actor{Name: "cli"}); err == nil {
+		t.Fatal("sealed twice")
 	}
 }
 
@@ -168,5 +261,36 @@ func TestFolderSiblingNamesUnique(t *testing.T) {
 	err := Classify(s.Q.CreateFolder(ctx, db.CreateFolderParams{ID: NewID(), Name: "prod", Now: now}))
 	if err == nil || !strings.Contains(err.Error(), "conflict") {
 		t.Fatalf("duplicate root folder: %v", err)
+	}
+}
+
+func TestAuditExport(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	w, err := OpenAuditSink("file://" + path)
+	must(t, err)
+	defer w.Close()
+	for _, a := range []string{"auth.login", "user.create"} {
+		must(t, s.AuditTx(ctx, Event{Action: a}))
+	}
+	must(t, s.exportOnce(ctx, []io.Writer{w}))
+	must(t, s.AuditTx(ctx, Event{Action: "session.start"}))
+	must(t, s.exportOnce(ctx, []io.Writer{w}))
+	must(t, s.exportOnce(ctx, []io.Writer{w})) // nothing new: nothing written
+
+	b, err := os.ReadFile(path)
+	must(t, err)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("%d lines: %s", len(lines), b)
+	}
+	var last ExportedEvent
+	must(t, json.Unmarshal([]byte(lines[2]), &last))
+	if last.ID != 3 || last.Action != "session.start" || last.MAC == "" || last.Hash == "" {
+		t.Fatalf("%+v", last)
+	}
+	if _, err := OpenAuditSink("ftp://x"); err == nil {
+		t.Fatal("unknown scheme accepted")
 	}
 }

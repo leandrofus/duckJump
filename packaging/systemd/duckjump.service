@@ -1,8 +1,8 @@
 [Unit]
 Description=DuckJump access gateway (web UI, API, vault, audit)
 Documentation=https://github.com/leandrofus/duckJump
-After=network-online.target duckjump-paltad.service
-Wants=network-online.target duckjump-paltad.service
+After=network-online.target duckjumpd.service
+Wants=network-online.target duckjumpd.service
 
 [Service]
 Type=simple
@@ -10,19 +10,20 @@ User=duckjump
 Group=duckjump
 # Defaults; /etc/duckjump/duckjump.env overrides them.
 Environment=DUCKJUMP_LISTEN=0.0.0.0:8443
-Environment=PALTA_DB=/var/lib/duckjump/palta.db
-Environment=PALTA_RECORDINGS=/var/lib/duckjump/recordings
-Environment=PALTA_TLS_CERT=/var/lib/duckjump/tls/cert.pem
-Environment=PALTA_TLS_KEY=/var/lib/duckjump/tls/key.pem
-Environment=PALTAD_ADDR=127.0.0.1:4823
+Environment=DUCKJUMP_DB=/var/lib/duckjump/duckjump.db
+Environment=DUCKJUMP_RECORDINGS=/var/lib/duckjump/recordings
+Environment=DUCKJUMP_FILES=/var/lib/duckjump/files
+Environment=DUCKJUMP_TLS_CERT=/var/lib/duckjump/tls/cert.pem
+Environment=DUCKJUMP_TLS_KEY=/var/lib/duckjump/tls/key.pem
+Environment=DUCKJUMPD_ADDR=127.0.0.1:4823
 EnvironmentFile=-/etc/duckjump/duckjump.env
-# Vault master key and the paltad secret: root-only files, read through systemd.
-LoadCredential=palta-master-key:/etc/duckjump/master.key
-LoadCredential=paltad-token:/etc/duckjump/paltad.token
-ExecStart=/usr/libexec/duckjump/palta-gw serve -listen ${DUCKJUMP_LISTEN} $DUCKJUMP_OPTS
+# Vault master key and the duckjumpd secret: root-only files, read through systemd.
+LoadCredential=duckjump-master-key:/etc/duckjump/master.key
+LoadCredential=duckjumpd-token:/etc/duckjump/duckjumpd.token
+ExecStart=/usr/libexec/duckjump/duckjump-gw serve -listen ${DUCKJUMP_LISTEN} $DUCKJUMP_OPTS
 Restart=on-failure
 RestartSec=3
-StateDirectory=duckjump duckjump/recordings
+StateDirectory=duckjump duckjump/recordings duckjump/files
 StateDirectoryMode=0750
 UMask=0027
 # Allows listening on 443 without running as root.

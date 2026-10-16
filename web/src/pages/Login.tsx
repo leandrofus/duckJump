@@ -1,6 +1,6 @@
 import { t, LANGUAGES, getLang, setLang } from '../i18n'
-import { useState } from 'react'
-import { ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ShieldCheck, LogIn } from 'lucide-react'
 import { api } from '../lib/api'
 import { Spinner } from '../ui/common'
 
@@ -13,6 +13,17 @@ export function Login({ mfa, onDone }: { mfa: boolean; onDone: () => void }) {
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [sso, setSso] = useState<{ name: string; login_url: string } | null>(null)
+  useEffect(() => {
+    api.get<{ oidc: { name: string; login_url: string } | null }>('/auth/providers').then((p) => setSso(p.oidc), () => {})
+    // A failed single sign-on comes back as ?login_error=…
+    const q = new URLSearchParams(location.search)
+    const e = q.get('login_error')
+    if (e) {
+      setErr(t('Single sign-on failed: {0}', e))
+      history.replaceState(null, '', location.pathname + location.hash)
+    }
+  }, [])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -68,6 +79,12 @@ export function Login({ mfa, onDone }: { mfa: boolean; onDone: () => void }) {
         <button className="btn btn-primary" disabled={busy || (step === 'password' ? !username || !password : code.length !== 6)}>
           {busy ? <Spinner /> : step === 'password' ? t('Sign in') : t('Verify')}
         </button>
+        {step === 'password' && sso && (
+          <>
+            <div className="muted small center-link">{t('or')}</div>
+            <a className="btn" href={sso.login_url}><LogIn size={14} /> {t('Sign in with {0}', sso.name)}</a>
+          </>
+        )}
         {step === 'totp' && (
           <button type="button" className="link small center-link" onClick={() => api.post('/auth/logout').finally(() => location.reload())}>
             {t('Use another account')}

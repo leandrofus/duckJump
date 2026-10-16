@@ -15,8 +15,8 @@ license: AGPL-3.0-or-later
 homepage: https://github.com/leandrofus/duckJump
 
 contents:
-  - src: ./dist/pkg/palta-agent
-    dst: /usr/bin/palta-agent
+  - src: ./dist/pkg/duckjump-agent
+    dst: /usr/bin/duckjump-agent
     file_info: { mode: 0755 }
   - src: ./packaging/systemd/duckjump-agent.service
     dst: /usr/lib/systemd/system/duckjump-agent.service

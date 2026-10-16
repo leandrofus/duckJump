@@ -21,6 +21,25 @@ type AuditEvent struct {
 	Details    string
 	PrevHash   string
 	Hash       string
+	Mac        sql.NullString
+	TsExact    sql.NullString
+}
+
+type AuditFile struct {
+	ID           string
+	OwnerID      string
+	OwnerName    string
+	Name         string
+	Size         int64
+	Sha256       string
+	StorageKey   string
+	Origin       string
+	ConnectionID sql.NullString
+	RemotePath   string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+	DeletedAt    sql.NullTime
+	DeleteReason sql.NullString
 }
 
 type AuditRecordingPurge struct {
@@ -45,6 +64,13 @@ type AuditSession struct {
 	EndReason          sql.NullString
 }
 
+type AuditSessionKill struct {
+	SessionID   string
+	RequestedAt time.Time
+	RequestedBy string
+	Reason      string
+}
+
 type ConfigConnection struct {
 	ID             string
 	Name           string
@@ -64,6 +90,7 @@ type ConfigConnection struct {
 	HostKey        sql.NullString
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	HostKeyPending sql.NullString
 }
 
 type ConfigConnectionTag struct {
@@ -103,6 +130,8 @@ type ConfigPolicy struct {
 	Description       string
 	CreatedBy         sql.NullString
 	CreatedAt         time.Time
+	CanUpload         bool
+	CanDownload       bool
 }
 
 type ConfigSecret struct {
@@ -145,6 +174,7 @@ type ConfigUser struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	LastLoginAt  sql.NullTime
+	OidcSubject  sql.NullString
 }
 
 type ConfigWebSession struct {
@@ -156,4 +186,10 @@ type ConfigWebSession struct {
 	CreatedAt  time.Time
 	LastSeenAt time.Time
 	ExpiresAt  time.Time
+}
+
+type RuntimeSession struct {
+	SessionID   string
+	Node        string
+	HeartbeatAt time.Time
 }

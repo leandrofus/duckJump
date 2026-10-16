@@ -12,7 +12,7 @@ import (
 )
 
 const addConnectionTag = `-- name: AddConnectionTag :exec
-INSERT INTO config_connection_tags (connection_id, tag) VALUES (?1, ?2) ON CONFLICT DO NOTHING
+INSERT INTO config_connection_tags (connection_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING
 `
 
 type AddConnectionTagParams struct {
@@ -25,8 +25,27 @@ func (q *Queries) AddConnectionTag(ctx context.Context, arg AddConnectionTagPara
 	return err
 }
 
+const approveHostKey = `-- name: ApproveHostKey :execrows
+UPDATE config_connections SET host_key = $1, host_key_pending = NULL, updated_at = $2 WHERE id = $3
+`
+
+type ApproveHostKeyParams struct {
+	HostKey sql.NullString
+	Now     time.Time
+	ID      string
+}
+
+// Pins a fingerprint an admin checked (replacing any pinned one).
+func (q *Queries) ApproveHostKey(ctx context.Context, arg ApproveHostKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, approveHostKey, arg.HostKey, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const clearConnectionTags = `-- name: ClearConnectionTags :exec
-DELETE FROM config_connection_tags WHERE connection_id = ?1
+DELETE FROM config_connection_tags WHERE connection_id = $1
 `
 
 func (q *Queries) ClearConnectionTags(ctx context.Context, connectionID string) error {
@@ -39,8 +58,8 @@ INSERT INTO config_connections (
     id, name, protocol, host, port, folder_id, site_id, environment, description, backend,
     credential_mode, secret_id, params, record, record_input, created_at, updated_at
 ) VALUES (
-    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-    ?11, ?12, ?13, ?14, ?15, ?16, ?16
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13, $14, $15, $16, $16
 )
 `
 
@@ -86,7 +105,7 @@ func (q *Queries) CreateConnection(ctx context.Context, arg CreateConnectionPara
 }
 
 const deleteConnection = `-- name: DeleteConnection :execrows
-DELETE FROM config_connections WHERE id = ?1
+DELETE FROM config_connections WHERE id = $1
 `
 
 func (q *Queries) DeleteConnection(ctx context.Context, id string) (int64, error) {
@@ -98,7 +117,7 @@ func (q *Queries) DeleteConnection(ctx context.Context, id string) (int64, error
 }
 
 const getConnection = `-- name: GetConnection :one
-SELECT id, name, protocol, host, port, folder_id, site_id, environment, description, backend, credential_mode, secret_id, params, record, record_input, host_key, created_at, updated_at FROM config_connections WHERE id = ?1
+SELECT id, name, protocol, host, port, folder_id, site_id, environment, description, backend, credential_mode, secret_id, params, record, record_input, host_key, created_at, updated_at, host_key_pending FROM config_connections WHERE id = $1
 `
 
 func (q *Queries) GetConnection(ctx context.Context, id string) (ConfigConnection, error) {
@@ -123,12 +142,13 @@ func (q *Queries) GetConnection(ctx context.Context, id string) (ConfigConnectio
 		&i.HostKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.HostKeyPending,
 	)
 	return i, err
 }
 
 const getConnectionByName = `-- name: GetConnectionByName :one
-SELECT id, name, protocol, host, port, folder_id, site_id, environment, description, backend, credential_mode, secret_id, params, record, record_input, host_key, created_at, updated_at FROM config_connections WHERE name = ?1
+SELECT id, name, protocol, host, port, folder_id, site_id, environment, description, backend, credential_mode, secret_id, params, record, record_input, host_key, created_at, updated_at, host_key_pending FROM config_connections WHERE name = $1
 `
 
 func (q *Queries) GetConnectionByName(ctx context.Context, name string) (ConfigConnection, error) {
@@ -153,6 +173,7 @@ func (q *Queries) GetConnectionByName(ctx context.Context, name string) (ConfigC
 		&i.HostKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.HostKeyPending,
 	)
 	return i, err
 }
@@ -185,7 +206,7 @@ func (q *Queries) ListAllConnectionTags(ctx context.Context) ([]ConfigConnection
 }
 
 const listConnectionTags = `-- name: ListConnectionTags :many
-SELECT tag FROM config_connection_tags WHERE connection_id = ?1 ORDER BY tag
+SELECT tag FROM config_connection_tags WHERE connection_id = $1 ORDER BY tag
 `
 
 func (q *Queries) ListConnectionTags(ctx context.Context, connectionID string) ([]string, error) {
@@ -212,7 +233,7 @@ func (q *Queries) ListConnectionTags(ctx context.Context, connectionID string) (
 }
 
 const listConnections = `-- name: ListConnections :many
-SELECT id, name, protocol, host, port, folder_id, site_id, environment, description, backend, credential_mode, secret_id, params, record, record_input, host_key, created_at, updated_at FROM config_connections ORDER BY name
+SELECT id, name, protocol, host, port, folder_id, site_id, environment, description, backend, credential_mode, secret_id, params, record, record_input, host_key, created_at, updated_at, host_key_pending FROM config_connections ORDER BY name
 `
 
 func (q *Queries) ListConnections(ctx context.Context) ([]ConfigConnection, error) {
@@ -243,6 +264,7 @@ func (q *Queries) ListConnections(ctx context.Context) ([]ConfigConnection, erro
 			&i.HostKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.HostKeyPending,
 		); err != nil {
 			return nil, err
 		}
@@ -258,7 +280,7 @@ func (q *Queries) ListConnections(ctx context.Context) ([]ConfigConnection, erro
 }
 
 const pinHostKey = `-- name: PinHostKey :exec
-UPDATE config_connections SET host_key = ?1 WHERE id = ?2 AND host_key IS NULL
+UPDATE config_connections SET host_key = $1, host_key_pending = NULL WHERE id = $2 AND host_key IS NULL
 `
 
 type PinHostKeyParams struct {
@@ -271,13 +293,27 @@ func (q *Queries) PinHostKey(ctx context.Context, arg PinHostKeyParams) error {
 	return err
 }
 
+const setPendingHostKey = `-- name: SetPendingHostKey :exec
+UPDATE config_connections SET host_key_pending = $1 WHERE id = $2 AND host_key IS NULL
+`
+
+type SetPendingHostKeyParams struct {
+	HostKeyPending sql.NullString
+	ID             string
+}
+
+func (q *Queries) SetPendingHostKey(ctx context.Context, arg SetPendingHostKeyParams) error {
+	_, err := q.db.ExecContext(ctx, setPendingHostKey, arg.HostKeyPending, arg.ID)
+	return err
+}
+
 const updateConnection = `-- name: UpdateConnection :exec
 UPDATE config_connections SET
-    name = ?1, protocol = ?2, host = ?3, port = ?4, folder_id = ?5,
-    site_id = ?6, environment = ?7, description = ?8, backend = ?9,
-    credential_mode = ?10, secret_id = ?11, params = ?12, record = ?13,
-    record_input = ?14, host_key = ?15, updated_at = ?16
-WHERE id = ?17
+    name = $1, protocol = $2, host = $3, port = $4, folder_id = $5,
+    site_id = $6, environment = $7, description = $8, backend = $9,
+    credential_mode = $10, secret_id = $11, params = $12, record = $13,
+    record_input = $14, host_key = $15, host_key_pending = NULL, updated_at = $16
+WHERE id = $17
 `
 
 type UpdateConnectionParams struct {

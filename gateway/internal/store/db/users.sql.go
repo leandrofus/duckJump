@@ -22,9 +22,37 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const createOIDCUser = `-- name: CreateOIDCUser :exec
+INSERT INTO config_users (id, username, display_name, email, source, role, oidc_subject, created_at, updated_at)
+VALUES ($1, $2, $3, $4, 'oidc', $5, $6, $7, $7)
+`
+
+type CreateOIDCUserParams struct {
+	ID          string
+	Username    string
+	DisplayName string
+	Email       string
+	Role        string
+	OidcSubject sql.NullString
+	Now         time.Time
+}
+
+func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) error {
+	_, err := q.db.ExecContext(ctx, createOIDCUser,
+		arg.ID,
+		arg.Username,
+		arg.DisplayName,
+		arg.Email,
+		arg.Role,
+		arg.OidcSubject,
+		arg.Now,
+	)
+	return err
+}
+
 const createUser = `-- name: CreateUser :exec
 INSERT INTO config_users (id, username, display_name, email, password_hash, source, role, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 `
 
 type CreateUserParams struct {
@@ -53,7 +81,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 }
 
 const deleteUser = `-- name: DeleteUser :execrows
-DELETE FROM config_users WHERE id = ?1
+DELETE FROM config_users WHERE id = $1
 `
 
 func (q *Queries) DeleteUser(ctx context.Context, id string) (int64, error) {
@@ -65,7 +93,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) (int64, error) {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, username, display_name, email, password_hash, totp_sealed, totp_enabled, source, role, disabled, created_at, updated_at, last_login_at FROM config_users WHERE id = ?1
+SELECT id, username, display_name, email, password_hash, totp_sealed, totp_enabled, source, role, disabled, created_at, updated_at, last_login_at, oidc_subject FROM config_users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id string) (ConfigUser, error) {
@@ -85,12 +113,39 @@ func (q *Queries) GetUser(ctx context.Context, id string) (ConfigUser, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.OidcSubject,
+	)
+	return i, err
+}
+
+const getUserByOIDCSubject = `-- name: GetUserByOIDCSubject :one
+SELECT id, username, display_name, email, password_hash, totp_sealed, totp_enabled, source, role, disabled, created_at, updated_at, last_login_at, oidc_subject FROM config_users WHERE oidc_subject = $1
+`
+
+func (q *Queries) GetUserByOIDCSubject(ctx context.Context, oidcSubject sql.NullString) (ConfigUser, error) {
+	row := q.db.QueryRowContext(ctx, getUserByOIDCSubject, oidcSubject)
+	var i ConfigUser
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.DisplayName,
+		&i.Email,
+		&i.PasswordHash,
+		&i.TOTPSealed,
+		&i.TOTPEnabled,
+		&i.Source,
+		&i.Role,
+		&i.Disabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastLoginAt,
+		&i.OidcSubject,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, display_name, email, password_hash, totp_sealed, totp_enabled, source, role, disabled, created_at, updated_at, last_login_at FROM config_users WHERE username = ?1
+SELECT id, username, display_name, email, password_hash, totp_sealed, totp_enabled, source, role, disabled, created_at, updated_at, last_login_at, oidc_subject FROM config_users WHERE username = $1
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (ConfigUser, error) {
@@ -110,12 +165,13 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (Confi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastLoginAt,
+		&i.OidcSubject,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, display_name, email, password_hash, totp_sealed, totp_enabled, source, role, disabled, created_at, updated_at, last_login_at FROM config_users ORDER BY username
+SELECT id, username, display_name, email, password_hash, totp_sealed, totp_enabled, source, role, disabled, created_at, updated_at, last_login_at, oidc_subject FROM config_users ORDER BY username
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ConfigUser, error) {
@@ -141,6 +197,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ConfigUser, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastLoginAt,
+			&i.OidcSubject,
 		); err != nil {
 			return nil, err
 		}
@@ -156,7 +213,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ConfigUser, error) {
 }
 
 const setUserPassword = `-- name: SetUserPassword :exec
-UPDATE config_users SET password_hash = ?1, updated_at = ?2 WHERE id = ?3
+UPDATE config_users SET password_hash = $1, updated_at = $2 WHERE id = $3
 `
 
 type SetUserPasswordParams struct {
@@ -171,7 +228,7 @@ func (q *Queries) SetUserPassword(ctx context.Context, arg SetUserPasswordParams
 }
 
 const setUserTOTP = `-- name: SetUserTOTP :exec
-UPDATE config_users SET totp_sealed = ?1, totp_enabled = ?2, updated_at = ?3 WHERE id = ?4
+UPDATE config_users SET totp_sealed = $1, totp_enabled = $2, updated_at = $3 WHERE id = $4
 `
 
 type SetUserTOTPParams struct {
@@ -191,8 +248,32 @@ func (q *Queries) SetUserTOTP(ctx context.Context, arg SetUserTOTPParams) error 
 	return err
 }
 
+const syncOIDCUser = `-- name: SyncOIDCUser :exec
+UPDATE config_users SET display_name = $1, email = $2, role = $3, updated_at = $4 WHERE id = $5
+`
+
+type SyncOIDCUserParams struct {
+	DisplayName string
+	Email       string
+	Role        string
+	Now         time.Time
+	ID          string
+}
+
+// What the identity provider says about a user, on every login.
+func (q *Queries) SyncOIDCUser(ctx context.Context, arg SyncOIDCUserParams) error {
+	_, err := q.db.ExecContext(ctx, syncOIDCUser,
+		arg.DisplayName,
+		arg.Email,
+		arg.Role,
+		arg.Now,
+		arg.ID,
+	)
+	return err
+}
+
 const touchUserLogin = `-- name: TouchUserLogin :exec
-UPDATE config_users SET last_login_at = ?1 WHERE id = ?2
+UPDATE config_users SET last_login_at = $1 WHERE id = $2
 `
 
 type TouchUserLoginParams struct {
@@ -207,8 +288,8 @@ func (q *Queries) TouchUserLogin(ctx context.Context, arg TouchUserLoginParams) 
 
 const updateUser = `-- name: UpdateUser :exec
 UPDATE config_users
-SET display_name = ?1, email = ?2, role = ?3, disabled = ?4, updated_at = ?5
-WHERE id = ?6
+SET display_name = $1, email = $2, role = $3, disabled = $4, updated_at = $5
+WHERE id = $6
 `
 
 type UpdateUserParams struct {

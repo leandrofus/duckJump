@@ -1,0 +1,187 @@
+{
+  "realm": "duckjump",
+  "enabled": true,
+  "sslRequired": "none",
+  "loginWithEmailAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "default-roles-duckjump",
+        "composite": true,
+        "composites": {
+          "realm": [
+            "offline_access",
+            "uma_authorization"
+          ]
+        }
+      },
+      {
+        "name": "offline_access"
+      },
+      {
+        "name": "uma_authorization"
+      },
+      {
+        "name": "duckjump-superadmin"
+      },
+      {
+        "name": "duckjump-admin"
+      },
+      {
+        "name": "duckjump-auditor"
+      }
+    ]
+  },
+  "defaultRole": {
+    "name": "default-roles-duckjump"
+  },
+  "groups": [
+    {
+      "name": "ops"
+    },
+    {
+      "name": "dev"
+    },
+    {
+      "name": "dba"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "duckjump",
+      "name": "DuckJump",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "duckjump-test-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:18090/api/v1/auth/oidc/callback",
+        "http://127.0.0.1:8088/api/v1/auth/oidc/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "realm_access.roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Ops",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-duckjump",
+        "duckjump-admin"
+      ],
+      "groups": [
+        "/ops",
+        "/dba"
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.com",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Dev",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-duckjump"
+      ],
+      "groups": [
+        "/dev"
+      ]
+    },
+    {
+      "username": "audrey",
+      "enabled": true,
+      "email": "audrey@example.com",
+      "emailVerified": true,
+      "firstName": "Audrey",
+      "lastName": "Audit",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "audrey-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-duckjump",
+        "duckjump-auditor"
+      ],
+      "groups": []
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@example.com",
+      "emailVerified": true,
+      "firstName": "Not",
+      "lastName": "Admin",
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-duckjump"
+      ],
+      "groups": []
+    }
+  ]
+}

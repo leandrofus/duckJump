@@ -16,10 +16,10 @@ func TestEncodeCountsRunes(t *testing.T) {
 }
 
 func TestReadRoundTrip(t *testing.T) {
-	in := New("clipboard", "a,b;c.d", "palta 🥑", "")
+	in := New("clipboard", "a,b;c.d", "duckjump 🥑", "")
 	r := NewReader(strings.NewReader(in.String() + New("nop").String()))
 	got, raw, err := r.Read()
-	if err != nil || got.Opcode != in.Opcode || len(got.Args) != 3 || got.Args[1] != "palta 🥑" || raw != in.String() {
+	if err != nil || got.Opcode != in.Opcode || len(got.Args) != 3 || got.Args[1] != "duckjump 🥑" || raw != in.String() {
 		t.Fatalf("got %+v %q %v", got, raw, err)
 	}
 	if got, _, _ := r.Read(); got.Opcode != "nop" {

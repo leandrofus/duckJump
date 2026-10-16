@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/edge"
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/edge"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // openapi:schema SiteRequest

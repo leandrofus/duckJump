@@ -11,7 +11,7 @@ import (
 )
 
 const completeWebSessionMFA = `-- name: CompleteWebSessionMFA :exec
-UPDATE config_web_sessions SET mfa_pending = 0, last_seen_at = ?1 WHERE id_hash = ?2
+UPDATE config_web_sessions SET mfa_pending = false, last_seen_at = $1 WHERE id_hash = $2
 `
 
 type CompleteWebSessionMFAParams struct {
@@ -26,7 +26,7 @@ func (q *Queries) CompleteWebSessionMFA(ctx context.Context, arg CompleteWebSess
 
 const createWebSession = `-- name: CreateWebSession :exec
 INSERT INTO config_web_sessions (id_hash, user_id, mfa_pending, ip, user_agent, created_at, last_seen_at, expires_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)
+VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
 `
 
 type CreateWebSessionParams struct {
@@ -54,8 +54,8 @@ func (q *Queries) CreateWebSession(ctx context.Context, arg CreateWebSessionPara
 
 const deleteExpiredWebSessions = `-- name: DeleteExpiredWebSessions :execrows
 DELETE FROM config_web_sessions
-WHERE julianday(expires_at) <= julianday(CAST(?1 AS TEXT))
-   OR julianday(last_seen_at) <= julianday(CAST(?2 AS TEXT))
+WHERE julianday(expires_at) <= julianday(CAST($1 AS TEXT))
+   OR julianday(last_seen_at) <= julianday(CAST($2 AS TEXT))
 `
 
 type DeleteExpiredWebSessionsParams struct {
@@ -72,7 +72,7 @@ func (q *Queries) DeleteExpiredWebSessions(ctx context.Context, arg DeleteExpire
 }
 
 const deleteUserWebSessions = `-- name: DeleteUserWebSessions :exec
-DELETE FROM config_web_sessions WHERE user_id = ?1
+DELETE FROM config_web_sessions WHERE user_id = $1
 `
 
 func (q *Queries) DeleteUserWebSessions(ctx context.Context, userID string) error {
@@ -81,7 +81,7 @@ func (q *Queries) DeleteUserWebSessions(ctx context.Context, userID string) erro
 }
 
 const deleteWebSession = `-- name: DeleteWebSession :exec
-DELETE FROM config_web_sessions WHERE id_hash = ?1
+DELETE FROM config_web_sessions WHERE id_hash = $1
 `
 
 func (q *Queries) DeleteWebSession(ctx context.Context, idHash string) error {
@@ -90,7 +90,7 @@ func (q *Queries) DeleteWebSession(ctx context.Context, idHash string) error {
 }
 
 const getWebSession = `-- name: GetWebSession :one
-SELECT id_hash, user_id, mfa_pending, ip, user_agent, created_at, last_seen_at, expires_at FROM config_web_sessions WHERE id_hash = ?1
+SELECT id_hash, user_id, mfa_pending, ip, user_agent, created_at, last_seen_at, expires_at FROM config_web_sessions WHERE id_hash = $1
 `
 
 func (q *Queries) GetWebSession(ctx context.Context, idHash string) (ConfigWebSession, error) {
@@ -110,7 +110,7 @@ func (q *Queries) GetWebSession(ctx context.Context, idHash string) (ConfigWebSe
 }
 
 const touchWebSession = `-- name: TouchWebSession :exec
-UPDATE config_web_sessions SET last_seen_at = ?1 WHERE id_hash = ?2
+UPDATE config_web_sessions SET last_seen_at = $1 WHERE id_hash = $2
 `
 
 type TouchWebSessionParams struct {

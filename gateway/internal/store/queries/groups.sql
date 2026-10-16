@@ -31,3 +31,6 @@ WHERE m.group_id = @group_id ORDER BY u.username;
 SELECT g.* FROM config_groups g
 JOIN config_group_members m ON m.group_id = g.id
 WHERE m.user_id = @user_id ORDER BY g.name;
+
+-- name: GetGroupByName :one
+SELECT * FROM config_groups WHERE name = @name;

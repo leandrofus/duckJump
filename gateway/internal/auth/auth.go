@@ -12,10 +12,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
-	"github.com/leandrofus/palta/gateway/internal/totp"
-	"github.com/leandrofus/palta/gateway/internal/vault"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/totp"
+	"github.com/leandrofus/duckjump/gateway/internal/vault"
 )
 
 var (
@@ -48,7 +48,7 @@ func CheckPasswordPolicy(pw string) error {
 }
 
 // dummyHash keeps unknown-user logins as slow as real ones.
-var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("palta-dummy"), bcrypt.DefaultCost)
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("duckjump-dummy"), bcrypt.DefaultCost)
 
 // Authenticate checks a local username/password.
 func (s *Service) Authenticate(ctx context.Context, username, password string) (db.ConfigUser, error) {

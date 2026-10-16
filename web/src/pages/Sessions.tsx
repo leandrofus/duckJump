@@ -1,15 +1,35 @@
 import { t } from '../i18n'
 import { useEffect, useState } from 'react'
-import { History, RefreshCw, ChevronRight, PlayCircle, Trash2 } from 'lucide-react'
+import { History, RefreshCw, ChevronRight, PlayCircle, Trash2, Power } from 'lucide-react'
 import { api, enc } from '../lib/api'
 import type { Session } from '../lib/api'
 import { useResource } from '../lib/store'
 import { ago, bytes, dateTime, duration } from '../lib/format'
 import { go, href } from '../lib/router'
 import { DataTable, Pill, Props, Section, Spinner, Tag } from '../ui/common'
-import { toast } from '../ui/overlays'
+import { prompt, toast } from '../ui/overlays'
+import { isAdmin } from '../lib/session'
+import { invalidate } from '../lib/store'
 import { RecordingPlayer } from '../components/RecordingPlayer'
 import { GfxPlayer } from '../components/GfxPlayer'
+
+/** Ends a live session (admins); resolves true when requested. */
+async function terminate(s: Session): Promise<boolean> {
+  const reason = await prompt({
+    title: t('Terminate the session of {0}?', s.username), label: t('Reason (shown to the user and audited)'),
+    confirm: t('Terminate'), help: t('The tunnel closes within seconds. The session and its recording are kept.'),
+  })
+  if (reason === null) return false
+  try {
+    await api.post(`/audit/sessions/${enc(s.id)}/terminate`, { reason: reason.trim() })
+    toast.ok(t('Session terminated'))
+    invalidate('/audit/sessions')
+    return true
+  } catch (e) {
+    toast.err(e)
+    return false
+  }
+}
 
 const conn = (s: Session) => s.connection as { name?: string; host?: string; port?: number; account?: string; protocol?: string; record_input?: boolean }
 
@@ -66,7 +86,12 @@ function SessionList() {
             { key: 'conn', label: t('Connection'), render: (s) => <span><strong>{conn(s).name}</strong> <span className="muted small mono">{conn(s).account}@{conn(s).host}</span></span> },
             { key: 'site', label: t('Site'), render: (s) => s.site || <span className="muted">—</span> },
             { key: 'dur', label: t('Duration'), render: (s) => duration(s.started_at, s.ended_at) },
-            { key: 'state', label: t('Status'), render: (s) => (s.ended_at ? <span className="muted small">{s.end_reason}</span> : <Pill state="active" />) },
+            { key: 'state', label: t('Status'), render: (s) => (s.ended_at ? <span className="muted small">{s.end_reason}</span> : (
+              <span className="row gap">
+                <Pill state="active" />
+                {isAdmin() && <button className="icon-btn" title={t('Terminate')} onClick={(e) => (e.stopPropagation(), terminate(s).then((ok) => ok && setTimeout(() => load(true), 1500)))}><Power size={14} /></button>}
+              </span>
+            )) },
             { key: 'rec', label: '', render: (s) => (s.has_recording ? <PlayCircle size={15} className="muted" aria-label={t('recorded')} /> : s.recording_purged_at ? <span title={t('Recording deleted by the retention policy')}><Trash2 size={14} className="muted" /></span> : null) },
           ]}
         />
@@ -96,6 +121,11 @@ function SessionRecord({ id }: { id: string }) {
             <span className="muted small">{dateTime(s.started_at)} · {duration(s.started_at, s.ended_at)}</span>
           </div>
         </div>
+        {!s.ended_at && isAdmin() && (
+          <div className="record-actions">
+            <button className="btn btn-sm btn-danger" onClick={() => terminate(s)}><Power size={14} /> {t('Terminate')}</button>
+          </div>
+        )}
       </header>
       <div className="record-body">
         <aside className="record-side">

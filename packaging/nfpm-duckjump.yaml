@@ -10,7 +10,7 @@ maintainer: ${MAINTAINER}
 description: |
   DuckJump access bastion: web access to SSH, RDP and VNC hosts with a
   credential vault, access grants, session recording and an audit trail.
-  Includes the gateway (web UI and API) and the paltad session daemon.
+  Includes the gateway (web UI and API) and the duckjumpd session daemon.
 vendor: DuckJump
 license: AGPL-3.0-or-later
 homepage: https://github.com/leandrofus/duckJump
@@ -22,22 +22,22 @@ overrides:
     depends: [zlib1g, util-linux, passwd]
 
 contents:
-  - src: ./dist/pkg/palta-gw
-    dst: /usr/libexec/duckjump/palta-gw
+  - src: ./dist/pkg/duckjump-gw
+    dst: /usr/libexec/duckjump/duckjump-gw
     file_info: { mode: 0755 }
-  - src: ./dist/pkg/paltad
-    dst: /usr/libexec/duckjump/paltad
+  - src: ./dist/pkg/duckjumpd
+    dst: /usr/libexec/duckjump/duckjumpd
     file_info: { mode: 0755 }
-  - src: ./dist/pkg/paltad-rdp
-    dst: /usr/libexec/duckjump/paltad-rdp
+  - src: ./dist/pkg/duckjumpd-rdp
+    dst: /usr/libexec/duckjump/duckjumpd-rdp
     file_info: { mode: 0755 }
   - src: ./packaging/duckjump-cli
     dst: /usr/bin/duckjump
     file_info: { mode: 0755 }
   - src: ./packaging/systemd/duckjump.service
     dst: /usr/lib/systemd/system/duckjump.service
-  - src: ./packaging/systemd/duckjump-paltad.service
-    dst: /usr/lib/systemd/system/duckjump-paltad.service
+  - src: ./packaging/systemd/duckjumpd.service
+    dst: /usr/lib/systemd/system/duckjumpd.service
   - src: ./packaging/duckjump.env
     dst: /etc/duckjump/duckjump.env
     type: config|noreplace

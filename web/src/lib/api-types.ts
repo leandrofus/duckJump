@@ -26,6 +26,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File transfers
+         * @description Every file that went through the gateway, newest first.
+         *
+         *     Roles: admin, auditor, superadmin.
+         */
+        get: operations["listFilesAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit/files/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a transferred file (evidence)
+         * @description For auditors, while its content is kept. Audited (file.view).
+         *
+         *     Roles: admin, auditor, superadmin.
+         */
+        get: operations["downloadFileAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit/sessions": {
         parameters: {
             query?: never;
@@ -77,13 +121,35 @@ export interface paths {
         };
         /**
          * Download a session recording
-         * @description asciicast v2 for terminal sessions (playable with asciinema); for VNC and RDP the DuckJump graphical format (DJGFX1, see paltad recording.rs). Served gzip-compressed when the client accepts it. For a session still open it returns what has been recorded so far. 410 when the retention policy already deleted it. Allowed to auditors and admins, and to users holding view_recordings on the session's connection. Every download is audited.
+         * @description asciicast v2 for terminal sessions (playable with asciinema); for VNC and RDP the DuckJump graphical format (DJGFX1, see duckjumpd recording.rs). Served gzip-compressed when the client accepts it. For a session still open it returns what has been recorded so far. 410 when the retention policy already deleted it. Allowed to auditors and admins, and to users holding view_recordings on the session's connection. Every download is audited.
          *
          *     Roles: admin, auditor, superadmin, user.
          */
         get: operations["getRecording"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audit/sessions/{id}/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Terminate a live session
+         * @description Ends an open session now: the user's tunnel closes with the reason. The request is recorded (append-only) and audited; a gateway process holding the session picks it up within seconds even when it is not the one that received the request.
+         *
+         *     Roles: admin, superadmin.
+         */
+        post: operations["terminateSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -123,7 +189,7 @@ export interface paths {
         put?: never;
         /**
          * Log in
-         * @description Sets the palta_session cookie. When the user has TOTP enabled the session is only half open (mfa_required) until POST /auth/totp. Five failures per username and address within 15 minutes lock that pair out for the rest of the window.
+         * @description Sets the duckjump_session cookie. When the user has TOTP enabled the session is only half open (mfa_required) until POST /auth/totp. Five failures per username and address within 15 minutes lock that pair out for the rest of the window.
          */
         post: operations["login"];
         delete?: never;
@@ -250,6 +316,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Single sign-on callback
+         * @description Where the identity provider returns the browser. Verifies the state, redeems the code, checks the ID token, provisions the user and opens a session; then redirects to the UI (with login_error on failure). Audited.
+         */
+        get: operations["oidcCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/oidc/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Start single sign-on
+         * @description Redirects the browser to the identity provider (authorization code flow with PKCE).
+         */
+        get: operations["oidcLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How users can sign in
+         * @description For the login page. No authentication needed.
+         */
+        get: operations["authProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/totp": {
         parameters: {
             query?: never;
@@ -321,7 +447,7 @@ export interface paths {
         patch: operations["updateConnection"];
         trace?: never;
     };
-    "/connections/{id}/host-key": {
+    "/connections/{id}/files/list": {
         parameters: {
             query?: never;
             header?: never;
@@ -330,10 +456,82 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * Browse a host's files
+         * @description Needs can_upload or can_download on the connection (SSH, over SFTP).
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        post: operations["hostList"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{id}/files/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take a file out of a host into my tray
+         * @description Needs can_download. The file is kept with its SHA-256 and audited (file.pull).
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        post: operations["hostPull"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{id}/files/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a file from my tray into a host
+         * @description Needs can_upload. Refuses to replace an existing file unless overwrite. Audited (file.push).
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        post: operations["hostPush"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{id}/host-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Approve (pin) a host key
+         * @description Pins the fingerprint as the key sessions must find on the server. Use it after comparing host_key_pending with the key shown on the server itself, or to pin a known key up front. Replaces a pinned key.
+         *
+         *     Roles: admin, superadmin.
+         */
+        put: operations["approveHostKey"];
         post?: never;
         /**
          * Forget the pinned host key
-         * @description The next session pins whatever key the host presents (trust on first use).
+         * @description The next session reports the key the host presents, to be approved (or, with trust on first use, pins it).
          *
          *     Roles: admin, superadmin.
          */
@@ -357,6 +555,78 @@ export interface paths {
          *     Roles: admin, auditor, superadmin, user.
          */
         get: operations["tunnel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My file tray
+         * @description Files I uploaded or pulled out of hosts, whose content is still kept.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        get: operations["listTray"];
+        put?: never;
+        /**
+         * Upload a file to my tray
+         * @description The request body is the file's content. Audited with its SHA-256.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        post: operations["uploadToTray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a file from my tray
+         * @description Its content goes; the record of it stays.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        delete: operations["deleteFromTray"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a file from my tray
+         * @description A file pulled out of a host needs can_download on that host still; one I uploaded myself is always mine to take back. Audited.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        get: operations["downloadFromTray"];
         put?: never;
         post?: never;
         delete?: never;
@@ -931,6 +1201,10 @@ export interface components {
             /** @description Public address the agent connects from. */
             remote_addr: string;
         };
+        ApproveHostKeyRequest: {
+            /** @description The key to pin, as checked on the server itself (ssh-keygen -lf, or the certificate key for RDP and VNC). Usually the host_key_pending value. */
+            fingerprint: string;
+        };
         AuditEvent: {
             /**
              * @example auth.login
@@ -952,12 +1226,21 @@ export interface components {
             ts: string;
         };
         AuditVerification: {
+            /** @description Events the MAC chain vouches for (keyed outside the database, so a rewrite with database access alone shows). */
+            authenticated: number;
             /** @description Id of the first event that does not verify. */
             broken_at?: number;
             /** @description Events verified before stopping. */
             events: number;
             ok: boolean;
             reason?: string;
+            /** @description The chain carries MACs. A chain with events and none does not verify. */
+            sealed: boolean;
+        };
+        AuthProviders: {
+            /** @description Username and password login is available. */
+            local: boolean;
+            oidc: components["schemas"]["OIDCProvider"] | null;
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -983,6 +1266,8 @@ export interface components {
             host: string;
             /** @description Pinned SHA256 fingerprint. */
             host_key: string | null;
+            /** @description Key the server presented with none pinned, waiting for an admin to approve it (PUT /connections/{id}/host-key). */
+            host_key_pending: string | null;
             /** Format: uuid */
             id: string;
             name: string;
@@ -1039,7 +1324,7 @@ export interface components {
             secret_id?: string | null;
             /**
              * Format: uuid
-             * @description null means reachable directly from paltad.
+             * @description null means reachable directly from duckjumpd.
              */
             site_id?: string | null;
             tags?: string[];
@@ -1057,6 +1342,11 @@ export interface components {
             /** @description Machine-readable code, e.g. not_found, conflict, csrf. */
             error: string;
             message: string;
+        };
+        FileCredentials: {
+            /** Format: password */
+            password: string;
+            username: string;
         };
         Folder: {
             /** Format: date-time */
@@ -1091,6 +1381,39 @@ export interface components {
             description?: string;
             name: string;
         };
+        HostListRequest: {
+            /** @description For connections without a vaulted credential. */
+            credentials?: components["schemas"]["FileCredentials"];
+            /** @description Directory; empty for the login directory. */
+            path?: string;
+        };
+        HostListing: {
+            entries: {
+                dir: boolean;
+                link: boolean;
+                mode: number | null;
+                /** @description Unix seconds. */
+                mtime: number | null;
+                name: string;
+                size: number;
+            }[];
+            /** @description The directory, as the host resolved it. */
+            path: string;
+        };
+        HostPullRequest: {
+            credentials?: components["schemas"]["FileCredentials"];
+            /** @description File on the host. */
+            path: string;
+        };
+        HostPushRequest: {
+            credentials?: components["schemas"]["FileCredentials"];
+            /** @description A file of my tray. */
+            file_id: string;
+            /** @default false */
+            overwrite: boolean;
+            /** @description Where to write it; ending in / puts it in that directory with its own name. */
+            path: string;
+        };
         LoginRequest: {
             /** Format: password */
             password: string;
@@ -1109,12 +1432,20 @@ export interface components {
             mfa_pending: boolean;
             user: components["schemas"]["User"];
         };
+        OIDCProvider: {
+            /** @description Navigate the browser here to sign in. */
+            login_url: string;
+            /** @description Label for the sign-in button. */
+            name: string;
+        };
         PasswordRequest: {
             /** Format: password */
             password: string;
         };
         Policy: {
             can_connect: boolean;
+            can_download: boolean;
+            can_upload: boolean;
             can_view_recordings: boolean;
             /** Format: date-time */
             created_at: string;
@@ -1136,6 +1467,16 @@ export interface components {
         PolicyRequest: {
             /** @default true */
             can_connect: boolean;
+            /**
+             * @description Take files from the host into the user's file tray (and on to their computer).
+             * @default false
+             */
+            can_download: boolean;
+            /**
+             * @description Send files from the user's file tray to the host.
+             * @default false
+             */
+            can_upload: boolean;
             /** @default false */
             can_view_recordings: boolean;
             description?: string;
@@ -1159,6 +1500,10 @@ export interface components {
             ttl_seconds?: number;
         };
         PortalConnection: {
+            /** @description May take files from this host into the tray. */
+            can_download: boolean;
+            /** @description May send files from the tray to this host. */
+            can_upload: boolean;
             /**
              * @description vault: injected, nothing to ask. prompt: ask the user before connecting. none: try without; the server may answer credentials_required.
              * @enum {string}
@@ -1293,6 +1638,36 @@ export interface components {
             /** @description Base32 secret, for manual entry. */
             secret: string;
         };
+        TerminateSessionRequest: {
+            /** @description Shown to the user and kept in the audit log. */
+            reason?: string;
+        };
+        TrayFile: {
+            /** @description The host it came from (origin host). */
+            connection_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            deleted_at: string | null;
+            /**
+             * Format: date-time
+             * @description When its content is deleted (the record stays).
+             */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * @description upload: from a computer; host: pulled out of a connection.
+             * @enum {string}
+             */
+            origin: "upload" | "host";
+            owner_id: string;
+            owner_name: string;
+            remote_path: string;
+            sha256: string;
+            size: number;
+        };
         /** @description Only the fields present change. tags replaces the whole set. */
         UpdateConnectionRequest: {
             /** @enum {string} */
@@ -1332,6 +1707,8 @@ export interface components {
         };
         UpdatePolicyRequest: {
             can_connect?: boolean;
+            can_download?: boolean;
+            can_upload?: boolean;
             can_view_recordings?: boolean;
             description?: string;
             /**
@@ -1426,6 +1803,105 @@ export interface operations {
             };
             /** @description Not allowed (role, grant or missing CSRF header) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listFilesAudit: {
+        parameters: {
+            query?: {
+                owner_id?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrayFile"][];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    downloadFileAudit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Error 410 */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1578,6 +2054,78 @@ export interface operations {
             };
         };
     };
+    terminateSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TerminateSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Termination requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Conflicts with the current state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     verifyAudit: {
         parameters: {
             query?: never;
@@ -1621,7 +2169,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -1684,7 +2232,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -1761,7 +2309,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -1813,7 +2361,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -1865,7 +2413,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -1926,7 +2474,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -1980,12 +2528,77 @@ export interface operations {
             };
         };
     };
+    oidcCallback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To the UI */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    oidcLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To the identity provider */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    authProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sign-in methods */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthProviders"];
+                };
+            };
+        };
+    };
     loginTOTP: {
         parameters: {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -2086,7 +2699,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -2198,7 +2811,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -2257,7 +2870,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -2326,12 +2939,286 @@ export interface operations {
             };
         };
     };
+    hostList: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostListRequest"];
+            };
+        };
+        responses: {
+            /** @description The directory */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostListing"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Conflicts with the current state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    hostPull: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostPullRequest"];
+            };
+        };
+        responses: {
+            /** @description In the tray */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrayFile"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    hostPush: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostPushRequest"];
+            };
+        };
+        responses: {
+            /** @description Written */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Error 422 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    approveHostKey: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveHostKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Host key pinned */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     clearHostKey: {
         parameters: {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -2441,6 +3328,208 @@ export interface operations {
             };
         };
     };
+    listTray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrayFile"][];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    uploadToTray: {
+        parameters: {
+            query: {
+                name: string;
+            };
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Stored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrayFile"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Error 413 */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteFromTray: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    downloadFromTray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Error 410 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listFolders: {
         parameters: {
             query?: never;
@@ -2484,7 +3573,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -2547,7 +3636,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -2615,7 +3704,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -2727,7 +3816,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -2839,7 +3928,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -2898,7 +3987,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -3021,7 +4110,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -3081,7 +4170,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -3184,7 +4273,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -3296,7 +4385,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -3355,7 +4444,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -3487,7 +4576,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -3599,7 +4688,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -3658,7 +4747,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -3773,7 +4862,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -3874,7 +4963,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -3986,7 +5075,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -4054,7 +5143,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -4177,7 +5266,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -4285,7 +5374,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path?: never;
             cookie?: never;
@@ -4397,7 +5486,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -4465,7 +5554,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -4637,7 +5726,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;
@@ -4700,7 +5789,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description Any value. Required on every state-changing request. */
-                "X-Palta-Request": components["parameters"]["CSRF"];
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
             };
             path: {
                 id: string;

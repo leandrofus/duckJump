@@ -3,13 +3,13 @@
 # `openapi:schema` comments in internal/**. Do not edit openapi.yaml by hand.
 openapi: 3.1.0
 info:
-  title: Palta API
+  title: DuckJump API
   version: 0.1.0
   license: { name: Apache-2.0, identifier: Apache-2.0 }
   description: >-
-    Administration and portal API of the Palta access bastion. Authenticate
-    with POST /auth/login, which sets the palta_session cookie. Every request
-    that changes state must also send the X-Palta-Request header (any value):
+    Administration and portal API of the DuckJump access bastion. Authenticate
+    with POST /auth/login, which sets the duckjump_session cookie. Every request
+    that changes state must also send the X-DuckJump-Request header (any value):
     together with the SameSite=Strict cookie it blocks cross-site requests.
 servers:
   - url: /api/v1
@@ -32,10 +32,10 @@ components:
     session:
       type: apiKey
       in: cookie
-      name: palta_session
+      name: duckjump_session
   parameters:
     CSRF:
-      name: X-Palta-Request
+      name: X-DuckJump-Request
       in: header
       required: true
       schema: { type: string }

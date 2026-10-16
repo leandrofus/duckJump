@@ -4,23 +4,24 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/leandrofus/palta/gateway/internal/auth"
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
-	"github.com/leandrofus/palta/gateway/internal/totp"
+	"github.com/leandrofus/duckjump/gateway/internal/auth"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/totp"
 )
 
 var errTooMany = &apiError{http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts, try again later"}
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, tok string) {
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true, Secure: r.TLS != nil,
+		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true, Secure: s.secureRequest(r),
 		SameSite: http.SameSiteStrictMode, MaxAge: int(auth.SessionAbsolute.Seconds()),
 	})
 }
 
-func clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secureRequest(r),
+		SameSite: http.SameSiteStrictMode})
 }
 
 // openapi:schema LoginRequest
@@ -103,7 +104,7 @@ type loginResponse struct {
 // openapi:operation
 // summary: Log in
 // description: >-
-//   Sets the palta_session cookie. When the user has TOTP enabled the
+//   Sets the duckjump_session cookie. When the user has TOTP enabled the
 //   session is only half open (mfa_required) until POST /auth/totp.
 //   Five failures per username and address within 15 minutes lock that
 //   pair out for the rest of the window.
@@ -128,7 +129,7 @@ func (s *Server) doLogin(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	ctx, ip := r.Context(), clientIP(r)
+	ctx, ip := r.Context(), s.clientIP(r)
 	key := req.Username + "|" + ip
 	if !s.limiter.Allowed(key) {
 		return errTooMany
@@ -164,7 +165,7 @@ func (s *Server) doLogin(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) completeLogin(r *http.Request, u db.ConfigUser, method string) {
 	ctx := r.Context()
 	s.Store.Q.TouchUserLogin(ctx, db.TouchUserLoginParams{ID: u.ID, Now: store.NullTime(store.Now())})
-	s.Store.AuditTx(ctx, store.Event{Actor: store.Actor{ID: u.ID, Name: u.Username, IP: clientIP(r)},
+	s.Store.AuditTx(ctx, store.Event{Actor: store.Actor{ID: u.ID, Name: u.Username, IP: s.clientIP(r)},
 		Action: "auth.login", ObjectType: "user", ObjectID: u.ID, Details: map[string]any{"method": method}})
 }
 
@@ -216,7 +217,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, p principal, _ b
 		}
 		s.Store.AuditTx(r.Context(), store.Event{Actor: p.actor(), Action: "auth.logout", ObjectType: "user", ObjectID: p.User.ID})
 	}
-	clearSessionCookie(w)
+	s.clearSessionCookie(w, r)
 	return noContent(w)
 }
 
@@ -252,6 +253,9 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, p principal, pending
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p principal) error {
 	if p.Dev {
 		return badRequest("not available in dev mode")
+	}
+	if p.User.Source != "local" {
+		return conflict("your password is managed by the identity provider")
 	}
 	var req changePasswordRequest
 	if err := decode(r, &req); err != nil {
@@ -304,6 +308,9 @@ func (s *Server) totpEnroll(w http.ResponseWriter, r *http.Request, p principal)
 	if p.User.TOTPEnabled {
 		return conflict("TOTP is already enabled; disable it first")
 	}
+	if p.User.Source != "local" {
+		return conflict("your second factor is managed by the identity provider")
+	}
 	secret := totp.NewSecret()
 	err := s.Store.Q.SetUserTOTP(r.Context(), db.SetUserTOTPParams{
 		ID: p.User.ID, TOTPSealed: s.Auth.SealTOTP(p.User.ID, secret), TOTPEnabled: false, Now: store.Now(),
@@ -311,7 +318,7 @@ func (s *Server) totpEnroll(w http.ResponseWriter, r *http.Request, p principal)
 	if err != nil {
 		return err
 	}
-	return ok(w, totpEnrollment{Secret: secret, OTPAuthURL: totp.URL("Palta", p.User.Username, secret)})
+	return ok(w, totpEnrollment{Secret: secret, OTPAuthURL: totp.URL("DuckJump", p.User.Username, secret)})
 }
 
 // openapi:operation

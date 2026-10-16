@@ -1,7 +1,9 @@
 version: "2"
 sql:
-  - engine: sqlite
-    schema: internal/store/migrations
+  # Queries are written to run on both engines (SQLite accepts $N
+  # placeholders); types come from the PostgreSQL schema.
+  - engine: postgresql
+    schema: internal/store/migrations/postgres
     queries: internal/store/queries
     gen:
       go:

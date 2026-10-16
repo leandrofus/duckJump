@@ -56,8 +56,10 @@ export function AuditLog() {
         <div className="page-actions">
           {verify && (
             verify.ok
-              ? <span className="tag tag-ok" title={t('Every event hash recomputed and matched.')}><ShieldCheck size={13} /> {t('Chain intact · {0} events', verify.events)}</span>
-              : <span className="tag tag-bad" title={verify.reason}><ShieldAlert size={13} /> {t('Chain broken at event #{0}', verify.broken_at)}</span>
+              ? <span className="tag tag-ok" title={t('Every event hash and MAC recomputed and matched. The MACs are keyed outside the database: a rewrite with access to the database alone shows here.')}><ShieldCheck size={13} /> {t('Chain intact · {0} events', verify.events)}</span>
+              : verify.broken_at
+                ? <span className="tag tag-bad" title={verify.reason}><ShieldAlert size={13} /> {t('Chain broken at event #{0}', verify.broken_at)}</span>
+                : <span className="tag tag-bad" title={verify.reason}><ShieldAlert size={13} /> {t('Chain not sealed')}</span>
           )}
           <button className="btn btn-sm" onClick={runVerify}><ShieldCheck size={14} /> {t('Verify')}</button>
           <div className="search">
@@ -69,7 +71,9 @@ export function AuditLog() {
         </div>
       </div>
       <div className="page-body">
-        {verify && !verify.ok && <div className="alert alert-bad">{t('The audit chain does not verify from event #{0}: {1}. Someone altered or removed records.', verify.broken_at, verify.reason)}</div>}
+        {verify && !verify.ok && (verify.broken_at
+          ? <div className="alert alert-bad">{t('The audit chain does not verify from event #{0}: {1}. Someone altered or removed records.', verify.broken_at, verify.reason)}</div>
+          : <div className="alert alert-bad">{t('The audit chain carries no MACs, so changes made with access to the database would not show. On the gateway host run: duckjump-gw audit-seal (or sudo duckjump audit-seal).')}</div>)}
         <DataTable
           rows={rows}
           rowKey={(e) => String(e.id)}

@@ -1,10 +1,10 @@
 -- name: CreatePolicy :exec
 INSERT INTO config_policies (
     id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings,
-    expires_at, description, created_by, created_at
+    can_upload, can_download, expires_at, description, created_by, created_at
 ) VALUES (
     @id, @subject_type, @subject_id, @object_type, @object_ref, @can_connect, @can_view_recordings,
-    @expires_at, @description, @created_by, @now
+    @can_upload, @can_download, @expires_at, @description, @created_by, @now
 );
 
 -- name: GetPolicy :one
@@ -19,6 +19,7 @@ ORDER BY created_at;
 -- name: UpdatePolicy :exec
 UPDATE config_policies
 SET can_connect = @can_connect, can_view_recordings = @can_view_recordings,
+    can_upload = @can_upload, can_download = @can_download,
     expires_at = @expires_at, description = @description
 WHERE id = @id;
 

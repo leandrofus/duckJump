@@ -13,8 +13,8 @@ import (
 
 const countFolderChildren = `-- name: CountFolderChildren :one
 SELECT
-    (SELECT count(*) FROM config_folders f WHERE f.parent_id = CAST(?1 AS TEXT)) AS folders,
-    (SELECT count(*) FROM config_connections c WHERE c.folder_id = ?1) AS connections
+    (SELECT count(*) FROM config_folders f WHERE f.parent_id = CAST($1 AS TEXT)) AS folders,
+    (SELECT count(*) FROM config_connections c WHERE c.folder_id = $1) AS connections
 `
 
 type CountFolderChildrenRow struct {
@@ -30,7 +30,7 @@ func (q *Queries) CountFolderChildren(ctx context.Context, id string) (CountFold
 }
 
 const createFolder = `-- name: CreateFolder :exec
-INSERT INTO config_folders (id, parent_id, name, created_at) VALUES (?1, ?2, ?3, ?4)
+INSERT INTO config_folders (id, parent_id, name, created_at) VALUES ($1, $2, $3, $4)
 `
 
 type CreateFolderParams struct {
@@ -51,7 +51,7 @@ func (q *Queries) CreateFolder(ctx context.Context, arg CreateFolderParams) erro
 }
 
 const deleteFolder = `-- name: DeleteFolder :execrows
-DELETE FROM config_folders WHERE id = ?1
+DELETE FROM config_folders WHERE id = $1
 `
 
 func (q *Queries) DeleteFolder(ctx context.Context, id string) (int64, error) {
@@ -64,7 +64,7 @@ func (q *Queries) DeleteFolder(ctx context.Context, id string) (int64, error) {
 
 const folderSubtree = `-- name: FolderSubtree :many
 WITH RECURSIVE sub(id) AS (
-    SELECT f.id FROM config_folders f WHERE f.id = ?1
+    SELECT f.id FROM config_folders f WHERE f.id = $1
     UNION
     SELECT f.id FROM config_folders f JOIN sub ON f.parent_id = sub.id
 )
@@ -96,7 +96,7 @@ func (q *Queries) FolderSubtree(ctx context.Context, id string) ([]string, error
 }
 
 const getFolder = `-- name: GetFolder :one
-SELECT id, parent_id, name, created_at FROM config_folders WHERE id = ?1
+SELECT id, parent_id, name, created_at FROM config_folders WHERE id = $1
 `
 
 func (q *Queries) GetFolder(ctx context.Context, id string) (ConfigFolder, error) {
@@ -144,7 +144,7 @@ func (q *Queries) ListFolders(ctx context.Context) ([]ConfigFolder, error) {
 }
 
 const updateFolder = `-- name: UpdateFolder :exec
-UPDATE config_folders SET parent_id = ?1, name = ?2 WHERE id = ?3
+UPDATE config_folders SET parent_id = $1, name = $2 WHERE id = $3
 `
 
 type UpdateFolderParams struct {

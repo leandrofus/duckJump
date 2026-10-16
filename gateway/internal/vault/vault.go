@@ -1,11 +1,13 @@
 // Package vault encrypts stored credentials with AES-256-GCM under a master
-// key that lives outside the database (PALTA_MASTER_KEY).
+// key that lives outside the database (DUCKJUMP_MASTER_KEY).
 package vault
 
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 
 type Vault struct {
 	aead cipher.AEAD
+	key  []byte
 }
 
 func GenerateKey() string {
@@ -37,7 +40,15 @@ func New(b64Key string) (*Vault, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Vault{aead: aead}, nil
+	return &Vault{aead: aead, key: key}, nil
+}
+
+// Derive returns a 32-byte key for another purpose (e.g. "audit-mac"),
+// independent of the encryption key: HMAC-SHA256(master, "palta/"+label).
+func (v *Vault) Derive(label string) []byte {
+	m := hmac.New(sha256.New, v.key)
+	m.Write([]byte("palta/" + label))
+	return m.Sum(nil)
 }
 
 // Seal encrypts plaintext. aad binds the ciphertext to its row (the secret

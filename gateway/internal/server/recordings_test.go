@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -11,8 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/objstore"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 const castBody = `{"version":2,"width":80,"height":24}` + "\n" + `[0.1,"o","hola\r\n"]` + "\n"
@@ -148,4 +151,65 @@ func TestRetentionPurge(t *testing.T) {
 	// Without a recordings directory retention cannot be enabled.
 	e.server.RecordingsDir = ""
 	root.do("PUT", "/settings/recordings", recordingSettingsRequest{RetentionDays: 7}, 409, nil)
+}
+
+// Recordings duckjumpd moved to the bucket: downloads, sizes, usage and
+// retention work from there. Needs DUCKJUMP_TEST_S3 and DUCKJUMP_S3_* (make test-s3).
+func TestRecordingsInS3(t *testing.T) {
+	if os.Getenv("DUCKJUMP_TEST_S3") == "" {
+		t.Skip("DUCKJUMP_TEST_S3 not set (make test-s3 runs MinIO)")
+	}
+	getenv := func(k string) string {
+		if k == "DUCKJUMP_S3_PREFIX" {
+			return "gw-test-" + store.NewID() + "/"
+		}
+		return os.Getenv(k)
+	}
+	objs, err := objstore.FromEnv(getenv, os.Getenv("DUCKJUMP_S3_SECRET_KEY"))
+	if err != nil || objs == nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := objs.Check(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t)
+	e.server.Objects = objs // and no local directory: duckjumpd is elsewhere
+	root := e.as("root")
+
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	io.WriteString(zw, castBody)
+	zw.Close()
+	old := store.Now().Add(-40 * 24 * time.Hour)
+	e.session(t, "s3old", old)
+	e.session(t, "s3new", store.Now())
+	for _, n := range []string{"s3old", "s3new"} {
+		if err := objs.Put(ctx, n+".cast.gz", bytes.NewReader(gz.Bytes()), int64(gz.Len())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, accept := range []bool{true, false} {
+		resp, body := root.download(t, "s3new", accept)
+		if resp.StatusCode != 200 || body != castBody {
+			t.Fatalf("download (gzip %v): %d %q", accept, resp.StatusCode, body)
+		}
+	}
+	var s sessionDTO
+	root.do("GET", "/audit/sessions/s3new", nil, 200, &s)
+	if s.Bytes == nil || *s.Bytes != int64(gz.Len()) {
+		t.Fatalf("size: %+v", s.Bytes)
+	}
+	var st recordingSettings
+	root.do("PUT", "/settings/recordings", recordingSettingsRequest{RetentionDays: 30}, 200, &st)
+	if st.Purged == nil || *st.Purged != 1 || st.Usage.Recordings != 1 {
+		t.Fatalf("retention: %+v", st)
+	}
+	if _, err := objs.Stat(ctx, "s3old"); !errors.Is(err, objstore.ErrNotFound) {
+		t.Fatalf("purged recording still in the bucket: %v", err)
+	}
+	if resp, _ := root.download(t, "s3old", false); resp.StatusCode != http.StatusGone {
+		t.Fatalf("purged download: %d", resp.StatusCode)
+	}
+	objs.Delete(ctx, "s3new")
 }
