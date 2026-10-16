@@ -39,7 +39,15 @@
       "icons/128x128@2x.png",
       "icons/icon.png",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "desktopTemplate": "duckjump-assist.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "duckjump-assist.desktop"
+      }
+    }
   },
   "plugins": {
     "deep-link": {
