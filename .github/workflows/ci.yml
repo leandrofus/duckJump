@@ -1,12 +1,12 @@
-# Tests on every pull request (and on main, so the badge and caches stay
-# fresh). Also called by release.yml before building a tag.
+# Tests on every pull request, on main, and on version tags; release.yml
+# starts when this run succeeds for a tag.
 name: ci
 
 on:
   pull_request:
   push:
     branches: [main]
-  workflow_call:
+    tags: ['v*']
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
