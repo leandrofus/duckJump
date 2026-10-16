@@ -63,7 +63,6 @@ control. Format: [`paltad/crates/palta-proto/src/gfx.rs`](paltad/crates/palta-pr
 | `paltad/rdp` | `paltad-rdp`: RDP worker on IronRDP (separate workspace) |
 | `web/` | React 19 + Vite UI (bun), English and Spanish |
 | `packaging/` | rpm/deb packages and systemd services |
-| `docs/SCOPE.md` | Scope and roadmap |
 
 ## Install
 

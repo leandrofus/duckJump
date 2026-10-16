@@ -7,3 +7,5 @@ gateway/bin/
 web/node_modules/
 web/dist/
 *.db
+# internal planning notes
+docs/SCOPE.md
