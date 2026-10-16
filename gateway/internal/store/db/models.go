@@ -182,6 +182,27 @@ type ConfigSite struct {
 	CreatedAt      time.Time
 }
 
+type ConfigSupportSession struct {
+	ID             string
+	Token          string
+	CreatedBy      string
+	TargetName     string
+	Reason         string
+	Ticket         string
+	TotpSecret     string
+	Status         string
+	ExpiresAt      time.Time
+	ConnectedAt    sql.NullTime
+	ActivatedAt    sql.NullTime
+	EndedAt        sql.NullTime
+	EndedReason    string
+	ClientIP       string
+	ClientOs       string
+	ClientHostname string
+	RecordingID    string
+	CreatedAt      time.Time
+}
+
 type ConfigUser struct {
 	ID           string
 	Username     string

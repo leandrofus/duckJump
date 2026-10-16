@@ -2,7 +2,7 @@ import { t, LANGUAGES, getLang, setLang } from './i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MonitorSmartphone, Server, Users as UsersIcon, UsersRound, ShieldCheck, KeyRound, Network, ScrollText, History,
-  Search, Plus, Languages, LogOut, Moon, Sun, Check, PanelLeftClose, PanelLeft, Star, Clock, UserCog, TerminalSquare, Settings as SettingsIcon, FolderInput, Ticket,
+  Search, Plus, Languages, LogOut, Moon, Sun, Check, PanelLeftClose, PanelLeft, Star, Clock, UserCog, TerminalSquare, Settings as SettingsIcon, FolderInput, Ticket, LifeBuoy,
 } from 'lucide-react'
 import { api, setUnauthorizedHandler } from './lib/api'
 import type { Me, PortalConnection } from './lib/api'
@@ -29,6 +29,7 @@ import { Account } from './pages/Account'
 import { Files } from './pages/Files'
 import { Settings } from './pages/Settings'
 import { AccessRequests, RequestAccessDialog } from './pages/AccessRequests'
+import { Support } from './pages/Support'
 
 export type Recent = { id: string; name: string; protocol: string }
 
@@ -41,6 +42,7 @@ interface NavItem {
 
 const NAV_PORTAL: NavItem[] = [
   { id: 'portal', label: t('My connections'), icon: MonitorSmartphone },
+  { id: 'support', label: t('Remote support'), icon: LifeBuoy },
   { id: 'files', label: t('My files'), icon: FolderInput },
   { id: 'access-requests', label: t('Access requests'), icon: Ticket },
 ]
@@ -333,6 +335,7 @@ function Shell() {
     case 'account': page = <Account />; break
     case 'files': page = <Files />; break
     case 'access-requests': page = <AccessRequests />; break
+    case 'support': page = <Support id={id} />; break
     default: page = <Portal />
   }
   return (

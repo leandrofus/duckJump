@@ -76,6 +76,16 @@ Reach a TCP service (a database, an internal API) through duckJump with a native
   required.
 - **Not planned**: reverse forwarding (`-R`), which opens the internal network outwards.
 
+### 6. On-demand remote support (duckJump Assist)
+
+Attended-only quick assistance on remote workstations behind NAT/firewalls.
+
+- **On-demand & attended-only**: Portable single binary (`duckjump-assist`), no background services or unattended access. Prominent overlay banner with instant disconnect.
+- **Dynamic TOTP verification**: Operator generates a support session link; client opens it and displays a rotating 6-digit TOTP code that must be verified by the operator before session activation.
+- **Native DJTP streaming**: Screen capture and diffs encoded directly to DJTP tiles (`duckjump-gfx`) without VNC server overhead, streamed through an outbound WebSocket + yamux tunnel to `duckjump-gw`.
+- **Local user priority**: Hardware input by the local user temporarily suspends remote operator inputs.
+- **File transfer & audit**: Integrated with user File Tray over SFTP, recorded and verifiable in the HMAC audit chain.
+
 ## Later
 
 - SSH command filtering (deny lists, confirm-before-run) on the recorded stream.
