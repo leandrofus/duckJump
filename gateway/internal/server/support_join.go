@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,8 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 	ps1ScriptURL := fmt.Sprintf("%s/support/run.ps1?token=%s", baseURL, token)
 	downloadBinaryURL := fmt.Sprintf("%s/support/duckjump-assist", baseURL)
 	agentServerWS := fmt.Sprintf("%s/api/v1/support/agent-tunnel/%s", baseURL, token)
+	appURL := assistAppLink(baseURL, token)
+	appDownloads := s.assistAppDownloads(baseURL)
 
 	accept := r.Header.Get("Accept")
 	if strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html") {
@@ -54,6 +57,8 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 			"curl_command":        fmt.Sprintf("curl -fsSL %s | sh", launchScriptURL),
 			"ps1_command":         fmt.Sprintf("irm %s | iex", ps1ScriptURL),
 			"manual_command":      fmt.Sprintf("./duckjump-assist --server %s --token %s", baseURL, token),
+			"app_url":             appURL,
+			"app_downloads":       appDownloads,
 		})
 		return
 	}
@@ -391,6 +396,8 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
       </div>
     </div>
 
+    %s
+
     <!-- Instructions & Launch Options Card -->
     <div class="card">
       <h2 style="font-size: 18px; font-weight: 600; margin-bottom: 14px;">Cómo Conectar su Equipo</h2>
@@ -448,7 +455,7 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
         <div class="steps">
           <div class="step-item">
             <div class="step-num">1</div>
-            <div>Ejecute el comando en su terminal o abra la aplicación descargada.</div>
+            <div>Abra la sesión en duckJump Assist, o ejecute el comando en su terminal.</div>
           </div>
           <div class="step-item">
             <div class="step-num">2</div>
@@ -543,6 +550,7 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 		ticketHtml(ticket),
 		reasonHtml(reason),
 		expiresFormatted,
+		appCardHtml(status, appURL, appDownloads),
 		launchScriptURL, launchScriptURL,
 		ps1ScriptURL, ps1ScriptURL,
 		downloadBinaryURL,
@@ -611,15 +619,11 @@ func (s *Server) ServeAssistLaunchScript(w http.ResponseWriter, r *http.Request)
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
+	// The server and the binary are always this gateway's: a link to it must
+	// not be able to make users run something from elsewhere.
 	token := r.URL.Query().Get("token")
-	server := r.URL.Query().Get("server")
-	if server == "" {
-		server = baseURL
-	}
-	binURL := r.URL.Query().Get("bin_url")
-	if binURL == "" {
-		binURL = baseURL + "/support/duckjump-assist"
-	}
+	server := baseURL
+	binURL := baseURL + "/support/duckjump-assist"
 
 	script := generateAssistLaunchScript(token, server, binURL)
 
@@ -649,15 +653,11 @@ func (s *Server) ServeAssistPowerShellScript(w http.ResponseWriter, r *http.Requ
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
+	// The server and the binary are always this gateway's: a link to it must
+	// not be able to make users run something from elsewhere.
 	token := r.URL.Query().Get("token")
-	server := r.URL.Query().Get("server")
-	if server == "" {
-		server = baseURL
-	}
-	binURL := r.URL.Query().Get("bin_url")
-	if binURL == "" {
-		binURL = baseURL + "/support/duckjump-assist?os=windows"
-	}
+	server := baseURL
+	binURL := baseURL + "/support/duckjump-assist?os=windows"
 
 	script := fmt.Sprintf(`param(
     [string]$Token = %s,
@@ -803,7 +803,86 @@ func (s *Server) findAssistBinary(osTarget string) (string, error) {
 	if osTarget == "windows" {
 		name = "duckjump-assist.exe"
 	}
+	return findDistFile(name)
+}
 
+// assistAppLink opens the session in duckJump Assist, when installed. The
+// app asks the user to confirm the server before connecting.
+func assistAppLink(baseURL, token string) string {
+	return "duckjump-assist://join?server=" + url.QueryEscape(baseURL) + "&token=" + url.QueryEscape(token)
+}
+
+// assistAppInstallers: the duckJump Assist installers this gateway can
+// serve, per OS, in order of preference (make assist-app-bundle puts them
+// in dist/bin under these names).
+var assistAppInstallers = map[string][]string{
+	"linux":   {"duckjump-assist-app.AppImage", "duckjump-assist-app.deb"},
+	"windows": {"duckjump-assist-app-setup.exe", "duckjump-assist-app.msi"},
+}
+
+func findAssistApp(osTarget string) (string, error) {
+	names, known := assistAppInstallers[osTarget]
+	if !known {
+		return "", fmt.Errorf("unknown os %q", osTarget)
+	}
+	for _, n := range names {
+		if p, err := findDistFile(n); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("duckJump Assist for %s is not available on this server", osTarget)
+}
+
+// assistAppDownloads maps OS to the download URL of each installer present.
+func (s *Server) assistAppDownloads(baseURL string) map[string]string {
+	out := map[string]string{}
+	for osTarget := range assistAppInstallers {
+		if _, err := findAssistApp(osTarget); err == nil {
+			out[osTarget] = baseURL + "/support/duckjump-assist-app?os=" + osTarget
+		}
+	}
+	return out
+}
+
+// DownloadAssistApp serves the duckJump Assist installer for ?os=linux|windows.
+func (s *Server) DownloadAssistApp(w http.ResponseWriter, r *http.Request) {
+	path, err := findAssistApp(r.URL.Query().Get("os"))
+	if err != nil {
+		writeErr(w, &apiError{http.StatusNotFound, "not_found", err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(path)))
+	http.ServeFile(w, r, path)
+}
+
+func appCardHtml(status, appURL string, downloads map[string]string) string {
+	if status == "ended" || status == "expired" {
+		return ""
+	}
+	var install string
+	labels := []struct{ os, label string }{{"linux", "Linux"}, {"windows", "Windows"}}
+	var links []string
+	for _, l := range labels {
+		if u, ok := downloads[l.os]; ok {
+			links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(u), l.label))
+		}
+	}
+	if len(links) > 0 {
+		install = fmt.Sprintf(`<p style="font-size: 13px; color: var(--text-muted); margin-top: 12px;">¿No la tiene? Instálela para la próxima vez: %s</p>`, strings.Join(links, " · "))
+	}
+	return fmt.Sprintf(`<div class="card">
+      <h2 style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">¿Ya tiene duckJump Assist?</h2>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 14px;">Ábrala con un clic. Le pedirá confirmar el servidor y le mostrará el código de verificación.</p>
+      <a href="%s" class="btn-download">🦆 Abrir en duckJump Assist</a>
+      <p style="font-size: 13px; color: var(--text-muted); margin-top: 12px;">Si no se abre nada, use las opciones de abajo: no hace falta instalar nada.</p>
+      %s
+    </div>`, html.EscapeString(appURL), install)
+}
+
+// findDistFile looks for a file the gateway serves for download: next to
+// its executable, in the build output directories, then on the PATH.
+func findDistFile(name string) (string, error) {
 	// 1. Next to the running executable
 	if exe, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(exe), name)

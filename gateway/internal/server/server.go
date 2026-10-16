@@ -81,6 +81,7 @@ type Server struct {
 	AgentServerURL string
 
 	limiter  *auth.Limiter
+	appCodes appCodes
 	live     liveSessions
 	checkMu  sync.Mutex
 	nodeOnce sync.Once
@@ -99,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	// Public support client endpoints.
 	mux.HandleFunc("GET /support/join/{token}", s.ServeSupportJoin)
 	mux.HandleFunc("GET /support/duckjump-assist", s.DownloadAssistAgent)
+	mux.HandleFunc("GET /support/duckjump-assist-app", s.DownloadAssistApp)
 	mux.HandleFunc("GET /support/launch.sh", s.ServeAssistLaunchScript)
 	mux.HandleFunc("GET /support/run.ps1", s.ServeAssistPowerShellScript)
 	mux.HandleFunc("GET /api/v1/support/agent-tunnel/{token}", s.ServeSupportAgentTunnel)
@@ -118,6 +120,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/providers", s.authProviders)
 	mux.HandleFunc("GET /api/v1/auth/oidc/login", s.oidcLogin)
 	mux.HandleFunc("GET /api/v1/auth/oidc/callback", s.oidcCallback)
+	mux.HandleFunc("POST /api/v1/auth/oidc/token", s.oidcAppToken)
 	mux.Handle("POST /api/v1/auth/totp", s.pending(s.loginTOTP))
 	mux.Handle("POST /api/v1/auth/logout", s.pending(s.logout))
 	mux.Handle("GET /api/v1/auth/me", s.pending(s.me))

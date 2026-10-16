@@ -32,7 +32,6 @@ func generateVerificationCode() string {
 	return fmt.Sprintf("%06d", n.Int64()+100000)
 }
 
-
 // openapi:schema CreateSupportSession
 // type: object
 // required: [target_name]
@@ -52,10 +51,9 @@ type createSupportSessionReq struct {
 
 // openapi:schema RequestSupportSession
 // type: object
-// required: [target_name]
 // additionalProperties: false
 // properties:
-//   target_name: { type: string, description: 'User or machine requesting support.' }
+//   target_name: { type: string, description: 'User or machine requesting support (default: the caller).' }
 //   reason: { type: string, description: 'Reason for the support session.' }
 //   ticket: { type: string, description: 'Optional ticket identifier.' }
 //   account_type: { type: string, description: 'Account type: local, ad, or sso.' }
@@ -84,6 +82,48 @@ type verifySupportTOTPReq struct {
 	Code string `json:"code"`
 }
 
+// openapi:schema SupportStatus
+// type: object
+// required: [id, token, status, target_name, reason, ticket, expires_at]
+// properties:
+//   id: { type: string, format: uuid }
+//   token: { type: string }
+//   status: { type: string, enum: [pending, connected, active, ended, expired] }
+//   target_name: { type: string }
+//   reason: { type: string }
+//   ticket: { type: string }
+//   client_hostname: { type: string }
+//   client_os: { type: string }
+//   connected_at: { type: [string, 'null'], format: date-time }
+//   activated_at: { type: [string, 'null'], format: date-time }
+//   ended_at: { type: [string, 'null'], format: date-time }
+//   expires_at: { type: string, format: date-time }
+
+type supportStatusDTO struct {
+	ID             string     `json:"id"`
+	Token          string     `json:"token"`
+	Status         string     `json:"status"`
+	TargetName     string     `json:"target_name"`
+	Reason         string     `json:"reason"`
+	Ticket         string     `json:"ticket"`
+	ClientHostname string     `json:"client_hostname"`
+	ClientOS       string     `json:"client_os"`
+	ConnectedAt    *time.Time `json:"connected_at"`
+	ActivatedAt    *time.Time `json:"activated_at"`
+	EndedAt        *time.Time `json:"ended_at"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+}
+
+// openapi:schema SupportEnded
+// type: object
+// required: [status]
+// properties:
+//   status: { type: string, enum: [ended] }
+
+type supportEnded struct {
+	Status string `json:"status"`
+}
+
 // openapi:schema SupportSession
 // type: object
 // required: [id, token, join_url, created_by, target_name, reason, ticket, status, expires_at, created_at]
@@ -104,26 +144,28 @@ type verifySupportTOTPReq struct {
 //   client_os: { type: string }
 //   client_hostname: { type: string }
 //   created_at: { type: string, format: date-time }
+//   totp_secret: { type: string, description: 'Verification code; only in the answer to /support/request.' }
+//   verification_code: { type: string, description: 'Verification code the requester reads to the technician; only in the answer to /support/request.' }
 
 type supportSessionDTO struct {
-	ID             string     `json:"id"`
-	Token          string     `json:"token"`
-	JoinURL        string     `json:"join_url"`
-	CreatedBy      string     `json:"created_by"`
-	TargetName     string     `json:"target_name"`
-	Reason         string     `json:"reason"`
+	ID               string     `json:"id"`
+	Token            string     `json:"token"`
+	JoinURL          string     `json:"join_url"`
+	CreatedBy        string     `json:"created_by"`
+	TargetName       string     `json:"target_name"`
+	Reason           string     `json:"reason"`
 	Ticket           string     `json:"ticket"`
 	TotpSecret       string     `json:"totp_secret,omitempty"`
 	VerificationCode string     `json:"verification_code,omitempty"`
 	Status           string     `json:"status"`
-	ExpiresAt      time.Time  `json:"expires_at"`
-	ConnectedAt    *time.Time `json:"connected_at"`
-	ActivatedAt    *time.Time `json:"activated_at"`
-	EndedAt        *time.Time `json:"ended_at"`
-	ClientIP       string     `json:"client_ip"`
-	ClientOS       string     `json:"client_os"`
-	ClientHostname string     `json:"client_hostname"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	ConnectedAt      *time.Time `json:"connected_at"`
+	ActivatedAt      *time.Time `json:"activated_at"`
+	EndedAt          *time.Time `json:"ended_at"`
+	ClientIP         string     `json:"client_ip"`
+	ClientOS         string     `json:"client_os"`
+	ClientHostname   string     `json:"client_hostname"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 // SupportHub coordinates active on-demand support sessions.
@@ -234,6 +276,7 @@ func (s *Server) toSupportSessionDTO(r db.ConfigSupportSession) supportSessionDT
 // requestBody: { schema: CreateSupportSession }
 // responses:
 //   '201': { description: Created, schema: SupportSession }
+
 func (s *Server) createSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
 	var req createSupportSessionReq
 	if err := decode(r, &req); err != nil {
@@ -295,20 +338,39 @@ func (s *Server) createSupportSession(w http.ResponseWriter, r *http.Request, p 
 
 // openapi:operation
 // summary: Request an on-demand remote support session (from client desktop app)
-// description: Initiates a support request from the user's desktop application.
+// description: >-
+//   Initiates a support request from the user's desktop application. Needs a
+//   logged-in session (password or single sign-on); the session is owned by
+//   the caller. target_name defaults to the caller's username.
 // tags: [support]
 // requestBody: { schema: RequestSupportSession }
 // responses:
 //   '201': { description: Created, schema: SupportSession }
+//   '401': Error
+
 func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
+	if err := checkCSRF(r); err != nil {
+		writeErr(w, err)
+		return
+	}
+	// The request is owned by whoever asks: an anonymous caller could
+	// otherwise open sessions in the name of any user.
+	p, pending, err := s.resolve(r)
+	switch {
+	case err != nil:
+		writeErr(w, err)
+		return
+	case pending:
+		writeErr(w, &apiError{http.StatusForbidden, "mfa_required", "complete the TOTP step first"})
+		return
+	}
 	var req requestSupportSessionReq
 	if err := decode(r, &req); err != nil {
 		writeErr(w, badRequest("%s", err.Error()))
 		return
 	}
 	if strings.TrimSpace(req.TargetName) == "" {
-		writeErr(w, badRequest("target_name is required"))
-		return
+		req.TargetName = p.User.Username
 	}
 	ttl := 30 * time.Minute
 
@@ -324,36 +386,14 @@ func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
 	expiresAt := now.Add(ttl)
 
 	ctx := r.Context()
-	var createdBy string
-	if p, pending, err := s.resolve(r); err == nil && !pending {
-		createdBy = p.User.ID
-	} else if u, err := s.Store.Q.GetUserByUsername(ctx, req.TargetName); err == nil {
-		createdBy = u.ID
-	} else {
-		users, err := s.Store.Q.ListUsers(ctx)
-		if err == nil && len(users) > 0 {
-			for _, u := range users {
-				if u.Role == "superadmin" || u.Role == "admin" {
-					createdBy = u.ID
-					break
-				}
-			}
-			if createdBy == "" {
-				createdBy = users[0].ID
-			}
-		}
-	}
-	if createdBy == "" {
-		writeErr(w, badRequest("no valid user found to attach support request"))
-		return
-	}
+	createdBy := p.User.ID
 
 	target := strings.TrimSpace(req.TargetName)
 	if req.Domain != "" && !strings.Contains(target, `\`) && !strings.Contains(target, `@`) {
 		target = fmt.Sprintf(`%s\%s`, req.Domain, target)
 	}
 
-	err := s.Store.Q.CreateSupportSession(ctx, db.CreateSupportSessionParams{
+	err = s.Store.Q.CreateSupportSession(ctx, db.CreateSupportSessionParams{
 		ID:         id,
 		Token:      token,
 		CreatedBy:  createdBy,
@@ -380,7 +420,7 @@ func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
 	dto.VerificationCode = verificationCode
 
 	s.Store.AuditTx(ctx, store.Event{
-		Actor:      store.Actor{Name: target},
+		Actor:      p.actor(),
 		Action:     "support_session.requested",
 		ObjectType: "support_session",
 		ObjectID:   id,
@@ -401,7 +441,9 @@ func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
 // description: Returns the current status of an ongoing support session.
 // tags: [support]
 // responses:
-//   '200': { description: OK }
+//   '200': { description: Current state, schema: SupportStatus }
+//   '404': Error
+
 func (s *Server) getSupportStatusByToken(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
@@ -414,19 +456,19 @@ func (s *Server) getSupportStatusByToken(w http.ResponseWriter, r *http.Request)
 		writeErr(w, notFound("support session not found"))
 		return
 	}
-	ok(w, map[string]any{
-		"id":              sess.ID,
-		"token":           sess.Token,
-		"status":          sess.Status,
-		"target_name":     sess.TargetName,
-		"reason":          sess.Reason,
-		"ticket":          sess.Ticket,
-		"client_hostname": sess.ClientHostname,
-		"client_os":       sess.ClientOs,
-		"connected_at":    sess.ConnectedAt,
-		"activated_at":    sess.ActivatedAt,
-		"ended_at":        sess.EndedAt,
-		"expires_at":      sess.ExpiresAt,
+	ok(w, supportStatusDTO{
+		ID:             sess.ID,
+		Token:          sess.Token,
+		Status:         sess.Status,
+		TargetName:     sess.TargetName,
+		Reason:         sess.Reason,
+		Ticket:         sess.Ticket,
+		ClientHostname: sess.ClientHostname,
+		ClientOS:       sess.ClientOs,
+		ConnectedAt:    timePtr(sess.ConnectedAt),
+		ActivatedAt:    timePtr(sess.ActivatedAt),
+		EndedAt:        timePtr(sess.EndedAt),
+		ExpiresAt:      sess.ExpiresAt.UTC(),
 	})
 }
 
@@ -435,8 +477,15 @@ func (s *Server) getSupportStatusByToken(w http.ResponseWriter, r *http.Request)
 // description: Immediately closes an active support session from the client.
 // tags: [support]
 // responses:
-//   '200': { description: OK }
+//   '200': { description: Ended, schema: SupportEnded }
+//   '403': Error
+//   '404': Error
+
 func (s *Server) endSupportSessionByToken(w http.ResponseWriter, r *http.Request) {
+	if err := checkCSRF(r); err != nil {
+		writeErr(w, err)
+		return
+	}
 	token := r.PathValue("token")
 	if token == "" {
 		writeErr(w, badRequest("token is required"))
@@ -458,7 +507,7 @@ func (s *Server) endSupportSessionByToken(w http.ResponseWriter, r *http.Request
 		active.close()
 		s.SupportHub.Unregister(active)
 	}
-	ok(w, map[string]string{"status": "ended"})
+	ok(w, supportEnded{Status: "ended"})
 }
 
 // openapi:operation
@@ -467,6 +516,7 @@ func (s *Server) endSupportSessionByToken(w http.ResponseWriter, r *http.Request
 // tags: [support]
 // responses:
 //   '200': { description: OK, schema: '[]SupportSession' }
+
 func (s *Server) listSupportSessions(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx := r.Context()
 	createdBy := p.User.ID
@@ -495,6 +545,7 @@ func (s *Server) listSupportSessions(w http.ResponseWriter, r *http.Request, p p
 // tags: [support]
 // responses:
 //   '200': { description: OK, schema: SupportSession }
+
 func (s *Server) getSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx := r.Context()
 	id := r.PathValue("id")
@@ -512,6 +563,7 @@ func (s *Server) getSupportSession(w http.ResponseWriter, r *http.Request, p pri
 // requestBody: { schema: VerifySupportTOTP }
 // responses:
 //   '200': { description: OK, schema: SupportSession }
+
 func (s *Server) verifySupportTOTP(w http.ResponseWriter, r *http.Request, p principal) error {
 	var req verifySupportTOTPReq
 	if err := decode(r, &req); err != nil {
@@ -590,6 +642,7 @@ func (s *Server) verifySupportTOTP(w http.ResponseWriter, r *http.Request, p pri
 // tags: [support]
 // responses:
 //   '200': { description: Session ended, schema: SupportSession }
+
 func (s *Server) endSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx := r.Context()
 	id := r.PathValue("id")
@@ -628,6 +681,7 @@ func (s *Server) endSupportSession(w http.ResponseWriter, r *http.Request, p pri
 // tags: [support]
 // responses:
 //   '101': { description: Switching to the WebSocket protocol }
+
 func (s *Server) ServeSupportAgentTunnel(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
@@ -786,6 +840,7 @@ func (s *Server) handleAgentStream(sessionID string, active *activeSupport, stre
 // tags: [support]
 // responses:
 //   '101': { description: Switching to the WebSocket protocol }
+
 func (s *Server) operatorSupportWS(w http.ResponseWriter, r *http.Request, p principal) error {
 	id := r.PathValue("id")
 	active := s.SupportHub.Get(id)
