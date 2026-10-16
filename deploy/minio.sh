@@ -4,12 +4,13 @@
 #   deploy/minio.sh start   -> http://127.0.0.1:19000 (console :19001)
 #   deploy/minio.sh stop
 #   deploy/minio.sh env     -> DUCKJUMP_S3_* for duckjumpd and duckjump-gw
-# MINIO_IMAGE overrides the image (MinIO no longer publishes it freely;
-# any S3-compatible server works).
+# MinIO no longer publishes images (minio/minio is gone from Docker Hub and
+# quay.io); Chainguard's build is free for :latest. MINIO_IMAGE overrides it:
+# any MinIO image with a shell works. It runs as non-root, hence /tmp/data.
 set -euo pipefail
 NAME=duckjump-minio
 PORT=${MINIO_PORT:-19000}
-IMAGE=${MINIO_IMAGE:-minio/minio:latest}
+IMAGE=${MINIO_IMAGE:-cgr.dev/chainguard/minio:latest}
 ENGINE=${ENGINE:-$(command -v docker || command -v podman)}
 BUCKET=duckjump-recordings
 
@@ -29,7 +30,7 @@ start)
   "$ENGINE" rm -f $NAME >/dev/null 2>&1 || true
   "$ENGINE" run -d --name $NAME -p 127.0.0.1:$PORT:9000 -p 127.0.0.1:$((PORT + 1)):9001 \
     -e MINIO_ROOT_USER=duckjump -e MINIO_ROOT_PASSWORD=duckjump-secret-key \
-    --entrypoint sh "$IMAGE" -c "mkdir -p /data/$BUCKET && exec minio server /data --console-address :9001" >/dev/null
+    --entrypoint sh "$IMAGE" -c "mkdir -p /tmp/data/$BUCKET && exec minio server /tmp/data --console-address :9001" >/dev/null
   for _ in $(seq 1 60); do
     if curl -fs "http://127.0.0.1:$PORT/minio/health/ready" >/dev/null 2>&1; then echo "minio ready: http://127.0.0.1:$PORT bucket $BUCKET"; exit 0; fi
     sleep 1
