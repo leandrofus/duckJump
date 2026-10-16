@@ -84,8 +84,8 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 		statusAlertHtml = `<div class="security-callout" style="background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.35);">
       <div class="icon">⚠️</div>
       <div>
-        <h3 style="color: #f87171;">Esta sesión de asistencia ya fue finalizada</h3>
-        <p>Por seguridad, los enlaces y códigos de verificación son de un solo uso. Si aún requiere asistencia remota, solicite a su operador un nuevo enlace.</p>
+        <h3 style="color: #f87171;">Esta sesión de asistencia fue cerrada</h3>
+        <p>El técnico finalizó esta sesión. Si aún requiere asistencia remota, solicítele un nuevo enlace.</p>
       </div>
     </div>`
 	case "expired":
@@ -410,7 +410,7 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
       <!-- Tab 1: Terminal Launcher (Linux / Mac / Windows) -->
       <div id="tab-terminal" class="tab-content active">
         <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">
-          Copie y ejecute este comando en su terminal. Descargará y ejecutará el agente temporalmente sin dejar archivos residuales:
+          Copie y ejecute este comando en su terminal. Abrirá la aplicación duckJump Assist conectada a esta sesión; en equipos sin escritorio ejecuta el agente de terminal, sin dejar archivos:
         </p>
 
         <!-- Subtabs OS -->
@@ -432,21 +432,7 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 
       <!-- Tab 2: Manual Download -->
       <div id="tab-download" class="tab-content">
-        <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 14px;">
-          Descargue directamente el ejecutable del agente ligero duckJump Assist para su sistema:
-        </p>
-        <div style="margin-bottom: 18px;">
-          <a href="%s" class="btn-download">
-            📥 Descargar duckjump-assist (Linux x86_64)
-          </a>
-        </div>
-        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">
-          Una vez descargado, otorgue permisos y ejecútelo con este comando preconfigurado:
-        </p>
-        <div class="code-block">
-          <code>chmod +x duckjump-assist && ./duckjump-assist --server %s --token %s</code>
-          <button class="copy-btn" onclick="copyText('chmod +x duckjump-assist && ./duckjump-assist --server %s --token %s', this)">📋 Copiar</button>
-        </div>
+        %s
       </div>
 
       <!-- Next steps checklist -->
@@ -553,9 +539,7 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 		appCardHtml(status, appURL, appDownloads),
 		launchScriptURL, launchScriptURL,
 		ps1ScriptURL, ps1ScriptURL,
-		downloadBinaryURL,
-		baseURL, token,
-		baseURL, token,
+		manualDownloadHtml(baseURL, token, downloadBinaryURL, hasAssistAppImage()),
 	)
 
 	_, _ = w.Write([]byte(htmlContent))
@@ -625,7 +609,12 @@ func (s *Server) ServeAssistLaunchScript(w http.ResponseWriter, r *http.Request)
 	server := baseURL
 	binURL := baseURL + "/support/duckjump-assist"
 
-	script := generateAssistLaunchScript(token, server, binURL)
+	// Offered only as an AppImage (runs without installing anything).
+	appURL := ""
+	if _, err := findDistFile("duckjump-assist-app.AppImage"); err == nil {
+		appURL = baseURL + "/support/duckjump-assist-app?os=linux"
+	}
+	script := generateAssistLaunchScript(token, server, binURL, appURL)
 
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -730,16 +719,20 @@ func psQuote(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, ``) + `"`
 }
 
-func generateAssistLaunchScript(token, server, binURL string) string {
+func generateAssistLaunchScript(token, server, binURL, appURL string) string {
 	return fmt.Sprintf(`#!/bin/sh
 set -e
 
-# duckJump Assist — Ephemeral Launch Script
-# Downloads and executes duckjump-assist without leaving permanent files.
+# duckJump Assist launcher. On a Linux desktop it opens the duckJump Assist
+# app on this session (downloading it to ~/.cache once, and again only when
+# the gateway has a newer one); without a desktop, or with
+# DUCKJUMP_ASSIST_CLI=1, it runs the terminal agent from a temporary
+# directory and removes it afterwards.
 
 DEFAULT_TOKEN=%s
 DEFAULT_SERVER=%s
 DEFAULT_BIN_URL=%s
+APP_URL=%s
 
 TOKEN="${DUCKJUMP_SUPPORT_TOKEN:-$DEFAULT_TOKEN}"
 SERVER="${DUCKJUMP_SUPPORT_SERVER:-$DEFAULT_SERVER}"
@@ -750,6 +743,7 @@ while [ $# -gt 0 ]; do
     --token|-t) TOKEN="$2"; shift 2 ;;
     --server|-s) SERVER="$2"; shift 2 ;;
     --bin-url) BIN_URL="$2"; shift 2 ;;
+    --cli) DUCKJUMP_ASSIST_CLI=1; shift ;;
     *) shift ;;
   esac
 done
@@ -759,26 +753,66 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
+fetch() { # url file [extra curl args]
+  if command -v curl >/dev/null 2>&1; then
+    url=$1; out=$2; shift 2
+    curl -fsSL "$@" -o "$out" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$2" "$1"
+  else
+    echo "Error: ni curl ni wget están disponibles." >&2
+    exit 1
+  fi
+}
+
+# The app needs a desktop session, x86_64 and glibc >= 2.36 (its build base).
+can_use_app() {
+  [ -z "${DUCKJUMP_ASSIST_CLI:-}" ] || return 1
+  [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] || return 1
+  [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || return 1
+  if command -v duckjump-assist-app >/dev/null 2>&1; then return 0; fi
+  [ -n "$APP_URL" ] || return 1
+  v=$(ldd --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+$' || true)
+  [ -n "$v" ] && [ "${v%%%%.*}" -eq 2 ] && [ "${v#*.}" -ge 36 ]
+}
+
+if can_use_app; then
+  if command -v duckjump-assist-app >/dev/null 2>&1; then
+    APP=$(command -v duckjump-assist-app)   # installed package
+  else
+    CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/duckjump-assist"
+    APP="$CACHE/duckjump-assist-app.AppImage"
+    mkdir -p "$CACHE"
+    echo "==> Descargando la aplicación duckJump Assist desde $SERVER..."
+    rm -f "$APP.part"
+    if [ -f "$APP" ] && command -v curl >/dev/null 2>&1; then
+      fetch "$APP_URL" "$APP.part" -z "$APP"   # only when the gateway has a newer one
+    else
+      fetch "$APP_URL" "$APP.part"
+    fi
+    if [ -s "$APP.part" ]; then mv -f "$APP.part" "$APP"; else rm -f "$APP.part"; fi
+    chmod +x "$APP"
+    # AppImages mount with FUSE 2; without it, unpack to /tmp instead.
+    if ! (ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'); then
+      export APPIMAGE_EXTRACT_AND_RUN=1
+    fi
+  fi
+  echo "==> Abriendo duckJump Assist. Confirme el servidor en la ventana y dicte el código a su técnico."
+  nohup "$APP" --server "$SERVER" --token "$TOKEN" >/dev/null 2>&1 &
+  exit 0
+fi
+
 TMP_DIR="$(mktemp -d /tmp/duckjump-assist.XXXXXX)"
 cleanup() {
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT INT TERM
-
 TMP_BIN="$TMP_DIR/duckjump-assist"
 
-echo "==> Descargando duckJump Assist desde $SERVER..."
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$BIN_URL" -o "$TMP_BIN"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$TMP_BIN" "$BIN_URL"
-else
-  echo "Error: ni curl ni wget están disponibles." >&2
-  exit 1
-fi
-
+echo "==> Descargando duckJump Assist (terminal) desde $SERVER..."
+fetch "$BIN_URL" "$TMP_BIN"
 chmod +x "$TMP_BIN"
-if [ -n "$WAYLAND_DISPLAY" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+if [ -n "${WAYLAND_DISPLAY:-}" ] || [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
   if ! command -v gst-launch-1.0 >/dev/null 2>&1; then
     echo "ℹ️  Sesión Wayland detectada. Para streaming de pantalla fluido a 60 FPS (PipeWire):"
     echo "    Recomendado: sudo dnf install -y gstreamer1-tools gstreamer1-pipewire   (Fedora/RHEL)"
@@ -788,13 +822,11 @@ if [ -n "$WAYLAND_DISPLAY" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
 fi
 
 "$TMP_BIN" --server "$SERVER" --token "$TOKEN"
-STATUS=$?
-cleanup
-exit $STATUS
 `,
 		shQuote(token),
 		shQuote(server),
 		shQuote(binURL),
+		shQuote(appURL),
 	)
 }
 
@@ -878,6 +910,38 @@ func appCardHtml(status, appURL string, downloads map[string]string) string {
       <p style="font-size: 13px; color: var(--text-muted); margin-top: 12px;">Si no se abre nada, use las opciones de abajo: no hace falta instalar nada.</p>
       %s
     </div>`, html.EscapeString(appURL), install)
+}
+
+func hasAssistAppImage() bool {
+	_, err := findDistFile("duckjump-assist-app.AppImage")
+	return err == nil
+}
+
+// manualDownloadHtml: the app first (when this gateway has it), the
+// terminal agent for machines without a desktop.
+func manualDownloadHtml(baseURL, token, cliURL string, app bool) string {
+	esc := html.EscapeString
+	block := func(intro, href, label, cmd string) string {
+		return fmt.Sprintf(`<p style="font-size: 14px; color: var(--text-muted); margin-bottom: 14px;">%s</p>
+        <div style="margin-bottom: 18px;"><a href="%s" class="btn-download">%s</a></div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">Una vez descargado, ejecútelo con este comando preconfigurado:</p>
+        <div class="code-block">
+          <code>%s</code>
+          <button class="copy-btn" data-copy="%s" onclick="copyText(this.dataset.copy, this)">📋 Copiar</button>
+        </div>`, intro, esc(href), label, esc(cmd), esc(cmd))
+	}
+	cli := block("Agente de terminal duckJump Assist (sin interfaz gráfica, para equipos sin escritorio):", cliURL,
+		"📥 Descargar duckjump-assist (terminal, Linux x86_64)",
+		fmt.Sprintf("chmod +x duckjump-assist && ./duckjump-assist --server %s --token %s", baseURL, token))
+	if !app {
+		return cli
+	}
+	appBlock := block("Descargue la aplicación duckJump Assist. Se abrirá conectada a esta sesión y le pedirá confirmar el servidor:",
+		baseURL+"/support/duckjump-assist-app?os=linux", "📥 Descargar duckJump Assist (aplicación, Linux x86_64)",
+		fmt.Sprintf("chmod +x duckjump-assist-app.AppImage && ./duckjump-assist-app.AppImage --server %s --token %s", baseURL, token))
+	return appBlock + `
+        <details style="margin-top: 22px;"><summary style="cursor: pointer; font-size: 13px; color: var(--text-muted);">¿Equipo sin escritorio? Use el agente de terminal</summary>
+        <div style="margin-top: 12px;">` + cli + `</div></details>`
 }
 
 // findDistFile looks for a file the gateway serves for download: next to

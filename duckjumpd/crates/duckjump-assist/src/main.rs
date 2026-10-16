@@ -60,10 +60,10 @@ fn print_banner(code: Option<&str>) {
 
 fn print_gone() {
     eprintln!("\n╔════════════════════════════════════════════════════════════════════╗");
-    eprintln!("║  ⚠️  SESIÓN DE ASISTENCIA FINALIZADA (HTTP 410 Gone)              ║");
+    eprintln!("║  ⚠️  ENLACE DE ASISTENCIA NO VÁLIDO (HTTP 410 Gone)               ║");
     eprintln!("╠════════════════════════════════════════════════════════════════════╣");
-    eprintln!("║  Esta sesión de soporte ya ha concluido o ha expirado.             ║");
-    eprintln!("║  Por motivos de seguridad, los enlaces son de un solo uso.         ║");
+    eprintln!("║  El técnico cerró esta sesión o el enlace expiró.                  ║");
+    eprintln!("║                                                                    ║");
     eprintln!("║                                                                    ║");
     eprintln!("║  👉 Solicite a su operador técnico que le envíe un nuevo enlace.   ║");
     eprintln!("╚════════════════════════════════════════════════════════════════════╝\n");
@@ -138,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
     match run_session(cfg, tx, cancel).await {
         Ok(EndReason::Expired) => print_gone(),
         Ok(EndReason::NotFound) => eprintln!("\n❌ Error: El token o enlace de soporte no existe o ha expirado (HTTP 404).\n"),
-        Ok(EndReason::Local) => println!("\n👋 Asistencia remota finalizada por el usuario local."),
+        Ok(EndReason::Local) => println!("\n👋 Asistencia desconectada. El enlace sirve hasta que expire (con un código nuevo)."),
         Ok(EndReason::Server) => println!("\n👋 Asistencia finalizada."),
         Err(e) => {
             eprintln!("\n❌ {:#}\n", e);

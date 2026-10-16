@@ -32,9 +32,14 @@ The technician's link (`/support/join/<token>`) serves both cases:
   link, so the app shows the server and asks the user to allow it before
   connecting; the verification code is still required. A second launch hands
   the link to the running app (single instance).
-- **No app**: the one-line launchers (`launch.sh`, `run.ps1`) or the download
-  run the `duckjump-assist` CLI from a temporary directory, nothing installed.
-  They always use this gateway and its binary, whatever the query says.
+- **No app yet**: the one-line launcher (`curl … /support/launch.sh | sh`)
+  downloads the AppImage to `~/.cache/duckjump-assist` (again only when the
+  gateway has a newer one) and opens it with `--server … --token …`; an
+  installed `duckjump-assist-app` (deb) is used instead. Without a desktop,
+  with glibc older than 2.36, or with `--cli`, it runs the terminal agent
+  from a temporary directory. The page's manual download offers the same.
+  Windows (`run.ps1`) still runs the terminal agent. The launchers always use
+  this gateway and its files, whatever the query says.
 - When installers are in `dist/bin` (`make assist-app-bundle`), the page also
   offers them (`/support/duckjump-assist-app?os=linux|windows`) for next time.
 

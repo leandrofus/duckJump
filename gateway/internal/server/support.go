@@ -696,7 +696,7 @@ func (s *Server) ServeSupportAgentTunnel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if sess.Status == "ended" || sess.Status == "expired" {
+	if sess.Status == "ended" || sess.Status == "expired" || time.Now().After(sess.ExpiresAt) {
 		http.Error(w, "session is closed", http.StatusGone)
 		return
 	}
@@ -724,11 +724,7 @@ func (s *Server) ServeSupportAgentTunnel(w http.ResponseWriter, r *http.Request)
 		defer func() {
 			active.close()
 			s.SupportHub.Unregister(active)
-			_ = s.Store.Q.EndSupportSession(context.Background(), db.EndSupportSessionParams{
-				ID:          sess.ID,
-				Now:         store.NullTime(time.Now()),
-				EndedReason: "agent_disconnected",
-			})
+			s.releaseSupportSession(sess)
 		}()
 
 		// Send initial config with verification code
@@ -774,12 +770,7 @@ func (s *Server) ServeSupportAgentTunnel(w http.ResponseWriter, r *http.Request)
 	defer func() {
 		active.close()
 		s.SupportHub.Unregister(active)
-		// Mark ended if active dropped
-		_ = s.Store.Q.EndSupportSession(context.Background(), db.EndSupportSessionParams{
-			ID:          sess.ID,
-			Now:         store.NullTime(time.Now()),
-			EndedReason: "agent_disconnected",
-		})
+		s.releaseSupportSession(sess)
 	}()
 
 	// Accept streams from agent
@@ -792,6 +783,22 @@ func (s *Server) ServeSupportAgentTunnel(w http.ResponseWriter, r *http.Request)
 		}
 		go s.handleAgentStream(sess.ID, active, stream, clientIP)
 	}
+}
+
+// releaseSupportSession: the agent disconnected (the user stopped it, closed
+// the app, lost the network). The link keeps working until it expires, so
+// the user can connect again; with a new verification code, so the operator
+// cannot get back in on the old one. Ending a session is the operator's or
+// the user's explicit call (…/end), or its expiry.
+func (s *Server) releaseSupportSession(sess db.ConfigSupportSession) {
+	ctx := context.Background()
+	if time.Now().After(sess.ExpiresAt) {
+		_ = s.Store.Q.EndSupportSession(ctx, db.EndSupportSessionParams{
+			ID: sess.ID, Now: store.NullTime(time.Now()), EndedReason: "expired",
+		})
+		return
+	}
+	_ = s.Store.Q.ReleaseSupportSession(ctx, db.ReleaseSupportSessionParams{ID: sess.ID, TotpSecret: generateVerificationCode()})
 }
 
 func (s *Server) handleAgentStream(sessionID string, active *activeSupport, stream net.Conn, clientIP string) {

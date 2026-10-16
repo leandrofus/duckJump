@@ -10,6 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 func TestSupportSessionLifecycle(t *testing.T) {
@@ -233,6 +238,10 @@ func TestSupportAppLinkAndDistribution(t *testing.T) {
 	if resp, _ := get("/support/duckjump-assist-app?os=linux"); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing installer: %d", resp.StatusCode)
 	}
+	// Without the app, the launcher can only run the terminal agent.
+	if _, script := get("/support/launch.sh?token=" + sess.Token); !strings.Contains(script, "APP_URL=''") {
+		t.Fatal("launcher offers an app this gateway does not have")
+	}
 
 	// With one in dist/bin, it is linked and served.
 	dir := t.TempDir()
@@ -241,6 +250,13 @@ func TestSupportAppLinkAndDistribution(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "dist", "bin", "duckjump-assist-app.AppImage"), []byte("appimage"), 0o755)
 	if _, page := get("/support/join/" + sess.Token); !strings.Contains(page, "/support/duckjump-assist-app?os=linux") || strings.Contains(page, "?os=windows\">Windows") {
 		t.Fatal("join page does not link exactly the Linux installer")
+	}
+	appURL := e.srv.URL + "/support/duckjump-assist-app?os=linux"
+	if _, script := get("/support/launch.sh?token=" + sess.Token); !strings.Contains(script, "APP_URL='"+appURL+"'") {
+		t.Fatal("launcher does not open the app")
+	}
+	if _, page := get("/support/join/" + sess.Token); !strings.Contains(page, "./duckjump-assist-app.AppImage --server "+e.srv.URL+" --token "+sess.Token) {
+		t.Fatal("manual download does not offer the app first")
 	}
 	resp, body := get("/support/duckjump-assist-app?os=linux")
 	if resp.StatusCode != 200 || body != "appimage" || !strings.Contains(resp.Header.Get("Content-Disposition"), "duckjump-assist-app.AppImage") {
@@ -259,5 +275,81 @@ func TestSupportAppLinkAndDistribution(t *testing.T) {
 	}
 	if _, script := get("/agent/install.sh?token=t&bin_url=https://evil.example/x"); strings.Contains(script, "evil.example") {
 		t.Fatal("edge installer honours bin_url")
+	}
+}
+
+// The link works until it expires: an agent that goes away (Ctrl+C, app
+// closed, network) can connect again, under a new verification code.
+func TestSupportAgentReconnectsUntilExpiry(t *testing.T) {
+	e := newEnv(t)
+	e.mkUser("ana", "user")
+	var sess supportSessionDTO
+	e.as("ana").do("POST", "/support/request", map[string]any{"reason": "VPN"}, 201, &sess)
+	wsURL := strings.Replace(e.srv.URL, "http", "ws", 1) + "/api/v1/support/agent-tunnel/" + sess.Token + "?stream=control"
+
+	connect := func() (*websocket.Conn, string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ws, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hello, _ := json.Marshal(map[string]string{"stream": "control", "hostname": "pc-01", "os": "linux"})
+		if err := ws.Write(ctx, websocket.MessageText, hello); err != nil {
+			t.Fatal(err)
+		}
+		_, b, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var init struct{ Code string }
+		json.Unmarshal(b, &init)
+		return ws, init.Code
+	}
+	status := func(want string) db.ConfigSupportSession {
+		t.Helper()
+		var s db.ConfigSupportSession
+		for i := 0; i < 100; i++ {
+			s, _ = e.st.Q.GetSupportSession(context.Background(), sess.ID)
+			if s.Status == want {
+				return s
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("status %q, want %q", s.Status, want)
+		return s
+	}
+
+	ws, code1 := connect()
+	if code1 != sess.VerificationCode {
+		t.Fatalf("agent got code %q, request answered %q", code1, sess.VerificationCode)
+	}
+	status("connected")
+	e.as("root").do("POST", "/support/sessions/"+sess.ID+"/verify-totp", map[string]string{"code": code1}, 200, nil)
+	status("active")
+
+	ws.Close(websocket.StatusNormalClosure, "user stopped")
+	released := status("pending")
+	if released.TotpSecret == code1 {
+		t.Fatal("the old verification code still works after a disconnect")
+	}
+	ws, code2 := connect()
+	if code2 != released.TotpSecret {
+		t.Fatalf("reconnected agent got %q, want the new code %q", code2, released.TotpSecret)
+	}
+	status("connected")
+	ws.Close(websocket.StatusNormalClosure, "")
+	status("pending")
+
+	// Past its expiry the link is closed.
+	if _, err := e.st.DB.Exec("UPDATE config_support_sessions SET expires_at = $1 WHERE id = $2", time.Now().Add(-time.Minute), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, wsURL, nil)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusGone {
+		t.Fatalf("expired link: err %v, resp %+v", err, resp)
 	}
 }

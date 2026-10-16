@@ -48,3 +48,13 @@ WHERE status IN ('pending', 'connected') AND expires_at < @now;
 
 -- name: DeleteSupportSession :exec
 DELETE FROM config_support_sessions WHERE id = @id;
+
+-- name: ReleaseSupportSession :exec
+-- The agent went away: the link stays usable until it expires, under a new
+-- verification code (the operator must hear it from the user again).
+UPDATE config_support_sessions
+SET status = 'pending',
+    connected_at = NULL,
+    activated_at = NULL,
+    totp_secret = @totp_secret
+WHERE id = @id AND status IN ('connected', 'active');
