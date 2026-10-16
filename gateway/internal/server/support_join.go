@@ -764,6 +764,15 @@ else
 fi
 
 chmod +x "$TMP_BIN"
+if [ -n "$WAYLAND_DISPLAY" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+  if ! command -v gst-launch-1.0 >/dev/null 2>&1; then
+    echo "ℹ️  Sesión Wayland detectada. Para streaming de pantalla fluido a 60 FPS (PipeWire):"
+    echo "    Recomendado: sudo dnf install -y gstreamer1-tools gstreamer1-pipewire   (Fedora/RHEL)"
+    echo "                 sudo apt install -y gstreamer1.0-tools gstreamer1.0-pipewire (Ubuntu/Debian)"
+    echo ""
+  fi
+fi
+
 "$TMP_BIN" --server "$SERVER" --token "$TOKEN"
 STATUS=$?
 cleanup
