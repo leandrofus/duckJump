@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -168,6 +168,8 @@ pub struct WaylandPipeWireCapturer {
     pub height: u16,
     child: Child,
     stdout: ChildStdout,
+    /// The end of gst-launch's stderr, to explain why it stopped.
+    stderr_tail: Arc<std::sync::Mutex<String>>,
     raw_buffer: Vec<u8>,
     fb: Framebuffer,
     prev_rgb: Vec<u8>,
@@ -175,7 +177,7 @@ pub struct WaylandPipeWireCapturer {
 
 impl WaylandPipeWireCapturer {
     pub fn start(node_id: u32, width: u16, height: u16) -> anyhow::Result<Self> {
-        let mut cmd = Command::new("gst-launch-1.0");
+        let mut cmd = crate::sysenv::command("gst-launch-1.0");
         cmd.args([
             "-q",
             "pipewiresrc",
@@ -189,13 +191,33 @@ impl WaylandPipeWireCapturer {
             "sync=false",
         ]);
         cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::null());
+        cmd.stderr(Stdio::piped());
 
         let mut child = cmd.spawn().context(
             "No se pudo ejecutar gst-launch-1.0. Asegúrese de tener instalado el paquete gstreamer1-tools / gstreamer1-pipewire"
         )?;
 
         let stdout = child.stdout.take().context("No se pudo obtener stdout de gst-launch-1.0")?;
+        // Drained all along so gst never blocks on a full pipe; keeps the tail.
+        let stderr_tail = Arc::new(std::sync::Mutex::new(String::new()));
+        if let Some(mut err) = child.stderr.take() {
+            let tail = stderr_tail.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = err.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    let mut t = tail.lock().unwrap();
+                    t.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if t.len() > 4096 {
+                        let cut = t.len() - 4096;
+                        let cut = (cut..t.len()).find(|&i| t.is_char_boundary(i)).unwrap_or(t.len());
+                        t.drain(..cut);
+                    }
+                }
+            });
+        }
         let frame_size = width as usize * height as usize * 4;
         let raw_buffer = vec![0u8; frame_size];
 
@@ -204,6 +226,7 @@ impl WaylandPipeWireCapturer {
             height,
             child,
             stdout,
+            stderr_tail,
             raw_buffer,
             fb: Framebuffer::new(width, height),
             prev_rgb: vec![0u8; width as usize * height as usize * 3],
@@ -217,7 +240,14 @@ impl WaylandPipeWireCapturer {
     }
 
     fn read_next_frame(&mut self) -> anyhow::Result<()> {
-        self.stdout.read_exact(&mut self.raw_buffer)?;
+        if let Err(e) = self.stdout.read_exact(&mut self.raw_buffer) {
+            let _ = self.child.kill();
+            let status = self.child.wait().map(|s| s.to_string()).unwrap_or_default();
+            std::thread::sleep(Duration::from_millis(50)); // let the drain thread catch up
+            let tail = self.stderr_tail.lock().unwrap().trim().to_string();
+            let why = if tail.is_empty() { "sin mensajes de error".to_string() } else { tail };
+            anyhow::bail!("gst-launch-1.0 dejó de entregar imágenes ({e}; {status}): {why}");
+        }
 
         let w = self.width as usize;
         let h = self.height as usize;

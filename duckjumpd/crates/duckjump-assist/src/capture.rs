@@ -418,27 +418,27 @@ impl CommandCapturer {
     fn probe(kind: CommandKind, tmp_file: &std::path::Path, tmp_str: &str) -> bool {
         let (cmd, timeout_ms) = match kind {
             CommandKind::Grim => {
-                let mut c = std::process::Command::new("grim");
+                let mut c = crate::sysenv::command("grim");
                 c.args([tmp_str]);
                 (c, 1500)
             }
             CommandKind::Scrot => {
-                let mut c = std::process::Command::new("scrot");
+                let mut c = crate::sysenv::command("scrot");
                 c.args(["-o", tmp_str]);
                 (c, 1500)
             }
             CommandKind::CinnamonScreenshot => {
-                let mut c = std::process::Command::new("cinnamon-screenshot");
+                let mut c = crate::sysenv::command("cinnamon-screenshot");
                 c.args(["-f", tmp_str]);
                 (c, 2000)
             }
             CommandKind::GnomeScreenshot => {
-                let mut c = std::process::Command::new("gnome-screenshot");
+                let mut c = crate::sysenv::command("gnome-screenshot");
                 c.args(["-f", tmp_str]);
                 (c, 2000)
             }
             CommandKind::Spectacle => {
-                let mut c = std::process::Command::new("spectacle");
+                let mut c = crate::sysenv::command("spectacle");
                 c.args(["-b", "-n", "-o", tmp_str]);
                 // Spectacle is a full Qt/KDE application requiring ~1.5s startup initialization
                 (c, 4500)
@@ -462,27 +462,27 @@ impl CommandCapturer {
         let tmp_str = self.tmp_path.to_string_lossy().to_string();
         let (cmd, timeout_ms) = match self.kind {
             CommandKind::Grim => {
-                let mut c = std::process::Command::new("grim");
+                let mut c = crate::sysenv::command("grim");
                 c.args([&tmp_str]);
                 (c, 2000)
             }
             CommandKind::Scrot => {
-                let mut c = std::process::Command::new("scrot");
+                let mut c = crate::sysenv::command("scrot");
                 c.args(["-o", &tmp_str]);
                 (c, 2000)
             }
             CommandKind::CinnamonScreenshot => {
-                let mut c = std::process::Command::new("cinnamon-screenshot");
+                let mut c = crate::sysenv::command("cinnamon-screenshot");
                 c.args(["-f", &tmp_str]);
                 (c, 3000)
             }
             CommandKind::Spectacle => {
-                let mut c = std::process::Command::new("spectacle");
+                let mut c = crate::sysenv::command("spectacle");
                 c.args(["-b", "-n", "-o", &tmp_str]);
                 (c, 5000)
             }
             CommandKind::GnomeScreenshot => {
-                let mut c = std::process::Command::new("gnome-screenshot");
+                let mut c = crate::sysenv::command("gnome-screenshot");
                 c.args(["-f", &tmp_str]);
                 (c, 3000)
             }
