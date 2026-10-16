@@ -18,7 +18,7 @@ CARGO_FLAGS :=
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help build debug web gateway duckjumpd rdp run run-noauth edge stop logs dev-web \
+.PHONY: help build debug web gateway duckjumpd rdp assist-app assist-app-bundle run run-noauth edge stop logs dev-web \
         test test-go test-rust test-web test-oidc test-postgres test-s3 test-sftp minio minio-stop keycloak keycloak-stop postgres postgres-stop generate dist packages clean \
         website website-dev website-build
 
@@ -47,6 +47,18 @@ duckjumpd: ## duckjumpd session daemon (Rust)
 
 rdp: ## duckjumpd-rdp worker (Rust, own workspace)
 	cd duckjumpd/rdp && cargo build $(CARGO_FLAGS)
+
+# Not part of build: needs WebKitGTK (libwebkit2gtk-4.1-dev) on Linux.
+assist-app: ## duckJump Assist desktop app (Tauri, own workspace)
+	cd duckjumpd/assist-app && cargo build $(CARGO_FLAGS)
+
+# Installers into dist/bin, where the gateway serves them from the join page
+# (/support/duckjump-assist-app?os=linux). Needs: cargo install tauri-cli --version '^2'.
+assist-app-bundle: ## duckJump Assist installers (AppImage, deb) into dist/bin
+	cd duckjumpd/assist-app && cargo tauri build --bundles appimage,deb
+	@mkdir -p $(BIN)
+	cp duckjumpd/assist-app/target/release/bundle/appimage/*.AppImage $(BIN)/duckjump-assist-app.AppImage
+	cp duckjumpd/assist-app/target/release/bundle/deb/*.deb $(BIN)/duckjump-assist-app.deb
 
 # ---- launch (dev) ----
 
@@ -171,3 +183,4 @@ clean: ## Remove build outputs (keeps .dev data)
 	rm -rf $(DIST) gateway/bin/duckjump-gw gateway/bin/duckjump-agent
 	cd duckjumpd && cargo clean
 	cd duckjumpd/rdp && cargo clean
+	cd duckjumpd/assist-app && cargo clean

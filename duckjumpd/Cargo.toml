@@ -1,9 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/duckjump-proto", "crates/duckjump-gfx", "crates/duckjump-net", "crates/duckjumpd", "crates/duckjump-assist"]
+members = ["crates/duckjump-proto", "crates/duckjump-gfx", "crates/duckjump-net", "crates/duckjumpd", "crates/duckjump-assist", "crates/duckjump-assist-client"]
 # The RDP worker is its own workspace: IronRDP and russh pin incompatible
 # versions of curve25519-dalek, and a separate process isolates RDP anyway.
-exclude = ["rdp"]
+# The desktop app (Tauri) is too: it needs WebKitGTK to build, which the
+# daemon and the CLI agent do not.
+exclude = ["rdp", "assist-app"]
 
 [workspace.package]
 edition = "2021"
