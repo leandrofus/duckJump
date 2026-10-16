@@ -1,0 +1,35 @@
+[package]
+name = "duckjump-assist-app"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "duckJump Assist desktop app: request and receive attended remote support"
+
+# Own workspace (see the duckjumpd workspace's `exclude`): Tauri needs
+# WebKitGTK on Linux, which the rest of duckjumpd does not.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+duckjump-assist = { path = "../crates/duckjump-assist" }
+duckjump-assist-client = { path = "../crates/duckjump-assist-client" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# tauri-plugin-deep-link 2.6 builds rust-ini's ParseOption with a struct
+# literal; rust-ini 0.21.2 added fields to it. Lift once the plugin is fixed.
+[target.'cfg(target_os = "linux")'.dependencies]
+rust-ini = "=0.21.1"

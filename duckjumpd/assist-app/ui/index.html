@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>duckJump Assist</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <img src="icon.png" alt="" width="36" height="36">
+    <div>
+      <h1>duckJump Assist</h1>
+      <p class="sub">Asistencia remota atendida</p>
+    </div>
+  </header>
+
+  <p id="identity" class="identity" hidden></p>
+
+  <!-- Start: request support or join an invitation -->
+  <main id="view-start">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-request" aria-selected="true" aria-controls="panel-request">Solicitar soporte</button>
+      <button role="tab" id="tab-join" aria-selected="false" aria-controls="panel-join">Unirse con código</button>
+    </div>
+
+    <section id="panel-request" role="tabpanel" aria-labelledby="tab-request">
+      <label class="field">
+        <span>Servidor duckJump</span>
+        <input id="server" type="url" placeholder="https://bastion.empresa.com" autocomplete="url" spellcheck="false">
+      </label>
+      <p id="server-state" class="hint"></p>
+
+      <!-- Signed out -->
+      <form id="login-form" class="stack" hidden>
+        <fieldset class="accounts">
+          <legend>Tipo de cuenta</legend>
+          <label><input type="radio" name="account" value="local"> Cuenta local</label>
+          <label><input type="radio" name="account" value="ad"> Active Directory</label>
+          <label><input type="radio" name="account" value="sso"> <span id="sso-label">SSO corporativo</span></label>
+        </fieldset>
+
+        <div id="password-fields" class="stack">
+          <label class="field">
+            <span>Usuario</span>
+            <input id="username" autocomplete="username" spellcheck="false" required>
+          </label>
+          <label class="field">
+            <span>Contraseña</span>
+            <input id="password" type="password" autocomplete="current-password" required>
+          </label>
+          <p id="ad-hint" class="hint" hidden>Se valida con su cuenta del servidor duckJump. Si su empresa usa Entra ID o Keycloak con AD, elija SSO corporativo.</p>
+        </div>
+
+        <label id="totp-field" class="field" hidden>
+          <span>Código de su app de autenticación</span>
+          <input id="totp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code">
+        </label>
+
+        <button id="login-btn" type="submit" class="primary">Iniciar sesión</button>
+      </form>
+
+      <!-- Signed in -->
+      <form id="request-form" class="stack" hidden>
+        <p class="signed-in"><span id="whoami"></span> <button id="logout-btn" type="button" class="link">Cerrar sesión</button></p>
+        <label class="field">
+          <span>Motivo de la asistencia</span>
+          <textarea id="reason" rows="3" placeholder="Ej.: no puedo conectarme a la VPN" required></textarea>
+        </label>
+        <label class="field">
+          <span>Ticket o incidencia <em>(opcional)</em></span>
+          <input id="ticket" placeholder="INC-2849" spellcheck="false">
+        </label>
+        <button id="request-btn" type="submit" class="primary">Solicitar asistencia remota</button>
+      </form>
+    </section>
+
+    <section id="panel-join" role="tabpanel" aria-labelledby="tab-join" hidden>
+      <form id="join-form" class="stack">
+        <p class="hint">Si el equipo de soporte ya le envió un enlace o un código de invitación, péguelo aquí.</p>
+        <label class="field">
+          <span>Enlace o código de invitación</span>
+          <input id="invite" placeholder="https://bastion.empresa.com/support/join/…" spellcheck="false" required>
+        </label>
+        <button type="submit" class="primary">Conectar</button>
+      </form>
+    </section>
+
+    <p id="error" class="error" role="alert" hidden></p>
+  </main>
+
+  <!-- Active session -->
+  <main id="view-session" hidden>
+    <section class="code-card">
+      <p class="label">Código de verificación</p>
+      <p id="code" class="code" aria-live="polite">— — —</p>
+      <p class="hint">Dígale este código a su técnico. Sin él no puede ver su pantalla.</p>
+      <button id="copy-btn" type="button" class="secondary">Copiar código</button>
+    </section>
+
+    <ol class="steps" aria-label="Estado">
+      <li id="step-connect">Conectando con el servidor</li>
+      <li id="step-wait">Esperando que el técnico ingrese el código</li>
+      <li id="step-share">Técnico verificado: compartiendo pantalla</li>
+    </ol>
+
+    <dl class="meta">
+      <div><dt>Tiempo asistido</dt><dd id="timer">00:00</dd></div>
+      <div><dt>Calidad</dt><dd id="stats">—</dd></div>
+    </dl>
+
+    <button id="stop-btn" type="button" class="danger">Finalizar asistencia y desconectar</button>
+    <p class="hint center">Usted mantiene el control del ratón y del teclado en todo momento.</p>
+  </main>
+
+  <!-- Opened from a link: confirm the server first -->
+  <main id="view-invite" hidden>
+    <section class="invite">
+      <h2>Solicitud de asistencia remota</h2>
+      <p>Un enlace pide conectar este equipo al servidor de soporte:</p>
+      <p id="invite-server" class="server-name"></p>
+      <p id="invite-insecure" class="error" hidden>La conexión con este servidor no está cifrada (http).</p>
+      <p class="hint">Continúe solo si pidió ayuda y reconoce este servidor como el de su empresa. El técnico no verá su pantalla hasta que usted le dicte el código de verificación.</p>
+      <div class="actions">
+        <button id="invite-deny" type="button" class="secondary">Rechazar</button>
+        <button id="invite-accept" type="button" class="primary">Permitir y conectar</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Finished -->
+  <main id="view-ended" hidden>
+    <section class="ended">
+      <h2 id="ended-title">Asistencia finalizada</h2>
+      <p id="ended-detail"></p>
+      <button id="back-btn" type="button" class="primary">Volver</button>
+    </section>
+  </main>
+</body>
+</html>
