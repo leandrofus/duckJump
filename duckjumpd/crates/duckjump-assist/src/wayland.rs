@@ -23,28 +23,7 @@ use crate::capture::{detect_damage, ScreenCapturer};
 
 const USER_OVERRIDE_DURATION: Duration = Duration::from_secs(2);
 
-fn get_restore_token_path() -> std::path::PathBuf {
-    let base = std::env::var("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            std::path::PathBuf::from(home).join(".cache")
-        });
-    base.join("duckjump-assist").join("wayland_restore_token")
-}
 
-fn load_restore_token() -> Option<String> {
-    let path = get_restore_token_path();
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
-}
-
-fn save_restore_token(token: &str) {
-    let path = get_restore_token_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(path, token);
-}
 
 /// Unified Wayland RemoteDesktop Session handling PipeWire capture and input injection.
 pub struct WaylandSession {
@@ -65,27 +44,18 @@ impl WaylandSession {
         let screencast = Screencast::new().await?;
         let session = Arc::new(remote_desktop.create_session(Default::default()).await?);
 
-        let restore_token = load_restore_token();
-
-        let mut dev_opts = SelectDevicesOptions::default()
+        let dev_opts = SelectDevicesOptions::default()
             .set_devices(DeviceType::Keyboard | DeviceType::Pointer)
-            .set_persist_mode(PersistMode::ExplicitlyRevoked);
-        if let Some(ref tok) = restore_token {
-            debug!("Usando token de restauración previo para dispositivos: {}", tok);
-            dev_opts = dev_opts.set_restore_token(tok.as_str());
-        }
+            .set_persist_mode(PersistMode::DoNot);
 
         remote_desktop.select_devices(&session, dev_opts).await
             .context("Fallo en RemoteDesktop::select_devices")?;
 
-        let mut src_opts = SelectSourcesOptions::default()
+        let src_opts = SelectSourcesOptions::default()
             .set_cursor_mode(CursorMode::Embedded)
             .set_sources(BitFlags::from(SourceType::Monitor))
             .set_multiple(false)
-            .set_persist_mode(PersistMode::ExplicitlyRevoked);
-        if let Some(ref tok) = restore_token {
-            src_opts = src_opts.set_restore_token(tok.as_str());
-        }
+            .set_persist_mode(PersistMode::DoNot);
 
         screencast.select_sources(&session, src_opts).await
             .context("Fallo en Screencast::select_sources")?;
@@ -96,11 +66,6 @@ impl WaylandSession {
             .await?
             .response()
             .context("El usuario canceló o rechazó el diálogo de compartir pantalla")?;
-
-        if let Some(token) = response.restore_token() {
-            save_restore_token(token);
-            debug!("Nuevo restore_token guardado para próximas sesiones");
-        }
 
         let streams = response.streams();
         let stream = streams.first().context("No se seleccionó ningún stream de pantalla")?;
