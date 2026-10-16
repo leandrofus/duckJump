@@ -3,7 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -123,9 +127,10 @@ func TestSupportSessionLifecycle(t *testing.T) {
 
 func TestSupportRequestEndpoint(t *testing.T) {
 	e := newEnv(t)
-	pubClient := e.client()
+	e.mkUser("micaela", "user")
+	pubClient := e.as("micaela")
 
-	// 1. Request support from desktop app (unauthenticated)
+	// 1. Request support from desktop app, logged in as the requester
 	reqBody := map[string]any{
 		"target_name":  "CORP\\micaela",
 		"reason":       "Printer spooler error",
@@ -136,7 +141,15 @@ func TestSupportRequestEndpoint(t *testing.T) {
 		"client_os":    "Windows 11",
 	}
 
-	resp, body := pubClient.raw("POST", "/support/request", reqBody, false)
+	// Anonymous requests are refused: they would be owned by nobody (or worse).
+	if resp, body := e.client().raw("POST", "/support/request", reqBody, true); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous request: expected 401, got %d: %s", resp.StatusCode, body)
+	}
+	if resp, body := pubClient.raw("POST", "/support/request", reqBody, false); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("request without CSRF header: expected 403, got %d: %s", resp.StatusCode, body)
+	}
+
+	resp, body := pubClient.raw("POST", "/support/request", reqBody, true)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201 Created on /support/request, got %d: %s", resp.StatusCode, body)
 	}
@@ -150,6 +163,9 @@ func TestSupportRequestEndpoint(t *testing.T) {
 	}
 	if session.TargetName != "CORP\\micaela" {
 		t.Fatalf("expected target name 'CORP\\micaela', got %q", session.TargetName)
+	}
+	if session.CreatedBy == "" {
+		t.Fatalf("session not owned by the requester: %+v", session)
 	}
 
 	// 2. Query status by token
@@ -166,7 +182,10 @@ func TestSupportRequestEndpoint(t *testing.T) {
 	}
 
 	// 3. Client emergency stop / end session by token
-	respEnd, bodyEnd := pubClient.raw("POST", "/support/end/"+session.Token, nil, false)
+	if r, b := e.client().raw("POST", "/support/end/"+session.Token, nil, false); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("end without CSRF header: expected 403, got %d: %s", r.StatusCode, b)
+	}
+	respEnd, bodyEnd := e.client().raw("POST", "/support/end/"+session.Token, nil, true)
 	if respEnd.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK on end, got %d: %s", respEnd.StatusCode, bodyEnd)
 	}
@@ -182,5 +201,63 @@ func TestSupportRequestEndpoint(t *testing.T) {
 	}
 	if statusMap2["status"] != "ended" {
 		t.Fatalf("expected status ended, got %v", statusMap2["status"])
+	}
+}
+
+func TestSupportAppLinkAndDistribution(t *testing.T) {
+	e := newEnv(t)
+	e.mkUser("ana", "user")
+	var sess supportSessionDTO
+	e.as("ana").do("POST", "/support/request", map[string]any{"reason": "VPN"}, 201, &sess)
+
+	get := func(path string) (*http.Response, string) {
+		t.Helper()
+		resp, err := http.Get(e.srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+
+	// The join page offers to open the installed app, with this gateway and token.
+	wantLink := "duckjump-assist://join?server=" + url.QueryEscape(e.srv.URL) + "&amp;token=" + sess.Token
+	if _, page := get("/support/join/" + sess.Token); !strings.Contains(page, wantLink) {
+		t.Fatalf("join page lacks the app link %q", wantLink)
+	}
+	// No installer on this server: no download links.
+	if _, page := get("/support/join/" + sess.Token); strings.Contains(page, "duckjump-assist-app?os=") {
+		t.Fatal("join page links an installer that is not there")
+	}
+	if resp, _ := get("/support/duckjump-assist-app?os=linux"); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing installer: %d", resp.StatusCode)
+	}
+
+	// With one in dist/bin, it is linked and served.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	os.MkdirAll(filepath.Join(dir, "dist", "bin"), 0o755)
+	os.WriteFile(filepath.Join(dir, "dist", "bin", "duckjump-assist-app.AppImage"), []byte("appimage"), 0o755)
+	if _, page := get("/support/join/" + sess.Token); !strings.Contains(page, "/support/duckjump-assist-app?os=linux") || strings.Contains(page, "?os=windows\">Windows") {
+		t.Fatal("join page does not link exactly the Linux installer")
+	}
+	resp, body := get("/support/duckjump-assist-app?os=linux")
+	if resp.StatusCode != 200 || body != "appimage" || !strings.Contains(resp.Header.Get("Content-Disposition"), "duckjump-assist-app.AppImage") {
+		t.Fatalf("installer download: %d %q %q", resp.StatusCode, body, resp.Header.Get("Content-Disposition"))
+	}
+	if resp, _ := get("/support/duckjump-assist-app?os=../../etc"); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown os: %d", resp.StatusCode)
+	}
+
+	// The launchers ignore attempts to point them elsewhere.
+	for _, p := range []string{"/support/launch.sh", "/support/run.ps1"} {
+		_, script := get(p + "?token=" + sess.Token + "&server=https://evil.example&bin_url=https://evil.example/x")
+		if strings.Contains(script, "evil.example") || !strings.Contains(script, e.srv.URL) {
+			t.Fatalf("%s honours overrides:\n%s", p, script)
+		}
+	}
+	if _, script := get("/agent/install.sh?token=t&bin_url=https://evil.example/x"); strings.Contains(script, "evil.example") {
+		t.Fatal("edge installer honours bin_url")
 	}
 }
