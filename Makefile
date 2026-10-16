@@ -18,7 +18,7 @@ CARGO_FLAGS :=
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help build debug web gateway duckjumpd rdp assist-app assist-app-bundle run run-noauth edge stop logs dev-web \
+.PHONY: help build debug web gateway duckjumpd rdp assist-app assist-app-bundle run run-noauth restart edge stop logs dev-web \
         test test-go test-rust test-web test-oidc test-postgres test-s3 test-sftp minio minio-stop keycloak keycloak-stop postgres postgres-stop generate dist packages clean \
         website website-dev website-build
 
@@ -53,17 +53,19 @@ assist-app: ## duckJump Assist desktop app (Tauri, own workspace)
 	cd duckjumpd/assist-app && cargo build $(CARGO_FLAGS)
 
 # Installers into dist/bin, where the gateway serves them from the join page
-# (/support/duckjump-assist-app?os=linux). Needs: cargo install tauri-cli --version '^2'.
-assist-app-bundle: ## duckJump Assist installers (AppImage, deb) into dist/bin
-	cd duckjumpd/assist-app && cargo tauri build --bundles appimage,deb
-	@mkdir -p $(BIN)
-	cp duckjumpd/assist-app/target/release/bundle/appimage/*.AppImage $(BIN)/duckjump-assist-app.AppImage
-	cp duckjumpd/assist-app/target/release/bundle/deb/*.deb $(BIN)/duckjump-assist-app.deb
+# (/support/duckjump-assist-app?os=linux). Built in a container (podman or
+# docker): the host needs no WebKitGTK nor Tauri CLI.
+assist-app-bundle: ## duckJump Assist installers (AppImage, deb) into dist/bin; needs podman or docker
+	packaging/build-assist-app.sh
 
 # ---- launch (dev) ----
 
 run: web ## Launch the dev stack with auth: sshd, VNC, RDP test servers + duckjumpd + duckjump-gw
 	deploy/dev.sh
+
+restart: ## Rebuild and restart the dev stack (gateway, duckjumpd, assist CLI); ASSIST_APP=1 also rebuilds the desktop app
+	deploy/dev.sh stop
+	$(MAKE) run
 
 run-noauth: web ## Launch the dev stack with duckjump-gw -dev (no login)
 	DEV=1 deploy/dev.sh
@@ -176,7 +178,7 @@ dist: build ## Release tarball: dist/duckjump-<version>-linux-amd64.tar.gz
 	@rm -rf $(DIST)/duckjump-$(VERSION)
 	@ls -lh $(DIST)/duckjump-$(VERSION)-linux-amd64.tar.gz
 
-packages: ## rpm + deb with systemd services (duckjump, duckjump-agent) in dist/packages; needs podman or docker
+packages: ## rpm + deb with systemd services (duckjump, duckjump-agent) and the assist CLI and app in dist/packages; needs podman or docker
 	VERSION=$(VERSION) packaging/build.sh
 
 clean: ## Remove build outputs (keeps .dev data)
