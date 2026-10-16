@@ -1,6 +1,6 @@
 use duckjump_gfx::{Damage, Framebuffer};
-use duckjump_proto::gfx::{Display, Rect};
-use tracing::{info, warn};
+use duckjump_proto::gfx::Display;
+use tracing::info;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{self, ConnectionExt, ImageFormat};
 use x11rb::rust_connection::RustConnection;
@@ -25,8 +25,8 @@ pub trait ScreenCapturer: Send {
     }
 }
 
-/// Compares `fb.rgb` with `prev_rgb` in 64x64 blocks, coalesces dirty rects,
-/// and returns the changed areas as `Damage::Pixels`.
+/// Compares `fb.rgb` with `prev_rgb` in 64x64 blocks, coalescing only contiguous horizontal spans.
+/// Crucially, disjoint changed areas are NEVER collapsed into a full-screen bounding box.
 fn detect_damage(fb: &Framebuffer, prev_rgb: &mut Vec<u8>) -> Vec<Damage> {
     if prev_rgb.len() != fb.rgb.len() {
         *prev_rgb = fb.rgb.clone();
@@ -38,13 +38,16 @@ fn detect_damage(fb: &Framebuffer, prev_rgb: &mut Vec<u8>) -> Vec<Damage> {
         }];
     }
 
-    let mut dirty = duckjump_gfx::Dirty::default();
     let block_size = 64u16;
     let w = fb.width;
     let h = fb.height;
+    let mut damage = Vec::new();
 
     for by in (0..h).step_by(block_size as usize) {
         let bh = block_size.min(h - by);
+        let mut span_start: Option<u16> = None;
+        let mut span_end: u16 = 0;
+
         for bx in (0..w).step_by(block_size as usize) {
             let bw = block_size.min(w - bx);
             let mut changed = false;
@@ -60,30 +63,41 @@ fn detect_damage(fb: &Framebuffer, prev_rgb: &mut Vec<u8>) -> Vec<Damage> {
             }
 
             if changed {
-                dirty.add(Rect {
-                    x: bx,
+                match span_start {
+                    Some(_) => {
+                        span_end = bx + bw;
+                    }
+                    None => {
+                        span_start = Some(bx);
+                        span_end = bx + bw;
+                    }
+                }
+            } else if let Some(start_x) = span_start {
+                damage.push(Damage::Pixels {
+                    x: start_x,
                     y: by,
-                    w: bw,
+                    w: span_end - start_x,
                     h: bh,
                 });
+                span_start = None;
             }
+        }
+
+        if let Some(start_x) = span_start {
+            damage.push(Damage::Pixels {
+                x: start_x,
+                y: by,
+                w: span_end - start_x,
+                h: bh,
+            });
         }
     }
 
-    let rects = dirty.take();
-    if !rects.is_empty() {
+    if !damage.is_empty() {
         prev_rgb.copy_from_slice(&fb.rgb);
     }
 
-    rects
-        .into_iter()
-        .map(|r| Damage::Pixels {
-            x: r.x,
-            y: r.y,
-            w: r.w,
-            h: r.h,
-        })
-        .collect()
+    damage
 }
 
 /// Decodes PNG data into `fb.rgb` (resizing `fb` if dimensions differ).
@@ -517,31 +531,14 @@ impl ScreenCapturer for LinuxScreenCapturer {
 
 /// Automatically selects and initializes the best screen capture backend available on the system.
 pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenCapturer> {
-    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
-
-    if is_wayland {
-        info!("Wayland desktop detected (WAYLAND_DISPLAY is set)");
-        if let Some(cmd) = CommandCapturer::try_detect() {
-            info!("Successfully initialized Wayland capture backend: {:?}", cmd.kind);
-            let mut fb = Framebuffer::new(fallback_w, fallback_h);
-            if let Ok(()) = cmd.capture_to_fb(&mut fb) {
-                let prev_rgb = fb.rgb.clone();
-                return Box::new(LinuxScreenCapturer::Command {
-                    capturer: cmd,
-                    fb,
-                    prev_rgb,
-                });
-            }
-        }
-    }
-
-    // Try X11 / XWayland capture
+    // 1. Try X11 / XWayland capture FIRST whenever DISPLAY is available.
+    // X11 direct memory capture takes ~1-3ms, compared to ~250ms for CLI screenshot tools.
     if std::env::var("DISPLAY").is_ok() {
         match X11Capturer::try_new() {
             Ok(mut x11) => {
-                info!("Successfully connected to X11/XWayland display ({}x{})", x11.width, x11.height);
                 let mut fb = Framebuffer::new(x11.width, x11.height);
                 if let Ok(()) = x11.capture_to_fb(&mut fb) {
+                    println!("⚡ Captura activa: X11 nativo directo ({}x{}, latencia sub-10ms)", x11.width, x11.height);
                     let prev_rgb = fb.rgb.clone();
                     return Box::new(LinuxScreenCapturer::X11 {
                         capturer: x11,
@@ -551,14 +548,14 @@ pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenC
                 }
             }
             Err(e) => {
-                info!("X11 capture connection failed: {}", e);
+                info!("X11 capture initialization skipped: {}", e);
             }
         }
     }
 
-    // Secondary attempt at command capture if X11 failed
+    // 2. Try CLI capture (Cinnamon, KDE, GNOME, Wayland) if X11 was not available
     if let Some(cmd) = CommandCapturer::try_detect() {
-        info!("Using CLI capture backend: {:?}", cmd.kind);
+        println!("📸 Captura activa: Herramienta de escritorio ({:?})", cmd.kind);
         let mut fb = Framebuffer::new(fallback_w, fallback_h);
         if let Ok(()) = cmd.capture_to_fb(&mut fb) {
             let prev_rgb = fb.rgb.clone();
@@ -570,7 +567,7 @@ pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenC
         }
     }
 
-    warn!("No active X11 or Wayland capture backend succeeded; falling back to simulated MockCapturer");
+    println!("⚠️ Captura activa: Simulación de escritorio (Mock)");
     Box::new(LinuxScreenCapturer::Mock(MockCapturer::new(fallback_w, fallback_h)))
 }
 

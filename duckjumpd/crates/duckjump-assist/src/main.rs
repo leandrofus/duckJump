@@ -297,43 +297,47 @@ async fn main() -> anyhow::Result<()> {
                         if let Ok(initial_tiles) = capturer.initial_frame() {
                             for tile in initial_tiles {
                                 let bytes = tile.encode();
-                                if let Err(e) = disp_write.send(tokio_tungstenite::tungstenite::Message::Binary(bytes.into())).await {
+                                if let Err(e) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(bytes.into())).await {
                                     info!("Error o cierre enviando frame inicial: {}", e);
                                     break 'capture_loop;
                                 }
                             }
                             frame_counter += 1;
                             let sync = duckjump_proto::gfx::Display::Sync { frame: frame_counter };
-                            if let Err(_) = disp_write.send(tokio_tungstenite::tungstenite::Message::Binary(sync.encode().into())).await {
+                            if let Err(_) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(sync.encode().into())).await {
+                                break 'capture_loop;
+                            }
+                            if let Err(_) = disp_write.flush().await {
                                 break 'capture_loop;
                             }
                             sent_initial = true;
                             last_send_time = std::time::Instant::now();
                         }
                     } else {
-                        // Fully adaptive rate control based on browser ACKs:
-                        // Allows at most 1 unacknowledged frame in flight.
-                        // On fast network/render: runs smoothly at 60 FPS.
-                        // If network stalls or client lags: waits without queueing delay.
-                        // Recovers automatically if an ACK is lost after 250ms.
+                        // Adaptive low-latency rate control based on client render ACKs:
+                        // Only capture when the client has finished drawing the previous frame (in_flight == 0)
+                        // or if an ACK dropped after 100ms.
                         let last_ack = acked_reader.load(std::sync::atomic::Ordering::Acquire);
                         let in_flight = frame_counter.saturating_sub(last_ack);
-                        let ack_timed_out = last_send_time.elapsed() > Duration::from_millis(250);
+                        let ack_timed_out = last_send_time.elapsed() > Duration::from_millis(100);
 
-                        if in_flight <= 1 || ack_timed_out {
+                        if in_flight == 0 || ack_timed_out {
                             if let Ok(damage) = capturer.capture() {
                                 if !damage.is_empty() {
                                     if let Ok(updates) = capturer.encode_damage(&damage) {
                                         for u in updates {
                                             let b = u.encode();
-                                            if let Err(e) = disp_write.send(tokio_tungstenite::tungstenite::Message::Binary(b.into())).await {
+                                            if let Err(e) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(b.into())).await {
                                                 info!("Sesión cerrada por el servidor ({})", e);
                                                 break 'capture_loop;
                                             }
                                         }
                                         frame_counter += 1;
                                         let sync = duckjump_proto::gfx::Display::Sync { frame: frame_counter };
-                                        if let Err(_) = disp_write.send(tokio_tungstenite::tungstenite::Message::Binary(sync.encode().into())).await {
+                                        if let Err(_) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(sync.encode().into())).await {
+                                            break 'capture_loop;
+                                        }
+                                        if let Err(_) = disp_write.flush().await {
                                             break 'capture_loop;
                                         }
                                         last_send_time = std::time::Instant::now();
