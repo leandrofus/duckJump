@@ -315,10 +315,29 @@ pub enum CommandKind {
     CinnamonScreenshot,
     Spectacle,
     Grim,
-    GnomeDbus,
     GnomeScreenshot,
     Scrot,
-    Import,
+}
+
+fn execute_with_timeout(
+    mut cmd: std::process::Command,
+    timeout: std::time::Duration,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut child = cmd.spawn()?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait()? {
+            Some(status) => return Ok(status),
+            None => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    anyhow::bail!("Screen capture command timed out after {:?}", timeout);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
 }
 
 /// Real Linux CLI screen capturer supporting Cinnamon, KDE, GNOME, Wayland, and X11 tools.
@@ -335,17 +354,44 @@ impl CommandCapturer {
         let tmp_bmp_str = tmp_bmp.to_string_lossy().to_string();
         let tmp_png_str = tmp_png.to_string_lossy().to_string();
 
-        // Order candidates strictly by execution speed:
-        // Grim (Wayland, ~5ms) > Scrot (C, ~15ms) > Cinnamon (~40ms) > Import (~50ms) > Gnome (~50ms) > Spectacle (KDE Qt app, ~1500ms)
-        let candidates = vec![
-            CommandKind::Grim,
-            CommandKind::Scrot,
-            CommandKind::CinnamonScreenshot,
-            CommandKind::Import,
-            CommandKind::GnomeDbus,
-            CommandKind::GnomeScreenshot,
-            CommandKind::Spectacle,
-        ];
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+            .unwrap_or_default()
+            .to_lowercase();
+
+        // Tailor candidate priorities based on the desktop environment in use:
+        let candidates = if desktop.contains("cinnamon") {
+            vec![
+                CommandKind::CinnamonScreenshot,
+                CommandKind::Scrot,
+                CommandKind::Grim,
+                CommandKind::GnomeScreenshot,
+                CommandKind::Spectacle,
+            ]
+        } else if desktop.contains("kde") || desktop.contains("plasma") {
+            vec![
+                CommandKind::Grim,
+                CommandKind::Spectacle,
+                CommandKind::Scrot,
+                CommandKind::CinnamonScreenshot,
+                CommandKind::GnomeScreenshot,
+            ]
+        } else if desktop.contains("gnome") {
+            vec![
+                CommandKind::GnomeScreenshot,
+                CommandKind::Grim,
+                CommandKind::Scrot,
+                CommandKind::CinnamonScreenshot,
+                CommandKind::Spectacle,
+            ]
+        } else {
+            vec![
+                CommandKind::Grim,
+                CommandKind::Scrot,
+                CommandKind::CinnamonScreenshot,
+                CommandKind::GnomeScreenshot,
+                CommandKind::Spectacle,
+            ]
+        };
 
         for kind in candidates {
             // 1. Try uncompressed BMP first for ultra-fast disk write & sub-millisecond decode
@@ -370,71 +416,37 @@ impl CommandCapturer {
     }
 
     fn probe(kind: CommandKind, tmp_file: &std::path::Path, tmp_str: &str) -> bool {
-        let res = match kind {
+        let mut cmd = match kind {
             CommandKind::Grim => {
-                std::process::Command::new("grim")
-                    .args([tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
+                let mut c = std::process::Command::new("grim");
+                c.args([tmp_str]);
+                c
             }
             CommandKind::Scrot => {
-                std::process::Command::new("scrot")
-                    .args(["-o", tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
+                let mut c = std::process::Command::new("scrot");
+                c.args(["-o", tmp_str]);
+                c
             }
             CommandKind::CinnamonScreenshot => {
-                std::process::Command::new("cinnamon-screenshot")
-                    .args(["-f", tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-            }
-            CommandKind::Import => {
-                std::process::Command::new("import")
-                    .args(["-window", "root", tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
+                let mut c = std::process::Command::new("cinnamon-screenshot");
+                c.args(["-f", tmp_str]);
+                c
             }
             CommandKind::GnomeScreenshot => {
-                std::process::Command::new("gnome-screenshot")
-                    .args(["-f", tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-            }
-            CommandKind::GnomeDbus => {
-                std::process::Command::new("gdbus")
-                    .args([
-                        "call",
-                        "--session",
-                        "--dest",
-                        "org.gnome.Shell.Screenshot",
-                        "--object-path",
-                        "/org/gnome/Shell/Screenshot",
-                        "--method",
-                        "org.gnome.Shell.Screenshot.Screenshot",
-                        "false",
-                        "false",
-                        tmp_str,
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
+                let mut c = std::process::Command::new("gnome-screenshot");
+                c.args(["-f", tmp_str]);
+                c
             }
             CommandKind::Spectacle => {
-                std::process::Command::new("spectacle")
-                    .args(["-b", "-n", "-o", tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
+                let mut c = std::process::Command::new("spectacle");
+                c.args(["-b", "-n", "-o", tmp_str]);
+                c
             }
         };
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
 
-        if let Ok(st) = res {
+        if let Ok(st) = execute_with_timeout(cmd, std::time::Duration::from_millis(1000)) {
             if st.success() && tmp_file.exists() {
                 if let Ok(meta) = tmp_file.metadata() {
                     return meta.len() > 0;
@@ -446,70 +458,37 @@ impl CommandCapturer {
 
     pub fn capture_to_fb(&self, fb: &mut Framebuffer) -> anyhow::Result<()> {
         let tmp_str = self.tmp_path.to_string_lossy().to_string();
-        let status = match self.kind {
+        let mut cmd = match self.kind {
             CommandKind::Grim => {
-                std::process::Command::new("grim")
-                    .args([&tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
+                let mut c = std::process::Command::new("grim");
+                c.args([&tmp_str]);
+                c
             }
             CommandKind::Scrot => {
-                std::process::Command::new("scrot")
-                    .args(["-o", &tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
+                let mut c = std::process::Command::new("scrot");
+                c.args(["-o", &tmp_str]);
+                c
             }
             CommandKind::CinnamonScreenshot => {
-                std::process::Command::new("cinnamon-screenshot")
-                    .args(["-f", &tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
-            }
-            CommandKind::Import => {
-                std::process::Command::new("import")
-                    .args(["-window", "root", &tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
+                let mut c = std::process::Command::new("cinnamon-screenshot");
+                c.args(["-f", &tmp_str]);
+                c
             }
             CommandKind::Spectacle => {
-                std::process::Command::new("spectacle")
-                    .args(["-b", "-n", "-o", &tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
-            }
-            CommandKind::GnomeDbus => {
-                std::process::Command::new("gdbus")
-                    .args([
-                        "call",
-                        "--session",
-                        "--dest",
-                        "org.gnome.Shell.Screenshot",
-                        "--object-path",
-                        "/org/gnome/Shell/Screenshot",
-                        "--method",
-                        "org.gnome.Shell.Screenshot.Screenshot",
-                        "false",
-                        "false",
-                        &tmp_str,
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
+                let mut c = std::process::Command::new("spectacle");
+                c.args(["-b", "-n", "-o", &tmp_str]);
+                c
             }
             CommandKind::GnomeScreenshot => {
-                std::process::Command::new("gnome-screenshot")
-                    .args(["-f", &tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
+                let mut c = std::process::Command::new("gnome-screenshot");
+                c.args(["-f", &tmp_str]);
+                c
             }
         };
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
 
+        let status = execute_with_timeout(cmd, std::time::Duration::from_millis(2500))?;
         if !status.success() {
             anyhow::bail!("Screen capture command {:?} exited with error: {:?}", self.kind, status);
         }
@@ -604,7 +583,13 @@ pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenC
                         });
                     }
                     Err(e) => {
-                        println!("⚠️ [AVISO] Conexión X11 activa ({}) pero falló captura GetImage: {:#}", disp, e);
+                        let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+                        if is_wayland {
+                            println!("ℹ️ [AVISO] Sesión Wayland activa: Xwayland ({}) no permite lectura directa de ventana raíz.", disp);
+                            println!("          Cambiando automáticamente a herramienta de escritorio nativa...");
+                        } else {
+                            println!("⚠️ [AVISO] Conexión X11 activa ({}) pero falló captura GetImage: {:#}", disp, e);
+                        }
                     }
                 }
             }
