@@ -416,37 +416,39 @@ impl CommandCapturer {
     }
 
     fn probe(kind: CommandKind, tmp_file: &std::path::Path, tmp_str: &str) -> bool {
-        let mut cmd = match kind {
+        let (cmd, timeout_ms) = match kind {
             CommandKind::Grim => {
                 let mut c = std::process::Command::new("grim");
                 c.args([tmp_str]);
-                c
+                (c, 1500)
             }
             CommandKind::Scrot => {
                 let mut c = std::process::Command::new("scrot");
                 c.args(["-o", tmp_str]);
-                c
+                (c, 1500)
             }
             CommandKind::CinnamonScreenshot => {
                 let mut c = std::process::Command::new("cinnamon-screenshot");
                 c.args(["-f", tmp_str]);
-                c
+                (c, 2000)
             }
             CommandKind::GnomeScreenshot => {
                 let mut c = std::process::Command::new("gnome-screenshot");
                 c.args(["-f", tmp_str]);
-                c
+                (c, 2000)
             }
             CommandKind::Spectacle => {
                 let mut c = std::process::Command::new("spectacle");
                 c.args(["-b", "-n", "-o", tmp_str]);
-                c
+                // Spectacle is a full Qt/KDE application requiring ~1.5s startup initialization
+                (c, 4500)
             }
         };
+        let mut cmd = cmd;
         cmd.stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
 
-        if let Ok(st) = execute_with_timeout(cmd, std::time::Duration::from_millis(1000)) {
+        if let Ok(st) = execute_with_timeout(cmd, std::time::Duration::from_millis(timeout_ms)) {
             if st.success() && tmp_file.exists() {
                 if let Ok(meta) = tmp_file.metadata() {
                     return meta.len() > 0;
@@ -458,37 +460,38 @@ impl CommandCapturer {
 
     pub fn capture_to_fb(&self, fb: &mut Framebuffer) -> anyhow::Result<()> {
         let tmp_str = self.tmp_path.to_string_lossy().to_string();
-        let mut cmd = match self.kind {
+        let (cmd, timeout_ms) = match self.kind {
             CommandKind::Grim => {
                 let mut c = std::process::Command::new("grim");
                 c.args([&tmp_str]);
-                c
+                (c, 2000)
             }
             CommandKind::Scrot => {
                 let mut c = std::process::Command::new("scrot");
                 c.args(["-o", &tmp_str]);
-                c
+                (c, 2000)
             }
             CommandKind::CinnamonScreenshot => {
                 let mut c = std::process::Command::new("cinnamon-screenshot");
                 c.args(["-f", &tmp_str]);
-                c
+                (c, 3000)
             }
             CommandKind::Spectacle => {
                 let mut c = std::process::Command::new("spectacle");
                 c.args(["-b", "-n", "-o", &tmp_str]);
-                c
+                (c, 5000)
             }
             CommandKind::GnomeScreenshot => {
                 let mut c = std::process::Command::new("gnome-screenshot");
                 c.args(["-f", &tmp_str]);
-                c
+                (c, 3000)
             }
         };
+        let mut cmd = cmd;
         cmd.stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
 
-        let status = execute_with_timeout(cmd, std::time::Duration::from_millis(2500))?;
+        let status = execute_with_timeout(cmd, std::time::Duration::from_millis(timeout_ms))?;
         if !status.success() {
             anyhow::bail!("Screen capture command {:?} exited with error: {:?}", self.kind, status);
         }
@@ -531,7 +534,7 @@ impl ScreenCapturer for LinuxScreenCapturer {
             }
             Self::Command { capturer, fb, .. } => {
                 let fmt_name = if capturer.tmp_path.extension().map(|s| s == "bmp").unwrap_or(false) {
-                    "BMP rápido"
+                    "BMP sin compresión (<1ms decode)"
                 } else {
                     "PNG"
                 };
@@ -565,7 +568,7 @@ impl ScreenCapturer for LinuxScreenCapturer {
 }
 
 /// Automatically selects and initializes the best screen capture backend available on the system.
-pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenCapturer> {
+pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> anyhow::Result<Box<dyn ScreenCapturer>> {
     // 1. Try X11 / XWayland capture FIRST whenever DISPLAY is available.
     // X11 direct memory capture takes ~1-3ms, compared to ~250ms for CLI screenshot tools.
     if let Ok(disp) = std::env::var("DISPLAY") {
@@ -576,17 +579,17 @@ pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenC
                     Ok(()) => {
                         println!("⚡ Captura activa: X11 nativo directo ({}x{}, latencia sub-10ms)", x11.width, x11.height);
                         let prev_rgb = fb.rgb.clone();
-                        return Box::new(LinuxScreenCapturer::X11 {
+                        return Ok(Box::new(LinuxScreenCapturer::X11 {
                             capturer: x11,
                             fb,
                             prev_rgb,
-                        });
+                        }));
                     }
                     Err(e) => {
                         let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
                         if is_wayland {
                             println!("ℹ️ [AVISO] Sesión Wayland activa: Xwayland ({}) no permite lectura directa de ventana raíz.", disp);
-                            println!("          Cambiando automáticamente a herramienta de escritorio nativa...");
+                            println!("          Buscando herramienta nativa de escritorio compatible...");
                         } else {
                             println!("⚠️ [AVISO] Conexión X11 activa ({}) pero falló captura GetImage: {:#}", disp, e);
                         }
@@ -604,7 +607,7 @@ pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenC
     // 2. Try CLI capture (Grim, Scrot, Cinnamon, GNOME, Spectacle) if X11 was not available
     if let Some(cmd) = CommandCapturer::try_detect() {
         let fmt_name = if cmd.tmp_path.extension().map(|s| s == "bmp").unwrap_or(false) {
-            "BMP sin compresión"
+            "BMP sin compresión (<1ms decode)"
         } else {
             "PNG"
         };
@@ -612,16 +615,25 @@ pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenC
         let mut fb = Framebuffer::new(fallback_w, fallback_h);
         if let Ok(()) = cmd.capture_to_fb(&mut fb) {
             let prev_rgb = fb.rgb.clone();
-            return Box::new(LinuxScreenCapturer::Command {
+            return Ok(Box::new(LinuxScreenCapturer::Command {
                 capturer: cmd,
                 fb,
                 prev_rgb,
-            });
+            }));
         }
     }
 
-    println!("⚠️ Captura activa: Simulación de escritorio (Mock)");
-    Box::new(LinuxScreenCapturer::Mock(MockCapturer::new(fallback_w, fallback_h)))
+    // Explicit mock simulation ONLY when requested via environment variable for headless testing
+    if std::env::var("DUCKJUMP_MOCK_DISPLAY").is_ok() {
+        println!("⚠️ Captura activa: Simulación de escritorio (Mock solicitado por DUCKJUMP_MOCK_DISPLAY=1)");
+        return Ok(Box::new(LinuxScreenCapturer::Mock(MockCapturer::new(fallback_w, fallback_h))));
+    }
+
+    anyhow::bail!(
+        "No se pudo inicializar la captura de pantalla real en este equipo.\n\
+         • En sesiones Wayland (KDE/GNOME), asegúrese de tener disponible una herramienta de captura instalada (ej. spectacle o grim).\n\
+         • Alternativamente, inicie sesión en una sesión X11 (ej. Cinnamon o Plasma X11/Xorg) para captura directa nativa a 60 FPS sin herramientas externas."
+    );
 }
 
 /// Simulated desktop environment for headless CI / unit testing.

@@ -106,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
         let code = format_verification_code(args.code.as_deref().unwrap_or(args.totp_secret.as_deref().unwrap_or("749201")));
         print_banner(Some(&code));
 
-        let mut capturer = capture::create_best_capturer(args.width, args.height);
+        let mut capturer = capture::create_best_capturer(args.width, args.height)?;
         let initial = capturer.initial_frame()?;
         info!(tiles = initial.len(), "Captured initial DJTP display frame successfully");
 
@@ -294,7 +294,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Main capture loop (Adaptive up to 60 FPS with real-time telemetry traces)
     println!("Presione Ctrl+C en cualquier momento para finalizar.");
-    let mut capturer = capture::create_best_capturer(args.width, args.height);
+    let mut capturer = match capture::create_best_capturer(args.width, args.height) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("\n❌ {}\n", e);
+            return Ok(());
+        }
+    };
     println!("🔍 [TRACE] Motor de captura inicializado: {}", capturer.name());
 
     let mut sent_initial = false;
