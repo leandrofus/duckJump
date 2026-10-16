@@ -1,0 +1,125 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+
+<DocsLayout 
+  title="Architecture & Protocol" 
+  description="Technical specification of the duckJump gateway, Rust session daemons, and DJTP wire protocol."
+  currentSlug="architecture"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 text-xs font-mono mb-3">
+        Internal Architecture
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        Architecture & DJTP Protocol
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        duckJump separates duties cleanly: a lightweight Go gateway manages state, encryption, and client connections, while a Rust session daemon manages isolated per-session workers and low-latency graphical tile streaming.
+      </p>
+    </div>
+
+    <!-- Visual Architecture Diagram -->
+    <div class="p-6 rounded-2xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto space-y-2">
+      <div class="text-amber-400 font-bold mb-2">Process Isolation & Component Map:</div>
+      <pre class="text-slate-300">
+browser ──HTTPS/WebSocket──▶ duckjump-gw (Go) ──DJTP/TCP(+TLS)──▶ duckjumpd (Rust)
+ React + xterm.js / canvas      │                                         │
+                                ├─ local auth + TOTP, roles, CSRF         ├─ Worker: SSH (russh)
+                                ├─ credential vault (AES-256-GCM)         ├─ Worker: VNC (RFB client)
+                                ├─ grants, folders, tags, groups          └─ Worker: duckjumpd-rdp (IronRDP)
+                                ├─ chained audit log (SQLite/Postgres)
+                                └─ edge agent hub ◀── WSS + yamux ── duckjump-agent (closed network)
+      </pre>
+    </div>
+
+    <!-- Gateway Deep Dive -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. Control Plane: duckjump-gw (Go)</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        The gateway is a single statically compiled binary written in Go. It performs:
+      </p>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li><strong>User Authentication:</strong> Local accounts with bcrypt passwords + TOTP, or OpenID Connect (OIDC) SSO.</li>
+        <li><strong>Role-Based Access Control (RBAC):</strong> Four defined roles: <code class="text-amber-300">superadmin</code>, <code class="text-amber-300">admin</code>, <code class="text-amber-300">auditor</code>, and <code class="text-amber-300">user</code>.</li>
+        <li><strong>In-Memory Credential Vault:</strong> Encrypted with AES-256-GCM using the server's master key. Injects passwords and private keys directly into the Rust daemon socket.</li>
+        <li><strong>Database Engine:</strong> Embedded SQLite by default with automated migrations to PostgreSQL via <code class="text-amber-300">duckjump-gw migrate-to-postgres</code>.</li>
+        <li><strong>Embedded UI:</strong> The React 19 frontend is compiled and bundled into the Go binary at build time.</li>
+      </ul>
+    </div>
+
+    <!-- Daemon Deep Dive -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. Data Plane: duckjumpd (Rust)</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        The session daemon is written in Rust for strict memory safety, low resource footprint, and zero garbage collection pauses. Key design aspects:
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose">
+        <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+          <div class="font-bold text-amber-400 mb-1">One Process Per Session</div>
+          <p class="text-slate-300">Each SSH, RDP, or VNC session spawns an isolated worker process. If a target host misbehaves or disconnects, other concurrent sessions are completely unaffected.</p>
+        </div>
+        <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+          <div class="font-bold text-sky-400 mb-1">IronRDP Integration</div>
+          <p class="text-slate-300">RDP protocol handling is performed by IronRDP in Rust, supporting Network Level Authentication (NLA) over TLS without native Windows dependencies.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- DJTP Wire Protocol -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. DJTP (DuckJump Terminal Protocol)</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Unlike Apache Guacamole's text-based protocol, DJTP is a compact, high-efficiency binary protocol.
+      </p>
+
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-800 text-xs font-mono text-slate-300 space-y-2">
+        <div class="text-amber-400 font-bold">DJTP Frame Format:</div>
+        <div>[ 4 bytes: u32 length (Big-Endian) ] [ 1 byte: u8 kind ] [ N bytes: payload ]</div>
+      </div>
+
+      <h3 class="text-lg font-semibold text-white pt-2">Frame Kinds:</h3>
+      <div class="divide-y divide-slate-800 text-xs text-slate-300 border border-slate-800 rounded-lg overflow-hidden">
+        <div class="p-3 bg-slate-950 flex items-center justify-between">
+          <span class="font-mono text-amber-400 font-bold">Kind 0x01 — JSON Control</span>
+          <span>Session handshake, resize events, credentials injection, and status reporting</span>
+        </div>
+        <div class="p-3 bg-slate-900 flex items-center justify-between">
+          <span class="font-mono text-sky-400 font-bold">Kind 0x02 — Raw PTY Stream</span>
+          <span>Bidirectional byte stream for SSH terminal sessions rendered in xterm.js</span>
+        </div>
+        <div class="p-3 bg-slate-950 flex items-center justify-between">
+          <span class="font-mono text-emerald-400 font-bold">Kind 0x03 — Graphical Display Ops</span>
+          <span>Framebuffer updates, PNG/JPEG sub-tiles, fills, cursor changes, and end-of-frame</span>
+        </div>
+      </div>
+
+      <h3 class="text-lg font-semibold text-white pt-2">Flow Control & Watchdog</h3>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        For graphical sessions (RDP/VNC), the browser acknowledges each frame received. This acknowledgment serves as natural flow control, ensuring low-bandwidth clients are not overwhelmed. An internal watchdog ensures that lost acknowledgments never freeze a connection.
+      </p>
+    </div>
+
+    <!-- PostgreSQL HA Deep Dive -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">4. High Availability & PostgreSQL Clustering</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        When deployed behind an enterprise reverse proxy or load balancer, several active <code class="text-white">duckjump-gw</code> instances share a single PostgreSQL database:
+      </p>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li><strong>Distributed Heartbeats:</strong> Active sessions are tracked in <code class="text-amber-300">runtime_sessions</code> with timestamps and holding node ID.</li>
+        <li><strong>Crash Recovery:</strong> If a gateway crashes or suffers hardware failure, remaining nodes detect the missing heartbeat and cleanly close abandoned sessions in the audit chain.</li>
+        <li><strong>Cross-Node Kill Signals:</strong> Any administrator can terminate a session from any gateway UI, API, or CLI (<code class="text-amber-300">duckjump kill</code>).</li>
+      </ul>
+      <p class="text-sm pt-2">
+        <a href={`${baseUrl}/docs/postgresql-ha/`} class="text-sky-400 hover:text-sky-300 font-semibold inline-flex items-center gap-1">
+          Read full PostgreSQL & High Availability Guide →
+        </a>
+      </p>
+    </div>
+
+  </div>
+</DocsLayout>

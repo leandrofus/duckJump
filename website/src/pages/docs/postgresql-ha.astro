@@ -1,0 +1,142 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout 
+  title="PostgreSQL & High Availability (HA)" 
+  description="Scale duckJump to multi-gateway active-active clusters with PostgreSQL, distributed session heartbeat, and zero-downtime migration."
+  currentSlug="postgresql-ha"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 text-xs font-mono mb-3">
+        Clustering & Scaling
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        PostgreSQL & High Availability (HA)
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        duckJump starts with zero setup on embedded SQLite for single-node installations, and scales seamlessly to active-active multi-gateway clusters backed by PostgreSQL.
+      </p>
+    </div>
+
+    <!-- Overview: SQLite vs PostgreSQL -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. Storage Engines: SQLite vs PostgreSQL</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose">
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-2">
+          <div class="font-bold text-amber-400 text-sm">SQLite (Default)</div>
+          <p class="text-slate-300">Default out-of-the-box engine. Zero configuration, zero external daemon. Stored in a single file (<code class="text-white">/var/lib/duckjump/duckjump.db</code>) with full ACID transactions and WAL mode.</p>
+          <div class="text-[11px] text-slate-500 font-mono pt-1">Ideal for: Single-node bastions, branch offices, edge environments.</div>
+        </div>
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-2">
+          <div class="font-bold text-sky-400 text-sm">PostgreSQL (High Availability)</div>
+          <p class="text-slate-300">Multi-gateway clustering. Multiple active <code class="text-white">duckjump-gw</code> instances share the same database, coordinate live session heartbeats, and terminate sessions across nodes.</p>
+          <div class="text-[11px] text-slate-500 font-mono pt-1">Ideal for: Enterprise HA, load-balanced bastions, mission-critical infrastructure.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- One-Command Migration -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. Zero-Loss Migration: migrate-to-postgres</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        You never have to decide upfront. You can start in production on SQLite, and when the time comes to scale horizontally, migrate in a single command without breaking the cryptographic audit chain:
+      </p>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
+        <div class="text-slate-500"># 1. Stop the gateway service</div>
+        <div>sudo systemctl stop duckjump</div>
+        
+        <div class="text-slate-500 pt-2"># 2. Run the migration to an empty PostgreSQL database:</div>
+        <div class="text-amber-400">sudo duckjump migrate-to-postgres -to 'postgres://duckjump:secret@db.internal:5432/duckjump'</div>
+        
+        <div class="text-slate-500 pt-2"># 3. Update /etc/duckjump/duckjump.env:</div>
+        <div class="text-sky-400">DUCKJUMP_DB="postgres://duckjump:secret@db.internal:5432/duckjump"</div>
+        
+        <div class="text-slate-500 pt-2"># 4. Restart service</div>
+        <div>sudo systemctl start duckjump</div>
+      </div>
+
+      <div class="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-200">
+        <strong class="font-bold">Cryptographic Integrity Guarantee:</strong> <code class="text-white">migrate-to-postgres</code> copies everything in a single atomic database transaction. Crucially, it verifies the SHA-256 + HMAC audit chain <em>before copying</em> and <em>again on arrival</em> in PostgreSQL. The original SQLite database is left completely untouched as an immediate fallback.
+      </div>
+    </div>
+
+    <!-- Multi-Gateway Cluster Architecture -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. Multi-Gateway HA Architecture</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        When connected to PostgreSQL, multiple independent <code class="text-white">duckjump-gw</code> instances form an active-active cluster:
+      </p>
+
+      <div class="p-6 rounded-2xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto space-y-2">
+        <pre class="text-slate-300">
+                    Load Balancer / Reverse Proxy (HAProxy, NGINX, Traefik)
+                                  │ HTTPS & WebSocket
+                     ┌────────────┴────────────┐
+                     ▼                         ▼
+            ┌─────────────────┐       ┌─────────────────┐
+            │ duckjump-gw #1  │       │ duckjump-gw #2  │  (Active-Active)
+            │ (Node: gw-prod-1)│       │ (Node: gw-prod-2)│
+            └────────┬────────┘       └────────┬────────┘
+                     │                         │
+                     ├────────────┬────────────┤
+                                  ▼
+                     ┌─────────────────────────┐
+                     │  PostgreSQL (Shared DB) │
+                     │  - runtime_sessions     │ (Heartbeats)
+                     │  - audit_session_kills  │ (Cross-node kills)
+                     │  - audit_events (Chain) │
+                     └─────────────────────────┘
+                                  │
+                                  ▼
+                     ┌─────────────────────────┐
+                     │ S3 / MinIO Object Store │ (Recordings & Files)
+                     └─────────────────────────┘
+        </pre>
+      </div>
+
+      <h3 class="text-lg font-semibold text-white pt-2">Distributed Coordination Features:</h3>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li><strong>Live Session Heartbeats (<code class="text-amber-300">runtime_sessions</code>):</strong> Each gateway node periodically beats heartbeats for its active sessions. Every node knows which gateway is holding which live connection.</li>
+        <li><strong>Automatic Orphan Session Recovery (<code class="text-amber-300">CloseStaleSessions</code>):</strong> If a gateway node crashes, loses power, or is abruptly killed, the surviving gateways detect the lost heartbeat and cleanly close the abandoned sessions in the audit ledger with reason <code class="text-rose-400">"lost: the gateway holding it stopped"</code>.</li>
+        <li><strong>Distributed Session Termination:</strong> An administrator connected to Gateway #1 can terminate a session running on Gateway #2 (via UI, REST API, or CLI <code class="text-amber-300">duckjump kill &lt;id&gt;</code>). The kill signal is dispatched through PostgreSQL and executed by the holding node immediately.</li>
+      </ul>
+    </div>
+
+    <!-- Shared S3 Storage -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">4. Shared Storage without NFS: S3 & MinIO</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Traditional bastions require complex shared file systems (NFS, GlusterFS) for cluster session recordings and file transfers. duckJump eliminates this by streaming recordings and SFTP tray files directly to <strong class="text-white">AWS S3, MinIO, or Ceph</strong>:
+      </p>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li>Every <code class="text-amber-300">duckjumpd</code> worker uploads completed recordings directly to the S3 bucket.</li>
+        <li>Any gateway in the cluster can immediately stream and play back recordings in the browser player without touching local disks.</li>
+        <li>User SFTP file trays reside under <code class="text-amber-300">files/</code> in the S3 bucket, accessible across all cluster nodes.</li>
+      </ul>
+    </div>
+
+    <!-- Production HA Checklist -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">5. Production HA Considerations</h2>
+      <div class="divide-y divide-slate-800 text-xs text-slate-300 border border-slate-800 rounded-lg overflow-hidden">
+        <div class="p-3 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <span class="font-bold text-amber-400">Reverse Proxy & WebSocket</span>
+          <span class="text-slate-300">Configure your load balancer for WebSocket upgrades (<code class="text-white">Upgrade</code> and <code class="text-white">Connection: Upgrade</code> headers) and pass-through client IP in <code class="text-white">X-Forwarded-For</code>.</span>
+        </div>
+        <div class="p-3 bg-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <span class="font-bold text-sky-400">Audit Stream Export</span>
+          <span class="text-slate-300">When using <code class="text-white">-audit-export</code> (syslog or WORM file), configure it on one designated gateway or send to a centralized syslog receiver.</span>
+        </div>
+        <div class="p-3 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <span class="font-bold text-emerald-400">Master Vault Key</span>
+          <span class="text-slate-300">Ensure all gateway nodes in the cluster share the exact same <code class="text-white">/etc/duckjump/master.key</code> so any node can decrypt connection secrets in memory.</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</DocsLayout>

@@ -331,11 +331,89 @@ func TestSitesAndTokens(t *testing.T) {
 	if _, _, err := e.st.AgentSiteLookup(context.Background(), edge.HashToken(site.AgentToken)); err == nil {
 		t.Fatal("old token still valid")
 	}
+	if !strings.HasSuffix(site.AgentDownloadURL, "/agent/duckjump-agent") {
+		t.Fatalf("bad download URL: %s", site.AgentDownloadURL)
+	}
+	if !strings.HasSuffix(site.AgentServerURL, "/agent/connect") {
+		t.Fatalf("bad server URL: %s", site.AgentServerURL)
+	}
 	var direct siteDTO
 	root.do("POST", "/sites", siteRequest{Name: "dc1", Kind: "direct"}, 201, &direct)
+	if direct.AgentDownloadURL != "" || direct.AgentServerURL != "" {
+		t.Fatalf("direct site should not have agent URLs: %+v", direct)
+	}
 	root.do("POST", "/sites/"+direct.ID+"/token", nil, 409, nil)
 	root.do("POST", "/connections", connectionRequest{Name: "c", Protocol: "ssh", Host: "h", SiteID: &direct.ID}, 201, nil)
 	root.do("DELETE", "/sites/"+direct.ID, nil, 409, nil) // in use
+}
+
+func TestAgentBinaryDownloadAndURLs(t *testing.T) {
+	e := newEnv(t)
+	e.server.FrontendURL = "https://bastion.corp:8443"
+	e.server.AgentListen = "0.0.0.0:18443"
+
+	root := e.as("root")
+	var site siteDTO
+	root.do("POST", "/sites", siteRequest{Name: "custom1", Kind: "agent"}, 201, &site)
+	if site.FrontendURL != "https://bastion.corp:8443" {
+		t.Fatalf("expected FrontendURL https://bastion.corp:8443, got %s", site.FrontendURL)
+	}
+	if site.AgentDownloadURL != "https://bastion.corp:8443/agent/duckjump-agent" {
+		t.Fatalf("expected AgentDownloadURL https://bastion.corp:8443/agent/duckjump-agent, got %s", site.AgentDownloadURL)
+	}
+	if site.AgentServerURL != "wss://bastion.corp:8443/agent/connect" {
+		t.Fatalf("expected AgentServerURL wss://bastion.corp:8443/agent/connect, got %s", site.AgentServerURL)
+	}
+
+	// 1b. Without FrontendURL, uses AgentListen port
+	e.server.FrontendURL = ""
+	var siteNoFE siteDTO
+	root.do("POST", "/sites", siteRequest{Name: "custom2", Kind: "agent"}, 201, &siteNoFE)
+	if !strings.HasSuffix(siteNoFE.AgentServerURL, ":18443/agent/connect") {
+		t.Fatalf("expected AgentServerURL with port 18443, got %s", siteNoFE.AgentServerURL)
+	}
+
+	// 1. Download when binary does not exist -> 404
+	e.server.AgentBinPath = "/nonexistent/duckjump-agent"
+	resp, err := http.Get(e.srv.URL + "/agent/duckjump-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing agent binary, got %d", resp.StatusCode)
+	}
+
+	// 2. Download when binary exists -> 200 with headers and exact content
+	tmpDir := t.TempDir()
+	fakeBin := tmpDir + "/duckjump-agent"
+	payload := []byte("#!/bin/sh\necho fake agent\n")
+	if err := os.WriteFile(fakeBin, payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.server.AgentBinPath = fakeBin
+
+	resp, err = http.Get(e.srv.URL + "/agent/duckjump-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("expected Content-Type application/octet-stream, got %s", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "duckjump-agent") {
+		t.Fatalf("expected Content-Disposition with duckjump-agent, got %s", cd)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, payload) {
+		t.Fatalf("body mismatch: expected %q, got %q", payload, body)
+	}
 }
 
 func TestDuplicateGrantRefused(t *testing.T) {

@@ -934,6 +934,15 @@ components:
       type: object
     Site:
       properties:
+        agent_download_url:
+          description: Download URL for the edge agent binary.
+          type: string
+        agent_install_url:
+          description: Installer script URL to install the edge agent as a systemd service.
+          type: string
+        agent_server_url:
+          description: WebSocket URL the edge agent connects to.
+          type: string
         agent_token:
           description: Only when created or rotated. Store it; it is not shown again.
           type: string
@@ -947,6 +956,9 @@ components:
           format: date-time
           type: string
         description:
+          type: string
+        frontend_url:
+          description: Base URL where the frontend/gateway is reached.
           type: string
         id:
           format: uuid

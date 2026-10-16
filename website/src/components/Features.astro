@@ -1,0 +1,115 @@
+---
+interface Props {
+  lang?: 'en' | 'es';
+}
+
+const { lang = 'en' } = Astro.props;
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const isEs = lang === 'es';
+
+const items = isEs ? [
+  {
+    title: "Terminales y escritorios",
+    desc: "SSH con renderizado nativo en xterm.js, RDP con IronRDP y NLA/TLS, y VNC con cliente RFB propio. Claves de host y certificados pineados antes de enviar credenciales.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>`,
+  },
+  {
+    title: "Bóveda de credenciales",
+    desc: "Contraseñas y claves privadas cifradas en memoria (AES-256-GCM). Se inyectan únicamente gateway → daemon y jamás se exponen al navegador ni a los usuarios.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+  },
+  {
+    title: "Permisos Just-In-Time (JIT)",
+    desc: "Asigna acceso a usuarios o grupos sobre conexiones, carpetas o tags con expiración automática. Sesiones vivas se terminan de inmediato si expira el permiso.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+  },
+  {
+    title: "Auditoría encadenada",
+    desc: "Cadena de hashes SHA-256 con firma HMAC externa fuera de la base de datos. Imposible de modificar o reescribir desapercibido, incluso con acceso SQL de escritura.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+  },
+  {
+    title: "PostgreSQL y Alta Disponibilidad",
+    desc: "Inicia con SQLite embebido sin dependencias. Escala a PostgreSQL en un comando sin perder la cadena de auditoría para clusters activos con coordinación de sesiones y failover.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>`,
+  },
+  {
+    title: "Grabación de sesiones y S3",
+    desc: "SSH como asciicast (.cast) y RDP/VNC en formato gráfico eficiente con reproductor web integrado. Subida directa a S3, MinIO o Ceph al finalizar la sesión.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect width="14" height="14" x="1" y="5" rx="2" ry="2"/></svg>`,
+  },
+  {
+    title: "Bandeja de archivos SFTP",
+    desc: "Transferencia de archivos a través de una bandeja por usuario en el gateway. Permisos separados de upload/download y registro forense con hash SHA-256.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+  },
+  {
+    title: "SSO (OpenID Connect) y MFA",
+    desc: "Integración fluida con Keycloak, Microsoft Entra ID y Okta con mapeo automático de roles y grupos. Autenticación local con contraseñas seguras y TOTP.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  },
+] : [
+  {
+    title: "Terminals and desktops",
+    desc: "Raw PTY stream for SSH rendered in xterm.js, RDP via IronRDP with NLA/TLS, and VNC via its own RFB client. Server keys and certificates are pinned before any handshake.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>`,
+  },
+  {
+    title: "Credential vault",
+    desc: "Passwords and private keys are encrypted in memory (AES-256-GCM). Injected strictly gateway → daemon and never exposed to the user or browser.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+  },
+  {
+    title: "Just-In-Time access grants",
+    desc: "Grants for users or groups on a connection, a folder or a tag with optional expiry. Enforced in real time: a session ends immediately when its grant expires or is revoked.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+  },
+  {
+    title: "Chained audit log",
+    desc: "Verifiable SHA-256 hash chain plus an HMAC key outside the database. Impossible to modify or rewrite unnoticed, even with write access to SQL records.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+  },
+  {
+    title: "PostgreSQL & High Availability",
+    desc: "Starts on embedded SQLite; moves to PostgreSQL in one command (`migrate-to-postgres`). Multiple active gateways share the database with session heartbeats and automatic orphan recovery.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>`,
+  },
+  {
+    title: "Session recording & S3",
+    desc: "SSH as asciicast (.cast) and RDP/VNC in an efficient graphical stream format with in-browser player. Finished recordings stream directly to S3, MinIO or Ceph.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect width="14" height="14" x="1" y="5" rx="2" ry="2"/></svg>`,
+  },
+  {
+    title: "File tray over SFTP",
+    desc: "Files transfer through a per-user file tray on the gateway with granular upload/download permissions. Every file is kept with its SHA-256 hash for forensic audits.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+  },
+  {
+    title: "SSO (OpenID Connect) & MFA",
+    desc: "Connect seamlessly to Keycloak, Microsoft Entra ID or Okta with role synchronization. Local users support passwords with TOTP multi-factor authentication.",
+    icon: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  },
+];
+---
+
+<section id="features" class="wrap block">
+  <h2>{isEs ? 'Lo que obtienes en el navegador' : 'What you get in the browser'}</h2>
+
+  <div class="cards">
+    {items.map((item) => (
+      <article class="card">
+        <span class="ico">
+          <Fragment set:html={item.icon} />
+        </span>
+        <h3>{item.title}</h3>
+        <p>{item.desc}</p>
+      </article>
+    ))}
+  </div>
+
+  <p class="more">
+    <a href={`${baseUrl}/docs/`}>
+      {isEs ? 'Ver documentación completa →' : 'Documentation →'}
+    </a>
+  </p>
+</section>

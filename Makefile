@@ -19,7 +19,8 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help build debug web gateway duckjumpd rdp run run-noauth edge stop logs dev-web \
-        test test-go test-rust test-web test-oidc test-postgres test-s3 test-sftp minio minio-stop keycloak keycloak-stop postgres postgres-stop generate dist packages clean
+        test test-go test-rust test-web test-oidc test-postgres test-s3 test-sftp minio minio-stop keycloak keycloak-stop postgres postgres-stop generate dist packages clean \
+        website website-dev website-build
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[1m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,6 +67,14 @@ logs: ## Follow duckjumpd and duckjump-gw logs
 
 dev-web: ## UI dev server with hot reload (proxies /api to a running stack)
 	cd web && bun run dev
+
+website: website-build ## Build the Astro GitHub Pages documentation website
+
+website-dev: ## Run local dev server for the Astro documentation website
+	cd website && bun run dev
+
+website-build: ## Compile the Astro documentation website into website/dist
+	cd website && bun run build
 
 # ---- checks and generated code ----
 

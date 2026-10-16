@@ -1,0 +1,173 @@
+---
+interface Props {
+  lang?: 'en' | 'es';
+}
+
+const { lang = 'en' } = Astro.props;
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const isEs = lang === 'es';
+---
+
+<!-- Reach every host section (inspired by ducktainer hosts layout) -->
+<section id="architecture" class="wrap block">
+  <h2>
+    {isEs ? 'Accede a cualquier host, sin exponer credenciales' : 'Reach every host, without exposing credentials'}
+  </h2>
+
+  <div class="hosts">
+    <a class="card host" href={`${baseUrl}/docs/architecture/`}>
+      <span class="ico blue">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="7.5" cy="15.5" r="5.5"/>
+          <path d="m21 2-9.6 9.6"/>
+          <path d="m15.5 7.5 3 3L22 7l-3-3"/>
+        </svg>
+      </span>
+      <h3>{isEs ? 'SSH vía russh' : 'SSH via russh'}</h3>
+      <p>
+        {isEs 
+          ? 'Sin clientes en el host: duckJump utiliza claves SSH aprobadas y pinea la clave pública del servidor antes de conectar.'
+          : 'Nothing to install on the host: duckJump uses stored SSH keys and pins host keys before any handshake.'
+        }
+      </p>
+      <code>duckjump conn add srv01 ssh://10.240.0.12</code>
+    </a>
+
+    <a class="card host" href={`${baseUrl}/docs/edge-agents/`}>
+      <span class="ico blue">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7 17 17 7"/>
+          <path d="M7 7h10v10"/>
+        </svg>
+      </span>
+      <h3>{isEs ? 'Agente de borde saliente' : 'Outbound edge agent'}</h3>
+      <p>
+        {isEs
+          ? 'Para redes cerradas o VPCs privadas sin IP pública. El agente abre un túnel saliente WSS + yamux respetando allow-lists CIDR locales.'
+          : 'For hosts behind NAT or inside closed VPCs. The agent connects out to duckJump with a token and local CIDR allow-list.'
+        }
+      </p>
+      <code>duckjump-agent --token /etc/duckjump-agent/token</code>
+    </a>
+
+    <a class="card host" href={`${baseUrl}/docs/architecture/`}>
+      <span class="ico blue">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect width="20" height="14" x="2" y="3" rx="2"/>
+          <line x1="8" x2="16" y1="21" y2="21"/>
+          <line x1="12" x2="12" y1="17" y2="21"/>
+        </svg>
+      </span>
+      <h3>{isEs ? 'IronRDP y VNC nativo' : 'IronRDP & native VNC'}</h3>
+      <p>
+        {isEs
+          ? 'RDP con NLA/TLS en Rust puro sin librerías de Windows. Los certificados del servidor se aprueban antes de enviar contraseñas.'
+          : 'RDP with NLA/TLS powered by IronRDP; VNC over TLS. Server certificates are pinned to block untrusted hosts.'
+        }
+      </p>
+      <code>duckjump conn add win-dc01 rdp://10.0.4.15</code>
+    </a>
+  </div>
+</section>
+
+<!-- Built to sit next to production (identical to ducktainer secure block) -->
+<section id="security" class="wrap block">
+  <div class="secure">
+    <div>
+      <span class="ico big">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+          <path d="m9 12 2 2 4-4"/>
+        </svg>
+      </span>
+      <h2>{isEs ? 'Diseñado para estar junto a producción' : 'Built to sit next to production'}</h2>
+      <p class="more" style="text-align: left; margin: 0;">
+        <a href={`${baseUrl}/docs/security/`} style="color: var(--on-night); text-decoration: underline;">
+          {isEs ? 'Documentación de seguridad →' : 'Documentation →'}
+        </a>
+      </p>
+    </div>
+
+    <ul>
+      {isEs ? (
+        <>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Las claves de servidor (host keys SSH y certificados RDP/VNC) están pineadas: un servidor desconocido detiene la conexión antes de enviar ninguna credencial.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Bóveda de credenciales cifrada con AES-256-GCM. La clave maestra se guarda en <code>/etc/duckjump/master.key</code> y los secretos se inyectan en memoria sin tocar el navegador.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Los permisos temporales (Just-In-Time) se aplican sobre sesiones vivas: si un grant expira o se revoca, la sesión activa se desconecta al instante.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Registro de auditoría con cadena de hashes SHA-256 y HMAC con clave externa fuera de la base de datos; imposible de reescribir desapercibido.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Las grabaciones de sesiones se transmiten automáticamente a almacenamiento S3, MinIO o Ceph para archivado y cumplimiento legal.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Alta Disponibilidad (HA) con PostgreSQL: múltiples gateways coordinan heartbeats de sesiones en vivo; si un nodo cae, los demás cierran de forma limpia las sesiones huérfanas en la auditoría.</span>
+          </li>
+        </>
+      ) : (
+        <>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Server keys are pinned: a key nobody approved stops the session before any credential is sent, until an administrator compares and approves it.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Credential vault encrypted with AES-256-GCM with a master key stored in <code>/etc/duckjump/master.key</code> (0600, root only).</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Access grants are enforced on live sessions: an active session ends immediately when its grant expires or is revoked.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Audit log with a verifiable hash chain plus external HMAC key so even someone with write access to SQL records cannot rewrite it unnoticed.</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>Finished session recordings stream directly to S3-compatible object storage (AWS S3, MinIO, Ceph).</span>
+          </li>
+          <li>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+            <span>High Availability (HA) with PostgreSQL: multiple active gateways coordinate session heartbeats; if a node dies, surviving gateways cleanly close abandoned sessions in the audit ledger.</span>
+          </li>
+        </>
+      )}
+    </ul>
+  </div>
+</section>

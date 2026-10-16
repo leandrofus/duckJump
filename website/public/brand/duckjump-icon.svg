@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Simplified mark for favicons and small sizes: the duck's head and the check. -->
+  <defs>
+    <linearGradient id="dji-head" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFD84A"/>
+      <stop offset="1" stop-color="#F7B31B"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#16325C"/>
+  <circle cx="26" cy="32" r="17" fill="url(#dji-head)" stroke="#E39A10" stroke-width="2.5"/>
+  <path d="M40 31 C 47 26, 55 27, 58 31 C 55 35, 48 37, 43 40 C 45 36, 43 33, 40 31 Z" fill="#F57C1A" stroke="#C85F0C" stroke-width="1.5" stroke-linejoin="round"/>
+  <circle cx="31" cy="27" r="3.2" fill="#16325C"/>
+  <circle cx="32.2" cy="25.8" r="1.1" fill="#FFFFFF"/>
+  <path d="M37 50 L43 56 L58 41" fill="none" stroke="#3FB8D6" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

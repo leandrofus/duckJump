@@ -1,0 +1,73 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout 
+  title="Tamper-Evident Audit Logging" 
+  description="Cryptographically chained audit logs with HMAC external keys, forensic integrity, and syslog export in duckJump."
+  currentSlug="audit-logging"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs font-mono mb-3">
+        Forensic Compliance
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        Tamper-Evident Chained Audit Logs
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        Standard database logs can be manipulated by anyone with raw SQL write privileges. DuckJump solves this by recording every critical bastion action into a cryptographically chained and HMAC-signed ledger.
+      </p>
+    </div>
+
+    <!-- Cryptographic Chain Structure -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. Dual-Layer Hash & HMAC Chain</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Every event logged by duckJump (logins, session starts, grant modifications, file transfers, session kills) generates an entry containing:
+      </p>
+
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
+        <div>1. <span class="text-amber-400 font-bold">Sequence Number:</span> Monotonically increasing 64-bit integer.</div>
+        <div>2. <span class="text-sky-400 font-bold">Payload Data:</span> Actor ID, timestamp, target connection, action kind, metadata.</div>
+        <div>3. <span class="text-purple-400 font-bold">Previous Hash:</span> SHA-256 hash of the preceding block (blockchain-style linking).</div>
+        <div>4. <span class="text-emerald-400 font-bold">HMAC Signature:</span> Keyed with an HMAC secret stored strictly outside the database.</div>
+      </div>
+
+      <div class="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-200">
+        <strong class="font-bold">Why the external HMAC key matters:</strong> If an attacker gains full SQL write access or compromises the database server, they still cannot recalculate and forge valid audit blocks because the HMAC signing key resides only in gateway process memory / configuration.
+      </div>
+    </div>
+
+    <!-- Integrity Verification -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. Verifying Audit Integrity</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Administrators and compliance auditors can verify the unbroken audit chain at any time using the gateway CLI:
+      </p>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
+        <div class="text-slate-500"># Verify complete audit history:</div>
+        <div class="text-amber-400">duckjump-gw verify-audit</div>
+        <div class="text-emerald-400 pt-1">✓ Verified 28,491 audit entries. Chain unbroken, HMAC valid.</div>
+      </div>
+    </div>
+
+    <!-- Exporting to Syslog and WORM -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. Real-Time Syslog & WORM Export</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        For enterprise SIEM integration (Splunk, Elastic, Datadog), DuckJump can mirror every audit entry as it happens:
+      </p>
+      
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
+        <div class="text-slate-500"># Start gateway with audit streaming:</div>
+        <div>duckjump-gw serve -audit-export syslog://siem.corp.internal:514</div>
+        <div class="text-slate-500 pt-1"># Or append to an immutable WORM file:</div>
+        <div>duckjump-gw serve -audit-export file:///mnt/worm-storage/duckjump-audit.log</div>
+      </div>
+    </div>
+
+  </div>
+</DocsLayout>

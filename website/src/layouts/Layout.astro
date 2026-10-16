@@ -1,0 +1,56 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  image?: string;
+  lang?: 'en' | 'es';
+}
+
+const {
+  title = "duckJump — Clientless PAM bastion in Go and Rust",
+  description = "A reimagining of Apache Guacamole: web-based SSH, RDP and VNC with an encrypted credential vault, expiring JIT access grants, and a tamper-evident audit trail.",
+  image = "/brand/duckjump-logo.svg",
+  lang = 'en',
+} = Astro.props;
+
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const fullUrl = new URL(Astro.url.pathname, Astro.site || 'https://leandrofus.github.io').toString();
+const ogImage = new URL(`${baseUrl}${image}`, Astro.site || 'https://leandrofus.github.io').toString();
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#EAF4FC" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0B1626" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href={`${baseUrl}/favicon.svg`} />
+    
+    <!-- Language Alternates -->
+    <link rel="alternate" hreflang="en" href="https://leandrofus.github.io/duckJump/" />
+    <link rel="alternate" hreflang="es" href="https://leandrofus.github.io/duckJump/es/" />
+    <link rel="alternate" hreflang="x-default" href="https://leandrofus.github.io/duckJump/" />
+    <link rel="canonical" href={fullUrl} />
+
+    <!-- Open Graph / Twitter -->
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:url" content={fullUrl} />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Google Fonts: Montserrat + IBM Plex Sans + IBM Plex Mono (ducktainer style) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

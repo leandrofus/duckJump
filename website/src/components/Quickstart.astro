@@ -1,0 +1,134 @@
+---
+interface Props {
+  lang?: 'en' | 'es';
+}
+
+const { lang = 'en' } = Astro.props;
+const isEs = lang === 'es';
+---
+
+<div id="install" class="install-wrap">
+  <div class="wrap install">
+    <div class="panel">
+      
+      <!-- System Selector Tabs -->
+      <div class="tabs">
+        <button type="button" class="tab-btn active" data-sys="deb">
+          Debian / Ubuntu
+        </button>
+        <button type="button" class="tab-btn" data-sys="rpm">
+          RHEL / Rocky / Fedora
+        </button>
+        <button type="button" class="tab-btn" data-sys="dev">
+          make run (Local Stack)
+        </button>
+        <button type="button" class="tab-btn" data-sys="packages">
+          make packages (Build)
+        </button>
+
+        <span class="arch">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect width="20" height="8" x="2" y="2" rx="2" ry="2"/>
+            <rect width="20" height="8" x="2" y="14" rx="2" ry="2"/>
+            <line x1="6" x2="6.01" y1="6" y2="6"/>
+            <line x1="6" x2="6.01" y1="18" y2="18"/>
+          </svg>
+          amd64 · :8443
+        </span>
+      </div>
+
+      <!-- Terminal Command Snippet -->
+      <div class="cmd">
+        <div class="term-bar">
+          <div class="dots">
+            <span class="dot-term dot-red"></span>
+            <span class="dot-term dot-yellow"></span>
+            <span class="dot-term dot-green"></span>
+          </div>
+          <button 
+            type="button" 
+            class="copy" 
+            id="install-copy-btn"
+            data-label={isEs ? "Copiar" : "Copy"} 
+            data-done={isEs ? "¡Copiado!" : "Copied!"}
+          >
+            {isEs ? "Copiar" : "Copy"}
+          </button>
+        </div>
+
+        <pre id="pre-deb" data-sys="deb" data-text="sudo apt install ./duckjump_0.1.0-1_amd64.deb"><span class="p"># </span>sudo apt install ./duckjump_0.1.0-1_amd64.deb</pre>
+        <pre id="pre-rpm" data-sys="rpm" data-text="sudo dnf install ./duckjump-0.1.0-1.x86_64.rpm" style="display: none;"><span class="p"># </span>sudo dnf install ./duckjump-0.1.0-1.x86_64.rpm</pre>
+        <pre id="pre-dev" data-sys="dev" data-text="git clone https://github.com/leandrofus/duckJump.git && cd duckJump && make run" style="display: none;"><span class="p"># </span>git clone https://github.com/leandrofus/duckJump.git
+<span class="p"># </span>cd duckJump && make run</pre>
+        <pre id="pre-packages" data-sys="packages" data-text="make packages" style="display: none;"><span class="p"># </span>make packages    # creates dist/packages/*.deb and *.rpm</pre>
+      </div>
+
+      <!-- Context description -->
+      <p class="after">
+        {isEs ? (
+          <>
+            Inicia automáticamente en <strong>https://&lt;host&gt;:8443</strong> con clave maestra del vault, usuario del sistema y contraseña inicial en <code>/etc/duckjump/initial-admin-password</code>.
+          </>
+        ) : (
+          <>
+            Starts automatically on <strong>https://&lt;host&gt;:8443</strong> with vault master key, system user, and initial superadmin password in <code>/etc/duckjump/initial-admin-password</code>.
+          </>
+        )}
+      </p>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  const preSnippets = document.querySelectorAll('.cmd pre');
+  const copyBtn = document.getElementById('install-copy-btn');
+
+  let activeSys = 'deb';
+
+  function updateTabs() {
+    tabButtons.forEach(btn => {
+      if (btn.getAttribute('data-sys') === activeSys) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    preSnippets.forEach(pre => {
+      if (pre.getAttribute('data-sys') === activeSys) {
+        (pre as HTMLElement).style.display = 'block';
+      } else {
+        (pre as HTMLElement).style.display = 'none';
+      }
+    });
+  }
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeSys = btn.getAttribute('data-sys') || 'deb';
+      updateTabs();
+    });
+  });
+
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const activePre = document.querySelector(`.cmd pre[data-sys="${activeSys}"]`);
+      const textToCopy = activePre?.getAttribute('data-text');
+      if (textToCopy) {
+        try {
+          await navigator.clipboard.writeText(textToCopy);
+          const doneLabel = copyBtn.getAttribute('data-done') || 'Copied!';
+          const originalLabel = copyBtn.getAttribute('data-label') || 'Copy';
+          copyBtn.textContent = doneLabel;
+          setTimeout(() => {
+            copyBtn.textContent = originalLabel;
+          }, 1500);
+        } catch {
+          // ignore
+        }
+      }
+    });
+  }
+</script>

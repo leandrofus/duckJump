@@ -1,7 +1,10 @@
 package server
 
 import (
+	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/leandrofus/duckjump/gateway/internal/edge"
@@ -50,11 +53,97 @@ type agentDTO struct {
 	ConnectedAt time.Time `json:"connected_at"`
 }
 
-func (s *Server) siteDTO(st db.ConfigSite, count *int64) siteDTO {
+func (s *Server) siteURLs(r *http.Request) (downloadURL, serverURL, frontendURL, installURL string) {
+	baseURL := ""
+	if r != nil {
+		scheme := "http"
+		if s.secureRequest(r) {
+			scheme = "https"
+		}
+		reqURL := scheme + "://" + r.Host
+
+		// If FrontendURL has multiple comma-separated URLs, match against the request
+		for _, u := range strings.Split(s.FrontendURL, ",") {
+			u = strings.TrimSpace(strings.TrimRight(u, "/"))
+			if u == "" {
+				continue
+			}
+			if strings.HasSuffix(u, "://"+r.Host) || strings.EqualFold(u, reqURL) {
+				baseURL = u
+				break
+			}
+		}
+		if baseURL == "" {
+			first := strings.TrimSpace(strings.TrimRight(strings.Split(s.FrontendURL, ",")[0], "/"))
+			if first != "" {
+				baseURL = first
+			} else {
+				baseURL = reqURL
+			}
+		}
+	} else if s.FrontendURL != "" {
+		baseURL = strings.TrimSpace(strings.TrimRight(strings.Split(s.FrontendURL, ",")[0], "/"))
+	}
+
+	frontendURL = baseURL
+	if baseURL != "" {
+		downloadURL = baseURL + "/agent/duckjump-agent"
+		installURL = baseURL + "/agent/install.sh"
+	}
+
+	if s.AgentServerURL != "" {
+		serverURL = s.AgentServerURL
+		return
+	}
+
+	scheme := "ws"
+	host := ""
+	if r != nil {
+		if s.secureRequest(r) {
+			scheme = "wss"
+		}
+		h, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			h = r.Host
+		}
+		host = h
+	}
+
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
+	if s.FrontendURL == "" && s.AgentListen != "" {
+		_, port, err := net.SplitHostPort(s.AgentListen)
+		if err == nil && port != "" {
+			serverURL = fmt.Sprintf("%s://%s:%s/agent/connect", scheme, host, port)
+			return
+		}
+	}
+
+	if baseURL != "" {
+		ws := strings.Replace(baseURL, "http://", "ws://", 1)
+		ws = strings.Replace(ws, "https://", "wss://", 1)
+		serverURL = ws + "/agent/connect"
+		return
+	}
+
+	serverURL = fmt.Sprintf("%s://%s/agent/connect", scheme, host)
+	return
+}
+
+func (s *Server) siteDTO(r *http.Request, st db.ConfigSite, count *int64) siteDTO {
 	d := siteDTO{ID: st.ID, Name: st.Name, Kind: st.Kind, Description: st.Description, ConnectionCount: count, CreatedAt: st.CreatedAt.UTC()}
-	if st.Kind == "agent" && s.Hub != nil {
-		n := s.Hub.Connected(st.ID)
-		d.AgentsOnline = &n
+	if st.Kind == "agent" {
+		if s.Hub != nil {
+			n := s.Hub.Connected(st.ID)
+			d.AgentsOnline = &n
+		}
+		dl, srv, fe, inst := s.siteURLs(r)
+		d.AgentDownloadURL = dl
+		d.AgentServerURL = srv
+		d.FrontendURL = fe
+		d.AgentInstallURL = inst
 	}
 	return d
 }
@@ -73,7 +162,7 @@ func (s *Server) listSites(w http.ResponseWriter, r *http.Request, p principal) 
 	out := make([]siteDTO, 0, len(rows))
 	for _, x := range rows {
 		n := x.ConnectionCount
-		out = append(out, s.siteDTO(db.ConfigSite{ID: x.ID, Name: x.Name, Kind: x.Kind, Description: x.Description, CreatedAt: x.CreatedAt}, &n))
+		out = append(out, s.siteDTO(r, db.ConfigSite{ID: x.ID, Name: x.Name, Kind: x.Kind, Description: x.Description, CreatedAt: x.CreatedAt}, &n))
 	}
 	return ok(w, out)
 }
@@ -120,7 +209,7 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, p principal)
 	if err != nil {
 		return err
 	}
-	d := s.siteDTO(st, nil)
+	d := s.siteDTO(r, st, nil)
 	d.AgentToken = tok
 	return created(w, d)
 }
@@ -136,7 +225,7 @@ func (s *Server) getSite(w http.ResponseWriter, r *http.Request, p principal) er
 	if err != nil {
 		return fromStore(err, "site")
 	}
-	return ok(w, s.siteDTO(st, nil))
+	return ok(w, s.siteDTO(r, st, nil))
 }
 
 // openapi:operation
@@ -181,7 +270,7 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request, p principal)
 	if err != nil {
 		return err
 	}
-	return ok(w, s.siteDTO(out, nil))
+	return ok(w, s.siteDTO(r, out, nil))
 }
 
 // openapi:operation
@@ -247,7 +336,7 @@ func (s *Server) rotateSiteToken(w http.ResponseWriter, r *http.Request, p princ
 	if s.Hub != nil {
 		s.Hub.DisconnectSite(id)
 	}
-	d := s.siteDTO(out, nil)
+	d := s.siteDTO(r, out, nil)
 	d.AgentToken = tok
 	return ok(w, d)
 }

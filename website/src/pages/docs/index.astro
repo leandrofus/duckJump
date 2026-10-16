@@ -1,0 +1,141 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+
+<DocsLayout 
+  title="Overview & Getting Started" 
+  description="Comprehensive guide to getting started with duckJump clientless PAM bastion."
+  currentSlug="index"
+>
+  <div class="space-y-8">
+    
+    <!-- Title & Badge -->
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-mono mb-3">
+        Version 0.1.0 • Stable Core
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        duckJump Documentation
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        duckJump is a clientless, browser-based access bastion for SSH, RDP, and VNC hosts, designed from first principles as a Privileged Access Management (PAM) platform.
+      </p>
+    </div>
+
+    <!-- Quick Navigation Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose">
+      <a href={`${baseUrl}/docs/architecture/`} class="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-all group">
+        <h3 class="text-sm font-bold text-white group-hover:text-amber-400 transition-colors flex items-center justify-between">
+          <span>Architecture & DJTP</span>
+          <span>→</span>
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">Deep dive into Go gateway, Rust session daemons, and binary wire protocol.</p>
+      </a>
+
+      <a href={`${baseUrl}/docs/security/`} class="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-all group">
+        <h3 class="text-sm font-bold text-white group-hover:text-amber-400 transition-colors flex items-center justify-between">
+          <span>Credential Vault & Pinning</span>
+          <span>→</span>
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">AES-256-GCM encryption, master keys, and mandatory host key approvals.</p>
+      </a>
+
+      <a href={`${baseUrl}/docs/pam-grants/`} class="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-all group">
+        <h3 class="text-sm font-bold text-white group-hover:text-amber-400 transition-colors flex items-center justify-between">
+          <span>Just-In-Time Grants</span>
+          <span>→</span>
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">Expiring permissions, live session termination, and RBAC roles.</p>
+      </a>
+
+      <a href={`${baseUrl}/docs/audit-logging/`} class="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-all group">
+        <h3 class="text-sm font-bold text-white group-hover:text-amber-400 transition-colors flex items-center justify-between">
+          <span>Tamper-Evident Audit</span>
+          <span>→</span>
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">SHA-256 hash chains, external HMAC verification, and WORM exports.</p>
+      </a>
+
+      <a href={`${baseUrl}/docs/postgresql-ha/`} class="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-all group">
+        <h3 class="text-sm font-bold text-white group-hover:text-sky-400 transition-colors flex items-center justify-between">
+          <span>PostgreSQL & High Availability (HA)</span>
+          <span>→</span>
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">Active-active multi-gateway clustering, session heartbeats, and atomic migration.</p>
+      </a>
+
+      <a href={`${baseUrl}/docs/edge-agents/`} class="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 transition-all group">
+        <h3 class="text-sm font-bold text-white group-hover:text-teal-400 transition-colors flex items-center justify-between">
+          <span>Edge Agents & Closed Networks</span>
+          <span>→</span>
+        </h3>
+        <p class="text-xs text-slate-400 mt-1">Reach private VPCs and on-prem subnets with outbound WSS + yamux tunnels.</p>
+      </a>
+    </div>
+
+    <!-- Installation Step by Step -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">Step-by-Step Installation</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        DuckJump distributes ready-to-run packages with bundled systemd units for popular enterprise distributions:
+      </p>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-200 space-y-2">
+        <div class="text-slate-500"># For Debian 11+ or Ubuntu 22.04+ (amd64):</div>
+        <div class="text-amber-400">sudo apt install ./duckjump_0.1.0-1_amd64.deb</div>
+        
+        <div class="text-slate-500 pt-2"># For RHEL 9+, Rocky Linux, or AlmaLinux 9+:</div>
+        <div class="text-amber-400">sudo dnf install ./duckjump-0.1.0-1.x86_64.rpm</div>
+      </div>
+
+      <h3 class="text-lg font-semibold text-white pt-2">What the Package Does Automatically:</h3>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li>Creates a dedicated system user and group (<code class="text-amber-300 bg-slate-900 px-1.5 py-0.5 rounded">duckjump</code>).</li>
+        <li>Generates a cryptographically strong vault master key in <code class="text-amber-300 bg-slate-900 px-1.5 py-0.5 rounded">/etc/duckjump/master.key</code> (read-restricted to root).</li>
+        <li>Creates an initial <code class="text-amber-300 bg-slate-900 px-1.5 py-0.5 rounded">admin</code> superadmin account with a random password saved to <code class="text-amber-300 bg-slate-900 px-1.5 py-0.5 rounded">/etc/duckjump/initial-admin-password</code>.</li>
+        <li>Generates self-signed TLS certificates and enables the systemd services:
+          <ul class="list-circle pl-5 mt-1 space-y-1 text-slate-400">
+            <li><code class="text-slate-200">duckjump.service</code> — The Go gateway and embedded UI on port <strong>8443</strong>.</li>
+            <li><code class="text-slate-200">duckjumpd.service</code> — The Rust session daemon.</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+
+    <!-- First Access -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">Accessing the Web Interface</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Navigate to <strong class="text-white">https://&lt;your-server-ip&gt;:8443</strong> in any modern browser.
+      </p>
+      
+      <div class="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 space-y-1">
+        <div class="font-bold">Important Security Note:</div>
+        <p>Because the initial deployment uses a self-signed certificate, your browser will display a security warning until you configure a valid certificate in <code class="text-white">/etc/duckjump/duckjump.env</code> or place duckJump behind your company reverse proxy.</p>
+      </div>
+
+      <p class="text-slate-300 text-sm">
+        Log in with username <code class="text-amber-300">admin</code> and the password found in:
+      </p>
+      <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-xs text-amber-400">
+        sudo cat /etc/duckjump/initial-admin-password
+      </div>
+    </div>
+
+    <!-- Local Development Stack -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">Development & Testing Stack</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        To test duckJump locally without installing system packages, you only need <strong class="text-white">Go 1.26</strong>, <strong class="text-white">Rust 1.91</strong>, <strong class="text-white">bun</strong>, and <strong class="text-white">podman/docker</strong>:
+      </p>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-200 space-y-2">
+        <div><span class="text-slate-500"># Start test sshd, VNC, and XRDP containers + duckjumpd + gateway</span></div>
+        <div class="text-amber-400">make run</div>
+        <div class="text-slate-400 pt-1">➜ Opens on http://127.0.0.1:8088 (admin / duckjump-admin-123)</div>
+      </div>
+    </div>
+
+  </div>
+</DocsLayout>

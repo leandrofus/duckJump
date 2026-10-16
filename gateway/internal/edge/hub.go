@@ -119,17 +119,28 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	sess, err := yamux.Client(websocket.NetConn(ctx, ws, websocket.MessageBinary), yamuxConfig())
 	if err != nil {
 		ws.Close(websocket.StatusInternalError, "yamux")
 		return
 	}
+	defer sess.Close()
 	ac := &agentConn{name: r.Header.Get("X-DuckJump-Agent"), remote: r.RemoteAddr, connected: time.Now(), sess: sess}
 	log := slog.With("site", siteName, "agent", ac.name, "remote", ac.remote)
 	h.add(siteID, ac)
 	log.Info("agent connected")
+
+	// Ensure yamux session closes immediately if the HTTP request / TCP socket closes.
+	go func() {
+		select {
+		case <-r.Context().Done():
+			sess.Close()
+		case <-sess.CloseChan():
+		}
+	}()
+
 	<-sess.CloseChan()
 	h.remove(siteID, ac)
 	log.Info("agent disconnected")
@@ -149,6 +160,13 @@ func (h *Hub) remove(site string, ac *agentConn) {
 		if a == ac {
 			h.agents[site] = append(list[:i], list[i+1:]...)
 			break
+		}
+	}
+	if len(h.agents[site]) == 0 {
+		for k, t := range h.tickets {
+			if t.site == site {
+				delete(h.tickets, k)
+			}
 		}
 	}
 }

@@ -1,0 +1,67 @@
+---
+import Header from './Header.astro';
+
+interface Props {
+  lang?: 'en' | 'es';
+}
+
+const { lang = 'en' } = Astro.props;
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const isEs = lang === 'es';
+---
+
+<div class="hero">
+  <Header onHero={true} lang={lang} />
+
+  <div class="wrap hero-in">
+    <div class="hero-text">
+      <a class="pill" href="https://github.com/leandrofus/duckJump/releases" target="_blank" rel="noopener noreferrer">
+        <span class="dot"></span>
+        {isEs ? 'Última versión' : 'Latest release'} <strong>v0.1.0</strong>
+      </a>
+
+      <h1>
+        {isEs ? 'Bastión PAM sin clientes para SSH, RDP y VNC' : 'Clientless PAM bastion for SSH, RDP and VNC'}
+      </h1>
+
+      <p class="lede">
+        {isEs 
+          ? 'Una reimaginación de Apache Guacamole: acceso web nativo a terminales y escritorios con bóveda de credenciales cifrada, permisos JIT temporales y auditoría a prueba de manipulación.'
+          : 'A reimagining of Apache Guacamole: web-based terminal and desktop access with an encrypted credential vault, expiring JIT access grants, and a tamper-evident audit trail.'
+        }
+      </p>
+
+      <div class="ctas">
+        <a class="btn primary" href="#install">
+          {isEs ? 'Instalar' : 'Install'}
+        </a>
+        <a class="btn ghost" href={`${baseUrl}/docs/`}>
+          {isEs ? 'Documentación' : 'Documentation'}
+        </a>
+      </div>
+
+      <p class="runs">
+        {isEs
+          ? 'Gateway en Go · Daemon en Rust · SQLite y PostgreSQL HA · Paquetes rpm y deb · RHEL 9+ · Debian 11+'
+          : 'Go gateway · Rust duckjumpd · SQLite & PostgreSQL HA · rpm and deb · RHEL 9+ · Debian 11+'
+        }
+      </p>
+    </div>
+
+    <div class="hero-art">
+      <img
+        src={`${baseUrl}/brand/duckjump-logo.svg`}
+        width="380"
+        height="340"
+        alt="duckJump — Clientless PAM bastion"
+        fetchpriority="high"
+      />
+    </div>
+  </div>
+
+  <!-- Decorative Waves (identical to ducktainer) -->
+  <svg class="waves" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">
+    <path class="w1" d="M0 58 C 180 18 360 18 540 52 S 900 100 1080 60 S 1350 22 1440 44 V120 H0 Z"></path>
+    <path class="w2" d="M0 80 C 240 46 420 108 720 80 S 1200 50 1440 76 V120 H0 Z"></path>
+  </svg>
+</div>

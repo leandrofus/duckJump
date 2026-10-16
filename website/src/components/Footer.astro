@@ -1,0 +1,41 @@
+---
+interface Props {
+  lang?: 'en' | 'es';
+}
+
+const { lang = 'en' } = Astro.props;
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const isEs = lang === 'es';
+---
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <a class="brand" href={isEs ? `${baseUrl}/es/` : `${baseUrl}/`}>
+      <img src={`${baseUrl}/brand/duckjump-icon.svg`} alt="duckJump" width="36" height="36" />
+      <span>duckJump</span>
+    </a>
+
+    <span class="grow">
+      {isEs ? 'duckJump es software libre bajo licencia AGPL-3.0.' : 'duckJump is open source under AGPL-3.0.'}
+    </span>
+
+    <a href={`${baseUrl}/docs/`}>
+      {isEs ? 'Documentación' : 'Documentation'}
+    </a>
+    <a href="https://github.com/leandrofus/duckJump/releases" target="_blank" rel="noopener noreferrer">
+      {isEs ? 'Lanzamientos' : 'Releases'}
+    </a>
+    <a href="https://github.com/leandrofus/duckJump/issues" target="_blank" rel="noopener noreferrer">
+      {isEs ? 'Reportar un problema' : 'Report a problem'}
+    </a>
+    <a href="https://github.com/leandrofus/duckJump" target="_blank" rel="noopener noreferrer">
+      GitHub
+    </a>
+  </div>
+
+  <div class="wrap" style="padding-bottom: 24px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 14px;">
+    <p style="margin: 0;">
+      Apache Guacamole is a trademark of The Apache Software Foundation. duckJump is an independent project, not affiliated with or endorsed by the ASF, and contains no Guacamole code.
+    </p>
+  </div>
+</footer>

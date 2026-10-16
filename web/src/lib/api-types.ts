@@ -1611,6 +1611,12 @@ export interface components {
             username: string;
         };
         Site: {
+            /** @description Download URL for the edge agent binary. */
+            agent_download_url?: string;
+            /** @description Installer script URL to install the edge agent as a systemd service. */
+            agent_install_url?: string;
+            /** @description WebSocket URL the edge agent connects to. */
+            agent_server_url?: string;
             /** @description Only when created or rotated. Store it; it is not shown again. */
             agent_token?: string;
             /** @description Agent sites only. */
@@ -1620,6 +1626,8 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             description: string;
+            /** @description Base URL where the frontend/gateway is reached. */
+            frontend_url?: string;
             /** Format: uuid */
             id: string;
             /** @enum {string} */

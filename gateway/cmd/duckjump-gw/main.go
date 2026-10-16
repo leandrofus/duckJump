@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -121,6 +122,9 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 	filesDir := fs.String("files", env("DUCKJUMP_FILES", ""), "directory for the file tray (file transfer); with S3 configured the tray goes to the bucket instead")
 	fileMax := fs.Int64("file-max-size", 1<<30, "largest file that may be transferred, in bytes")
 	fileTTL := fs.Duration("file-ttl", server.DefaultFileTTL, "how long files stay in the tray")
+	frontendURL := fs.String("frontend-url", firstEnv("", "DUCKJUMP_FRONTEND_URL", "FRONTEND_URL", "FRONTENDURL"), "public frontend/gateway URL (e.g. https://bastion.example.com)")
+	agentBin := fs.String("agent-bin", env("DUCKJUMP_AGENT_BIN", ""), "path to duckjump-agent binary to serve (default: alongside duckjump-gw)")
+	agentServerURL := fs.String("agent-server-url", env("DUCKJUMP_AGENT_SERVER_URL", ""), "public WebSocket URL where edge agents connect (default: derived from -frontend-url and -agent-listen)")
 	fs.Parse(args)
 
 	trusted, err := server.ParseProxies(*proxies)
@@ -196,20 +200,6 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 		slog.Warn("the edge relay listens beyond this host without TLS: add -relay-tls", "addr", *relayListen)
 	}
 	go hub.ServeRelay(rl)
-	if *agentListen != "" {
-		al, err := net.Listen("tcp", *agentListen)
-		if err != nil {
-			return fmt.Errorf("agent listener: %w", err)
-		}
-		amux := http.NewServeMux()
-		amux.HandleFunc("GET /agent/connect", hub.ServeAgent)
-		as := &http.Server{Handler: amux, ReadHeaderTimeout: 10 * time.Second}
-		if tlsConf != nil {
-			al = tls.NewListener(al, tlsConf)
-		}
-		slog.Info("edge agent endpoint listening", "addr", *agentListen, "tls", tlsConf != nil)
-		go func() { slog.Error("agent listener stopped", "err", as.Serve(al)) }()
-	}
 
 	authSvc := &auth.Service{Store: st, Vault: v}
 	var sso *auth.OIDC
@@ -277,7 +267,24 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 		RelayAddr: env("DUCKJUMP_RELAY_ADDR", *relayListen), RelayFingerprint: relayFP, RecordingsDir: *recordings, Objects: objects,
 		Files: files, FileMaxSize: *fileMax, FileTTL: *fileTTL,
 		TrustedProxies: trusted, SecureCookies: *secureCookies, TrustOnFirstUse: *tofu, OIDC: sso,
+		FrontendURL: *frontendURL, AgentBinPath: *agentBin, AgentListen: *agentListen, AgentServerURL: *agentServerURL,
 		Dev: *dev,
+	}
+
+	if *agentListen != "" {
+		al, err := net.Listen("tcp", *agentListen)
+		if err != nil {
+			return fmt.Errorf("agent listener: %w", err)
+		}
+		amux := http.NewServeMux()
+		amux.HandleFunc("GET /agent/connect", hub.ServeAgent)
+		amux.HandleFunc("GET /agent/duckjump-agent", srv.DownloadAgent)
+		as := &http.Server{Handler: amux, ReadHeaderTimeout: 10 * time.Second}
+		if tlsConf != nil {
+			al = tls.NewListener(al, tlsConf)
+		}
+		slog.Info("edge agent endpoint listening", "addr", *agentListen, "tls", tlsConf != nil)
+		go func() { slog.Error("agent listener stopped", "err", as.Serve(al)) }()
 	}
 	if *dev {
 		slog.Warn("DEV MODE: authentication disabled")
@@ -296,12 +303,41 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 		go st.ExportAudit(ctx, sinks, 2*time.Second)
 		slog.Info("exporting the audit log", "to", *auditExport)
 	}
-	slog.Info("duckjump-gw listening", "addr", *listen, "tls", tlsConf != nil, "duckjumpd", srv.DaemonAddr)
-	hs := &http.Server{Addr: *listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, TLSConfig: tlsConf}
-	if tlsConf != nil {
-		return hs.ListenAndServeTLS("", "")
+	addrs := strings.Split(*listen, ",")
+	var listeners []net.Listener
+	for _, a := range addrs {
+		addr := strings.TrimSpace(a)
+		if addr == "" {
+			continue
+		}
+		if !strings.Contains(addr, ":") {
+			addr = addr + ":8080"
+		}
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			for _, prev := range listeners {
+				prev.Close()
+			}
+			return fmt.Errorf("listen %s: %w", addr, err)
+		}
+		if tlsConf != nil {
+			l = tls.NewListener(l, tlsConf)
+		}
+		listeners = append(listeners, l)
+		slog.Info("duckjump-gw listening", "addr", addr, "tls", tlsConf != nil, "duckjumpd", srv.DaemonAddr)
 	}
-	return hs.ListenAndServe()
+	if len(listeners) == 0 {
+		return errors.New("no listen addresses specified")
+	}
+
+	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, TLSConfig: tlsConf}
+	errCh := make(chan error, len(listeners))
+	for _, l := range listeners {
+		go func(lis net.Listener) {
+			errCh <- hs.Serve(lis)
+		}(l)
+	}
+	return <-errCh
 }
 
 func addUser(ctx context.Context, st *store.Store, args []string) error {
@@ -668,6 +704,15 @@ func secretEnv(k, cred string) (string, error) {
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func firstEnv(def string, names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
 	}
 	return def
 }
