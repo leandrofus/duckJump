@@ -63,5 +63,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           pre=; case $VERSION in *-*) pre=--prerelease ;; esac
-          gh release create "$TAG" dist/packages/* --repo "$GITHUB_REPOSITORY" \
-            --title "duckJump $VERSION" --generate-notes --verify-tag $pre
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading packages..."
+            gh release upload "$TAG" dist/packages/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "duckJump $VERSION" $pre || true
+          else
+            gh release create "$TAG" dist/packages/* --repo "$GITHUB_REPOSITORY" \
+              --title "duckJump $VERSION" --generate-notes --verify-tag $pre
+          fi
