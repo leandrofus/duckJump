@@ -50,6 +50,29 @@ type createSupportSessionReq struct {
 	TTLMinutes int    `json:"ttl_minutes"`
 }
 
+// openapi:schema RequestSupportSession
+// type: object
+// required: [target_name]
+// additionalProperties: false
+// properties:
+//   target_name: { type: string, description: 'User or machine requesting support.' }
+//   reason: { type: string, description: 'Reason for the support session.' }
+//   ticket: { type: string, description: 'Optional ticket identifier.' }
+//   account_type: { type: string, description: 'Account type: local, ad, or sso.' }
+//   domain: { type: string, description: 'Windows Active Directory domain if applicable.' }
+//   hostname: { type: string, description: 'Client machine hostname.' }
+//   client_os: { type: string, description: 'Client operating system.' }
+
+type requestSupportSessionReq struct {
+	TargetName  string `json:"target_name"`
+	Reason      string `json:"reason"`
+	Ticket      string `json:"ticket"`
+	AccountType string `json:"account_type"`
+	Domain      string `json:"domain"`
+	Hostname    string `json:"hostname"`
+	ClientOS    string `json:"client_os"`
+}
+
 // openapi:schema VerifySupportTOTP
 // type: object
 // required: [code]
@@ -89,8 +112,10 @@ type supportSessionDTO struct {
 	CreatedBy      string     `json:"created_by"`
 	TargetName     string     `json:"target_name"`
 	Reason         string     `json:"reason"`
-	Ticket         string     `json:"ticket"`
-	Status         string     `json:"status"`
+	Ticket           string     `json:"ticket"`
+	TotpSecret       string     `json:"totp_secret,omitempty"`
+	VerificationCode string     `json:"verification_code,omitempty"`
+	Status           string     `json:"status"`
 	ExpiresAt      time.Time  `json:"expires_at"`
 	ConnectedAt    *time.Time `json:"connected_at"`
 	ActivatedAt    *time.Time `json:"activated_at"`
@@ -266,6 +291,174 @@ func (s *Server) createSupportSession(w http.ResponseWriter, r *http.Request, p 
 	})
 
 	return created(w, s.toSupportSessionDTO(sess))
+}
+
+// openapi:operation
+// summary: Request an on-demand remote support session (from client desktop app)
+// description: Initiates a support request from the user's desktop application.
+// tags: [support]
+// requestBody: { schema: RequestSupportSession }
+// responses:
+//   '201': { description: Created, schema: SupportSession }
+func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
+	var req requestSupportSessionReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, badRequest("%s", err.Error()))
+		return
+	}
+	if strings.TrimSpace(req.TargetName) == "" {
+		writeErr(w, badRequest("target_name is required"))
+		return
+	}
+	ttl := 30 * time.Minute
+
+	tokenBytes := make([]byte, 16)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		writeErr(w, err)
+		return
+	}
+	token := hex.EncodeToString(tokenBytes)
+	verificationCode := generateVerificationCode()
+	id := store.NewID()
+	now := store.Now()
+	expiresAt := now.Add(ttl)
+
+	ctx := r.Context()
+	var createdBy string
+	if p, pending, err := s.resolve(r); err == nil && !pending {
+		createdBy = p.User.ID
+	} else if u, err := s.Store.Q.GetUserByUsername(ctx, req.TargetName); err == nil {
+		createdBy = u.ID
+	} else {
+		users, err := s.Store.Q.ListUsers(ctx)
+		if err == nil && len(users) > 0 {
+			for _, u := range users {
+				if u.Role == "superadmin" || u.Role == "admin" {
+					createdBy = u.ID
+					break
+				}
+			}
+			if createdBy == "" {
+				createdBy = users[0].ID
+			}
+		}
+	}
+	if createdBy == "" {
+		writeErr(w, badRequest("no valid user found to attach support request"))
+		return
+	}
+
+	target := strings.TrimSpace(req.TargetName)
+	if req.Domain != "" && !strings.Contains(target, `\`) && !strings.Contains(target, `@`) {
+		target = fmt.Sprintf(`%s\%s`, req.Domain, target)
+	}
+
+	err := s.Store.Q.CreateSupportSession(ctx, db.CreateSupportSessionParams{
+		ID:         id,
+		Token:      token,
+		CreatedBy:  createdBy,
+		TargetName: target,
+		Reason:     strings.TrimSpace(req.Reason),
+		Ticket:     strings.TrimSpace(req.Ticket),
+		TotpSecret: verificationCode,
+		ExpiresAt:  expiresAt,
+		Now:        now,
+	})
+	if err != nil {
+		writeErr(w, fromStore(err, "support_session"))
+		return
+	}
+
+	sess, err := s.Store.Q.GetSupportSession(ctx, id)
+	if err != nil {
+		writeErr(w, fromStore(err, "support_session"))
+		return
+	}
+
+	dto := s.toSupportSessionDTO(sess)
+	dto.TotpSecret = verificationCode
+	dto.VerificationCode = verificationCode
+
+	s.Store.AuditTx(ctx, store.Event{
+		Actor:      store.Actor{Name: target},
+		Action:     "support_session.requested",
+		ObjectType: "support_session",
+		ObjectID:   id,
+		Details: map[string]any{
+			"target_name":  target,
+			"ticket":       req.Ticket,
+			"account_type": req.AccountType,
+			"hostname":     req.Hostname,
+			"client_os":    req.ClientOS,
+		},
+	})
+
+	_ = created(w, dto)
+}
+
+// openapi:operation
+// summary: Get support session status by token (for desktop app)
+// description: Returns the current status of an ongoing support session.
+// tags: [support]
+// responses:
+//   '200': { description: OK }
+func (s *Server) getSupportStatusByToken(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if token == "" {
+		writeErr(w, badRequest("token is required"))
+		return
+	}
+	ctx := r.Context()
+	sess, err := s.Store.Q.GetSupportSessionByToken(ctx, token)
+	if err != nil {
+		writeErr(w, notFound("support session not found"))
+		return
+	}
+	ok(w, map[string]any{
+		"id":              sess.ID,
+		"token":           sess.Token,
+		"status":          sess.Status,
+		"target_name":     sess.TargetName,
+		"reason":          sess.Reason,
+		"ticket":          sess.Ticket,
+		"client_hostname": sess.ClientHostname,
+		"client_os":       sess.ClientOs,
+		"connected_at":    sess.ConnectedAt,
+		"activated_at":    sess.ActivatedAt,
+		"ended_at":        sess.EndedAt,
+		"expires_at":      sess.ExpiresAt,
+	})
+}
+
+// openapi:operation
+// summary: End support session by token (for desktop app emergency stop)
+// description: Immediately closes an active support session from the client.
+// tags: [support]
+// responses:
+//   '200': { description: OK }
+func (s *Server) endSupportSessionByToken(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if token == "" {
+		writeErr(w, badRequest("token is required"))
+		return
+	}
+	ctx := r.Context()
+	sess, err := s.Store.Q.GetSupportSessionByToken(ctx, token)
+	if err != nil {
+		writeErr(w, notFound("support session not found"))
+		return
+	}
+	now := store.Now()
+	_ = s.Store.Q.EndSupportSession(ctx, db.EndSupportSessionParams{
+		ID:          sess.ID,
+		Now:         store.NullTime(now),
+		EndedReason: "client_ended",
+	})
+	if active := s.SupportHub.GetByToken(token); active != nil {
+		active.close()
+		s.SupportHub.Unregister(active)
+	}
+	ok(w, map[string]string{"status": "ended"})
 }
 
 // openapi:operation

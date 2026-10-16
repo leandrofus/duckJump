@@ -120,3 +120,67 @@ func TestSupportSessionLifecycle(t *testing.T) {
 		t.Fatalf("expected status ended, got %q", endedDbSess.Status)
 	}
 }
+
+func TestSupportRequestEndpoint(t *testing.T) {
+	e := newEnv(t)
+	pubClient := e.client()
+
+	// 1. Request support from desktop app (unauthenticated)
+	reqBody := map[string]any{
+		"target_name":  "CORP\\micaela",
+		"reason":       "Printer spooler error",
+		"ticket":       "INC-9999",
+		"account_type": "ad",
+		"domain":       "CORP",
+		"hostname":     "PC-FINANCE-01",
+		"client_os":    "Windows 11",
+	}
+
+	resp, body := pubClient.raw("POST", "/support/request", reqBody, false)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created on /support/request, got %d: %s", resp.StatusCode, body)
+	}
+
+	var session supportSessionDTO
+	if err := json.Unmarshal(body, &session); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if session.Token == "" || session.TotpSecret == "" {
+		t.Fatalf("expected token and totp_secret in response: %+v", session)
+	}
+	if session.TargetName != "CORP\\micaela" {
+		t.Fatalf("expected target name 'CORP\\micaela', got %q", session.TargetName)
+	}
+
+	// 2. Query status by token
+	respStatus, bodyStatus := pubClient.raw("GET", "/support/status/"+session.Token, nil, false)
+	if respStatus.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on status, got %d: %s", respStatus.StatusCode, bodyStatus)
+	}
+	var statusMap map[string]any
+	if err := json.Unmarshal(bodyStatus, &statusMap); err != nil {
+		t.Fatalf("failed to decode status: %v", err)
+	}
+	if statusMap["status"] != "pending" {
+		t.Fatalf("expected status pending, got %v", statusMap["status"])
+	}
+
+	// 3. Client emergency stop / end session by token
+	respEnd, bodyEnd := pubClient.raw("POST", "/support/end/"+session.Token, nil, false)
+	if respEnd.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on end, got %d: %s", respEnd.StatusCode, bodyEnd)
+	}
+
+	// 4. Confirm ended status
+	respStatus2, bodyStatus2 := pubClient.raw("GET", "/support/status/"+session.Token, nil, false)
+	if respStatus2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on status, got %d: %s", respStatus2.StatusCode, bodyStatus2)
+	}
+	var statusMap2 map[string]any
+	if err := json.Unmarshal(bodyStatus2, &statusMap2); err != nil {
+		t.Fatalf("failed to decode status2: %v", err)
+	}
+	if statusMap2["status"] != "ended" {
+		t.Fatalf("expected status ended, got %v", statusMap2["status"])
+	}
+}

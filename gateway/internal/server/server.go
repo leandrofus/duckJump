@@ -102,6 +102,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /support/launch.sh", s.ServeAssistLaunchScript)
 	mux.HandleFunc("GET /support/run.ps1", s.ServeAssistPowerShellScript)
 	mux.HandleFunc("GET /api/v1/support/agent-tunnel/{token}", s.ServeSupportAgentTunnel)
+	mux.HandleFunc("POST /api/v1/support/request", s.requestSupportSession)
+	mux.HandleFunc("GET /api/v1/support/status/{token}", s.getSupportStatusByToken)
+	mux.HandleFunc("POST /api/v1/support/end/{token}", s.endSupportSessionByToken)
 
 	// Edge agent binary download, install script and connect.
 	mux.HandleFunc("GET /agent/duckjump-agent", s.DownloadAgent)
