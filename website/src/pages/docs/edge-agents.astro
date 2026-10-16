@@ -47,25 +47,52 @@ Closed Private Network (VPC / On-Prem)              Public / Bastion DMZ
     <!-- Agent Setup -->
     <div class="space-y-4 pt-4 border-t border-slate-800">
       <h2 class="text-2xl font-bold text-white tracking-tight">2. Setting Up an Edge Site</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Setting up an edge site is automated directly from the duckJump web console:
+      </p>
+
       <ol class="list-decimal pl-5 text-sm text-slate-300 space-y-3">
-        <li>In the duckJump UI, navigate to <strong class="text-white">Sites → New Site</strong>. Enter a site name (e.g., <code class="text-amber-300">aws-vpc-prod</code>).</li>
-        <li>Copy the generated registration token into <code class="text-amber-300">/etc/duckjump-agent/token</code> on the agent host.</li>
-        <li>Configure the gateway address in <code class="text-amber-300">/etc/duckjump-agent/agent.env</code>:</li>
+        <li>In the duckJump UI, navigate to <strong class="text-white">Sites → New Site</strong>. Select <strong class="text-sky-400">Edge agent (closed network)</strong> and enter a name (e.g. <code class="text-amber-300">branch-office-1</code>).</li>
+        <li>Configure your permitted subnets and ports in the modal (e.g. <code class="text-emerald-400">0.0.0.0/0:22,3389,5900</code> or <code class="text-emerald-400">10.10.0.0/24:22,3389</code>).</li>
+        <li>Copy and run the generated one-liner command on the target Linux machine inside the private network:</li>
       </ol>
 
-      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-1">
-        <div class="text-slate-500"># /etc/duckjump-agent/agent.env</div>
-        <div>DUCKJUMP_GATEWAY_URL="wss://bastion.corp.example.com:8443/api/v1/edge/agent"</div>
-        <div class="text-amber-400">ALLOWED_NETWORKS="10.240.0.0/16,192.168.10.0/24"</div>
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
+        <div class="text-slate-500"># Automated installation as a managed systemd service:</div>
+        <div class="text-sky-300">curl -fsSL "https://bastion.example.com:8090/agent/install.sh?token=&lt;TOKEN&gt;&allow=0.0.0.0/0:22,3389,5900" | sudo bash</div>
       </div>
+
+      <p class="text-slate-400 text-xs leading-relaxed">
+        The installer downloads the agent binary to <code class="text-white">/usr/local/bin/duckjump-agent</code>, saves the token to <code class="text-white">/etc/duckjump-agent/token</code> (mode 0600), writes configuration to <code class="text-white">/etc/duckjump-agent/agent.env</code>, and enables/starts the <code class="text-white">duckjump-agent.service</code> systemd unit with full privilege drop (<code class="text-white">DynamicUser=yes</code>).
+      </p>
     </div>
 
     <!-- Local Allow-Lists -->
     <div class="space-y-4 pt-4 border-t border-slate-800">
-      <h2 class="text-2xl font-bold text-white tracking-tight">3. Enforced Local Allow-Lists</h2>
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. Enforced Local Allow-Lists (-allow)</h2>
       <p class="text-slate-300 text-sm leading-relaxed">
-        To adhere to strict Zero-Trust isolation, the agent enforces a local CIDR whitelist (<code class="text-amber-300">ALLOWED_NETWORKS</code>). Even if an administrator accidentally misconfigures a target IP address on the gateway, the agent will refuse to dial any host outside its permitted local subnets.
+        To adhere to strict Zero-Trust isolation, the agent enforces a local allow list (<code class="text-amber-300">DUCKJUMP_AGENT_ALLOW</code> or flag <code class="text-amber-300">-allow</code>). The agent parses every dial request sent by the bastion and rejects any target IP address or port not explicitly listed in its local rules:
       </p>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-1">
+        <div class="text-slate-500"># /etc/duckjump-agent/agent.env</div>
+        <div>DUCKJUMP_AGENT_SERVER="wss://bastion.example.com:8090/agent/connect"</div>
+        <div class="text-amber-300">DUCKJUMP_AGENT_ALLOW="10.10.0.0/24:22,3389 192.168.1.0/24:22,3389,5900"</div>
+      </div>
+
+      <p class="text-slate-400 text-xs">
+        Format: <code class="text-white">CIDR[:port,port...]</code> separated by spaces. An empty allow list refuses all dials.
+      </p>
+    </div>
+
+    <!-- Lifecycle and HA -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">4. Lifecycle & Redundancy</h2>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li><strong>Graceful Shutdown:</strong> When the agent is stopped (<code class="text-white">sudo systemctl stop duckjump-agent</code>), the gateway immediately detects the closed session, removes the agent from the active pool, and aborts pending tickets.</li>
+        <li><strong>Redundancy:</strong> Multiple agent instances can be run within the same network pointing to the same site token. Traffic across active sessions is automatically load-balanced across live agents.</li>
+        <li><strong>Auto-Reconnect:</strong> If network connectivity drops or the gateway restarts, the agent reconnects with exponential backoff.</li>
+      </ul>
     </div>
 
   </div>
