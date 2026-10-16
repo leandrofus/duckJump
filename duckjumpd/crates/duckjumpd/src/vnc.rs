@@ -181,6 +181,15 @@ pub async fn run(
                     }
                 }
                 Some(Ok(Frame::Control(Control::Clipboard { text }))) => rfb::cut_text(&mut wr, &text).await?,
+                Some(Ok(Frame::Control(Control::Refresh))) => {
+                    conn.send(Frame::Display(Display::Size { width: screen.0, height: screen.1 }.encode())).await?;
+                    need_full = true;
+                    if !update_pending {
+                        rfb::update_request(&mut wr, false, screen.0, screen.1).await?;
+                        need_full = false;
+                        update_pending = true;
+                    }
+                }
                 Some(Ok(Frame::Control(Control::Close { .. }))) | None => break,
                 Some(Ok(other)) => warn!(?other, "unexpected frame from gateway"),
                 Some(Err(e)) => return Err(e.into()),

@@ -20,6 +20,7 @@ What duckJump aims to be: a modern, lightweight Guacamole with serious PAM, unde
 
 **Already ahead or on par**
 
+- Access requests with reason (motivo) and start/end time window; approval creates expiring grants.
 - Tamper-evident audit: hash chain plus an HMAC chain keyed outside the database, export to syslog or WORM.
 - Server keys (SSH, RDP, VNC) pinned and approved by an admin before any credential is sent.
 - Grants enforced on live sessions: expiry, revocation or a disabled user ends the session.
@@ -31,7 +32,6 @@ What duckJump aims to be: a modern, lightweight Guacamole with serious PAM, unde
 **Gaps**
 
 - No credential rotation or checkout; the vault only stores.
-- Just-in-time access by expiry only; no request → approve flow.
 - Admins can terminate a session but not watch it live or join it.
 - No SSH command filtering or blocking.
 - No LDAP / Active Directory or SAML (OpenID Connect only).

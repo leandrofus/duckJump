@@ -22,6 +22,8 @@ pub enum Control {
     },
     /// Clipboard text, either direction (graphical sessions).
     Clipboard { text: String },
+    /// Request a full screen update (e.g. when a new participant joins).
+    Refresh,
     Error { code: ErrorCode, message: String },
 
     // File transfer sessions (Target::Sftp): one operation at a time.

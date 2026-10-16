@@ -1,6 +1,6 @@
 import { t } from '../i18n'
 import { useMemo, useState } from 'react'
-import { MonitorSmartphone, Search, X, Star, TerminalSquare, Monitor, MonitorPlay, LayoutGrid, LayoutList, Copy } from 'lucide-react'
+import { MonitorSmartphone, Search, X, Star, TerminalSquare, Monitor, MonitorPlay, LayoutGrid, LayoutList, Copy, Ticket } from 'lucide-react'
 import type { PortalConnection } from '../lib/api'
 import { useResource } from '../lib/store'
 import { usePref } from '../lib/prefs'
@@ -9,6 +9,8 @@ import { copy } from '../lib/format'
 import { useMenu } from '../ui/ContextMenu'
 import type { MenuEntry } from '../ui/ContextMenu'
 import { DataTable, Empty, Spinner, Tag } from '../ui/common'
+import { openDialog } from '../ui/overlays'
+import { RequestAccessDialog } from './AccessRequests'
 import { openSession } from '../App'
 import type { Recent } from '../App'
 
@@ -72,6 +74,9 @@ export function Portal() {
             <button className={layout === 'cards' ? 'on' : ''} onClick={() => setLayout('cards')} title={t('Cards')}><LayoutGrid size={15} /></button>
             <button className={layout === 'table' ? 'on' : ''} onClick={() => setLayout('table')} title={t('Table')}><LayoutList size={15} /></button>
           </div>
+          <button className="btn" onClick={() => openDialog((c) => <RequestAccessDialog onClose={c} />)}>
+            <Ticket size={14} /> {t('Request access')}
+          </button>
         </div>
       </div>
       <div className="page-body">
@@ -79,6 +84,11 @@ export function Portal() {
         {data && all.length === 0 && (
           <Empty icon={<MonitorSmartphone size={28} />} title={t('No connections yet')}>
             {t('You have no access grants. Ask an administrator for access to the hosts you need.')}
+            <div style={{ marginTop: '1rem' }}>
+              <button className="btn btn-primary" onClick={() => openDialog((c) => <RequestAccessDialog onClose={c} />)}>
+                <Ticket size={14} /> {t('Request access')}
+              </button>
+            </div>
           </Empty>
         )}
         {all.length > 0 && rows.length === 0 && <div className="muted">{t('No connection matches the search.')}</div>}

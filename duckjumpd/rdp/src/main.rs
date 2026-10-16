@@ -417,6 +417,13 @@ async fn run(session_id: &str, p: RdpParams, relay: Option<Relay>, rx: &mut In, 
                         None => continue, // server without dynamic resize
                     }
                 }
+                Some(Ok(Frame::Control(Control::Refresh))) => {
+                    tx.send(Frame::Display(Display::Size { width: screen.fb.width, height: screen.fb.height }.encode())).await?;
+                    screen.dirty.add(Rect { x: 0, y: 0, w: screen.fb.width, h: screen.fb.height });
+                    screen.in_flight = false;
+                    screen.flush(tx).await?;
+                    vec![]
+                }
                 Some(Ok(Frame::Control(Control::Close { .. }))) | None => {
                     if closing { break; }
                     closing = true;

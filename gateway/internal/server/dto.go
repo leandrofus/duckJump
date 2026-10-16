@@ -242,6 +242,7 @@ func toConnection(c db.ConfigConnection, tags []string) connectionDTO {
 //   can_view_recordings: { type: boolean }
 //   can_upload: { type: boolean }
 //   can_download: { type: boolean }
+//   starts_at: { type: [string, 'null'], format: date-time }
 //   expires_at: { type: [string, 'null'], format: date-time }
 //   description: { type: string }
 //   created_by: { type: [string, 'null'], format: uuid }
@@ -257,6 +258,7 @@ type policyDTO struct {
 	CanViewRecordings bool       `json:"can_view_recordings"`
 	CanUpload         bool       `json:"can_upload"`
 	CanDownload       bool       `json:"can_download"`
+	StartsAt          *time.Time `json:"starts_at"`
 	ExpiresAt         *time.Time `json:"expires_at"`
 	Description       string     `json:"description"`
 	CreatedBy         *string    `json:"created_by"`
@@ -265,7 +267,7 @@ type policyDTO struct {
 
 func toPolicy(p db.ConfigPolicy) policyDTO {
 	return policyDTO{p.ID, p.SubjectType, p.SubjectID, p.ObjectType, p.ObjectRef, p.CanConnect, p.CanViewRecordings,
-		p.CanUpload, p.CanDownload, timePtr(p.ExpiresAt), p.Description, strPtr(p.CreatedBy), p.CreatedAt.UTC()}
+		p.CanUpload, p.CanDownload, timePtr(p.StartsAt), timePtr(p.ExpiresAt), p.Description, strPtr(p.CreatedBy), p.CreatedAt.UTC()}
 }
 
 // openapi:schema AuditEvent
@@ -386,4 +388,138 @@ func validTags(tags []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// openapi:schema SessionShare
+// type: object
+// required: [share_token, session_id, connection_id]
+// properties:
+//   share_token: { type: string }
+//   session_id: { type: string }
+//   connection_id: { type: string }
+
+type sessionShareDTO struct {
+	ShareToken   string `json:"share_token"`
+	SessionID    string `json:"session_id"`
+	ConnectionID string `json:"connection_id"`
+}
+
+// openapi:schema SessionInfo
+// type: object
+// required: [session_id, connection_id, connection_name, protocol, owner_username, active]
+// properties:
+//   session_id: { type: string }
+//   connection_id: { type: string }
+//   connection_name: { type: string }
+//   protocol: { type: string }
+//   owner_username: { type: string }
+//   active: { type: boolean }
+
+type sessionInfoDTO struct {
+	SessionID      string `json:"session_id"`
+	ConnectionID   string `json:"connection_id"`
+	ConnectionName string `json:"connection_name"`
+	Protocol       string `json:"protocol"`
+	OwnerUsername  string `json:"owner_username"`
+	Active         bool   `json:"active"`
+}
+
+// openapi:schema AccessRequestConnectionTarget
+// type: object
+// required: [id, name, protocol, environment, folder_id, tags]
+// properties:
+//   id: { type: string, format: uuid }
+//   name: { type: string }
+//   protocol: { type: string }
+//   environment: { type: string }
+//   folder_id: { type: [string, 'null'], format: uuid }
+//   tags: { type: array, items: { type: string } }
+
+type accessRequestConnectionTarget struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Protocol    string   `json:"protocol"`
+	Environment string   `json:"environment"`
+	FolderID    *string  `json:"folder_id"`
+	Tags        []string `json:"tags"`
+}
+
+// openapi:schema AccessRequestFolderTarget
+// type: object
+// required: [id, parent_id, name]
+// properties:
+//   id: { type: string, format: uuid }
+//   parent_id: { type: [string, 'null'], format: uuid }
+//   name: { type: string }
+
+type accessRequestFolderTarget struct {
+	ID       string  `json:"id"`
+	ParentID *string `json:"parent_id"`
+	Name     string  `json:"name"`
+}
+
+// openapi:schema AccessRequestTargets
+// type: object
+// required: [connections, folders, tags]
+// properties:
+//   connections: { type: array, items: { $ref: '#/components/schemas/AccessRequestConnectionTarget' } }
+//   folders: { type: array, items: { $ref: '#/components/schemas/AccessRequestFolderTarget' } }
+//   tags: { type: array, items: { type: string } }
+
+type accessRequestTargetsDTO struct {
+	Connections []accessRequestConnectionTarget `json:"connections"`
+	Folders     []accessRequestFolderTarget     `json:"folders"`
+	Tags        []string                        `json:"tags"`
+}
+
+// openapi:schema AccessRequest
+// type: object
+// required: [id, user_id, user_username, user_display_name, object_type, object_ref, object_name, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewer_username, reviewed_at, review_comment, created_policy_id, created_at]
+// properties:
+//   id: { type: string, format: uuid }
+//   user_id: { type: string, format: uuid }
+//   user_username: { type: string }
+//   user_display_name: { type: string }
+//   object_type: { type: string, enum: [connection, folder, tag] }
+//   object_ref: { type: string }
+//   object_name: { type: string }
+//   ticket: { type: string, description: 'Optional reference to a ticket or issue ID.' }
+//   can_connect: { type: boolean }
+//   can_view_recordings: { type: boolean }
+//   can_upload: { type: boolean }
+//   can_download: { type: boolean }
+//   reason: { type: string }
+//   starts_at: { type: string, format: date-time }
+//   ends_at: { type: string, format: date-time }
+//   status: { type: string, enum: [pending, approved, rejected, canceled] }
+//   reviewed_by: { type: [string, 'null'], format: uuid }
+//   reviewer_username: { type: [string, 'null'] }
+//   reviewed_at: { type: [string, 'null'], format: date-time }
+//   review_comment: { type: string }
+//   created_policy_id: { type: [string, 'null'], format: uuid }
+//   created_at: { type: string, format: date-time }
+
+type accessRequestDTO struct {
+	ID                string     `json:"id"`
+	UserID            string     `json:"user_id"`
+	UserUsername      string     `json:"user_username"`
+	UserDisplayName   string     `json:"user_display_name"`
+	ObjectType        string     `json:"object_type"`
+	ObjectRef         string     `json:"object_ref"`
+	ObjectName        string     `json:"object_name"`
+	Ticket            string     `json:"ticket"`
+	CanConnect        bool       `json:"can_connect"`
+	CanViewRecordings bool       `json:"can_view_recordings"`
+	CanUpload         bool       `json:"can_upload"`
+	CanDownload       bool       `json:"can_download"`
+	Reason            string     `json:"reason"`
+	StartsAt          time.Time  `json:"starts_at"`
+	EndsAt            time.Time  `json:"ends_at"`
+	Status            string     `json:"status"`
+	ReviewedBy        *string    `json:"reviewed_by"`
+	ReviewerUsername  *string    `json:"reviewer_username"`
+	ReviewedAt        *time.Time `json:"reviewed_at"`
+	ReviewComment     string     `json:"review_comment"`
+	CreatedPolicyID   *string    `json:"created_policy_id"`
+	CreatedAt         time.Time  `json:"created_at"`
 }

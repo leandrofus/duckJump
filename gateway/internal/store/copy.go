@@ -19,7 +19,7 @@ import (
 var copyOrder = []string{
 	"config_users", "config_groups", "config_group_members", "config_folders", "config_sites", "config_secrets",
 	"config_connections", "config_connection_tags", "config_policies", "config_web_sessions", "config_settings",
-	"audit_events", "audit_sessions", "audit_recording_purges", "audit_session_kills",
+	"audit_events", "audit_sessions", "audit_recording_purges", "audit_session_kills", "audit_files", "config_access_requests",
 }
 
 // CopyTo copies this (SQLite) store into dst (PostgreSQL, empty). It returns

@@ -47,6 +47,10 @@ import (
 //   '501': Error
 
 func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) error {
+	if joinID := r.URL.Query().Get("join"); joinID != "" {
+		return s.joinSession(w, r, p, joinID)
+	}
+
 	ctx, connID := r.Context(), r.PathValue("id")
 	conn, err := s.Store.Q.GetConnection(ctx, connID)
 	if err != nil {
@@ -86,15 +90,24 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) err
 	// Live until it ends: re-checked while it runs, and can be terminated.
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	s.live.add(&liveSession{id: sessionID, userID: p.User.ID, connID: connID, cancel: cancel,
-		notify: func(code, message string) {
-			nctx, done := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			defer done()
-			sendJSON(nctx, ws, map[string]string{"type": "error", "code": code, "message": message})
-		}})
+
+	ls := &liveSession{
+		id:           sessionID,
+		userID:       p.User.ID,
+		username:     p.User.Username,
+		connID:       connID,
+		conn:         conn,
+		cancel:       cancel,
+		participants: make(map[string]*liveParticipant),
+		shareTokens:  make(map[string]shareTokenInfo),
+	}
+	if !graphical(conn.Protocol) {
+		ls.sshBuffer = newTerminalBuffer(128 * 1024)
+	}
+	s.live.add(ls)
 	defer s.live.remove(sessionID)
 
-	reason, err := s.runSession(ctx, ws, conn, p, sessionID, cols, rows, prompted, log)
+	reason, err := s.runSession(ctx, ws, ls, conn, p, sessionID, cols, rows, prompted, log)
 	var term *terminated
 	if errors.As(context.Cause(ctx), &term) {
 		log.Info("session terminated", "reason", term.reason)
@@ -194,7 +207,7 @@ func (s *Server) vaultCreds(ctx context.Context, c db.ConfigConnection) (session
 	return cr, nil
 }
 
-func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.ConfigConnection, p principal,
+func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, ls *liveSession, c db.ConfigConnection, p principal,
 	sessionID string, cols, rows int, prompted bool, log *slog.Logger) (string, error) {
 
 	cr, err := s.resolveCreds(ctx, ws, c, prompted)
@@ -255,6 +268,8 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 	defer pd.Close()
 	// A terminated session unblocks whatever waits on the daemon.
 	defer context.AfterFunc(ctx, func() { pd.Close() })()
+	ls.pd = pd
+	ls.siteName = siteName
 
 	// The snapshot keeps the audit faithful if the connection is edited or
 	// deleted later. Never includes credentials.
@@ -285,16 +300,43 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 			Details: map[string]any{"reason": reason}})
 	}()
 	log.Info("session started")
-	sendJSON(ctx, ws, map[string]any{"type": "ready", "session_id": sessionID})
 
-	// duckjumpd -> browser. When the daemon side ends, closing the WebSocket
-	// unblocks the read loop below with a proper close frame.
+	ownerID := randomID(8)
+	lp := &liveParticipant{
+		id:       ownerID,
+		userID:   p.User.ID,
+		username: p.User.Username,
+		isOwner:  true,
+		ws:       ws,
+		sendCh:   make(chan wsMessage, 512),
+	}
+	ls.addParticipant(lp)
+
+	sendJSON(ctx, ws, map[string]any{
+		"type":            "ready",
+		"session_id":      sessionID,
+		"connection_id":   c.ID,
+		"protocol":        c.Protocol,
+		"title":           c.Name,
+		"is_owner":        true,
+		"has_control":     true,
+		"controller":      ownerID,
+		"controller_name": p.User.Username,
+		"my_id":           ownerID,
+	})
+
+	// duckjumpd -> browser. When the daemon side ends, closing the WebSockets
+	// unblocks the read loops.
 	down := make(chan string, 1)
 	go func() {
 		var why string
 		defer func() {
 			down <- why
-			ws.Close(websocket.StatusNormalClosure, why)
+			ls.mu.RLock()
+			for _, part := range ls.participants {
+				part.ws.Close(websocket.StatusNormalClosure, why)
+			}
+			ls.mu.RUnlock()
 		}()
 		for {
 			f, err := djtp.ReadFrame(pd)
@@ -304,71 +346,337 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 			}
 			switch f.Kind {
 			case djtp.KindOutput:
-				if ws.Write(ctx, websocket.MessageBinary, f.Payload) != nil {
-					why = "client gone"
-					return
+				if ls.sshBuffer != nil {
+					ls.sshBuffer.Write(f.Payload)
 				}
+				ls.broadcastBinary(f.Payload)
 			case djtp.KindDisplay:
 				// Graphical sessions: binary messages carry the frame kind first.
-				if ws.Write(ctx, websocket.MessageBinary, append([]byte{djtp.KindDisplay}, f.Payload...)) != nil {
-					why = "client gone"
-					return
-				}
+				ls.broadcastBinary(append([]byte{djtp.KindDisplay}, f.Payload...))
 			case djtp.KindControl:
-				ws.Write(ctx, websocket.MessageText, f.Payload)
-				if c, _ := djtp.DecodeControl(f); c.Type == "exit" || c.Type == "error" {
-					why = c.Type
+				ls.broadcastText(f.Payload)
+				if ctrl, _ := djtp.DecodeControl(f); ctrl.Type == "exit" || ctrl.Type == "error" {
+					why = ctrl.Type
 					return
 				}
 			}
 		}
 	}()
 
-	// browser -> duckjumpd
-	for {
-		typ, data, err := ws.Read(ctx)
-		if err != nil {
-			var term *terminated
-			if errors.As(context.Cause(ctx), &term) {
-				reason = "terminated: " + term.reason
-				djtp.WriteControl(pd, djtp.Control{Type: "close"})
-				return reason, nil
-			}
+	err = s.runParticipant(ctx, ls, lp, p, log)
+	var term *terminated
+	if errors.As(context.Cause(ctx), &term) {
+		reason = "terminated: " + term.reason
+		djtp.WriteControl(pd, djtp.Control{Type: "close"})
+		return reason, nil
+	}
+	select {
+	case reason = <-down:
+	default:
+		ls.mu.RLock()
+		activeCount := len(ls.participants)
+		ls.mu.RUnlock()
+		if activeCount > 0 {
 			select {
 			case reason = <-down:
-			default:
-				reason = "client disconnected"
-				djtp.WriteControl(pd, djtp.Control{Type: "close"})
+			case <-ctx.Done():
+				reason = "closed"
 			}
-			return reason, nil
+		} else {
+			reason = "client disconnected"
+			djtp.WriteControl(pd, djtp.Control{Type: "close"})
+		}
+	}
+	return reason, nil
+}
+
+func (s *Server) runParticipant(ctx context.Context, ls *liveSession, lp *liveParticipant, princ principal, log *slog.Logger) error {
+	defer ls.removeParticipant(lp.id)
+
+	go func() {
+		for m := range lp.sendCh {
+			wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := lp.ws.Write(wctx, m.msgType, m.data)
+			cancel()
+			if err != nil {
+				lp.ws.CloseNow()
+				return
+			}
+		}
+	}()
+
+	for {
+		typ, data, err := lp.ws.Read(ctx)
+		if err != nil {
+			return err
 		}
 		switch typ {
 		case websocket.MessageBinary:
-			if !graphical(c.Protocol) {
-				err = djtp.WriteFrame(pd, djtp.KindInput, data)
+			if !graphical(ls.conn.Protocol) {
+				if ls.hasControl(lp.id) {
+					err = djtp.WriteFrame(ls.pd, djtp.KindInput, data)
+				}
 			} else if len(data) > 1 && data[0] == djtp.KindInputEvent {
-				err = djtp.WriteFrame(pd, djtp.KindInputEvent, data[1:])
-			} // anything else from the browser is dropped
+				if data[1] == 0x03 { // Ack
+					err = djtp.WriteFrame(ls.pd, djtp.KindInputEvent, data[1:])
+				} else if ls.hasControl(lp.id) {
+					err = djtp.WriteFrame(ls.pd, djtp.KindInputEvent, data[1:])
+				}
+			}
 		case websocket.MessageText:
 			var m struct {
-				Type       string
-				Cols, Rows int
-				Text       string
+				Type       string `json:"type"`
+				Cols, Rows int    `json:"cols"`
+				Text       string `json:"text"`
+				To         string `json:"to"`
 			}
 			if json.Unmarshal(data, &m) != nil {
 				break
 			}
-			switch {
-			case m.Type == "resize" && m.Cols > 0 && m.Rows > 0:
-				err = djtp.WriteControl(pd, djtp.Control{Type: "resize", Cols: m.Cols, Rows: m.Rows})
-			case m.Type == "clipboard" && graphical(c.Protocol) && len(m.Text) <= 1<<20:
-				err = djtp.WriteControl(pd, djtp.Control{Type: "clipboard", Text: m.Text})
+			switch m.Type {
+			case "resize":
+				if ls.hasControl(lp.id) && m.Cols > 0 && m.Rows > 0 {
+					err = djtp.WriteControl(ls.pd, djtp.Control{Type: "resize", Cols: m.Cols, Rows: m.Rows})
+				}
+			case "clipboard":
+				if ls.hasControl(lp.id) && graphical(ls.conn.Protocol) && len(m.Text) <= 1<<20 {
+					err = djtp.WriteControl(ls.pd, djtp.Control{Type: "clipboard", Text: m.Text})
+				}
+			case "yield_control":
+				_ = s.tx(ctx, func(q *db.Queries) error {
+					return ls.yieldControl(ctx, lp.id, m.To, princ.actor(), q)
+				})
+			case "take_control":
+				_ = s.tx(ctx, func(q *db.Queries) error {
+					return ls.takeControl(ctx, lp.id, princ.actor(), q)
+				})
+			case "request_control":
+				ls.requestControl(lp.id)
 			}
 		}
 		if err != nil {
-			return "daemon write failed", nil
+			return err
 		}
 	}
+}
+
+func (s *Server) joinSession(w http.ResponseWriter, r *http.Request, p principal, sessionID string) error {
+	ctx := r.Context()
+	ls := s.live.get(sessionID)
+	if ls == nil {
+		return &apiError{http.StatusNotFound, "session_not_found", "this session is not active or has ended"}
+	}
+
+	token := r.URL.Query().Get("token")
+	canAccess := p.Dev || admins[p.User.Role] || ls.userID == p.User.ID || (token != "" && ls.validateShareToken(token))
+	if !canAccess {
+		allowed, err := s.Store.CanConnect(ctx, p.User.ID, ls.connID)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			s.Store.AuditTx(ctx, store.Event{
+				Actor:      p.actor(),
+				Action:     "session.join_denied",
+				ObjectType: "session",
+				ObjectID:   sessionID,
+				Details:    map[string]any{"connection": ls.conn.Name},
+			})
+			return errForbidden
+		}
+	}
+
+	ws, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return nil
+	}
+	defer ws.CloseNow()
+	ws.SetReadLimit(djtp.MaxFrameLen)
+
+	isOwner := ls.userID == p.User.ID
+	partID := randomID(8)
+	lp := &liveParticipant{
+		id:       partID,
+		userID:   p.User.ID,
+		username: p.User.Username,
+		isOwner:  isOwner,
+		ws:       ws,
+		sendCh:   make(chan wsMessage, 512),
+	}
+
+	log := slog.With("session", sessionID, "user", p.User.Username, "role", "participant")
+	log.Info("joined live session")
+
+	s.Store.AuditTx(ctx, store.Event{
+		Actor:      p.actor(),
+		Action:     "session.join",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+		Details:    map[string]any{"connection": ls.conn.Name, "owner": ls.username},
+	})
+	defer func() {
+		s.Store.AuditTx(context.WithoutCancel(ctx), store.Event{
+			Actor:      p.actor(),
+			Action:     "session.leave",
+			ObjectType: "session",
+			ObjectID:   sessionID,
+			Details:    map[string]any{"connection": ls.conn.Name},
+		})
+	}()
+
+	ls.addParticipant(lp)
+
+	sendJSON(ctx, ws, map[string]any{
+		"type":            "ready",
+		"session_id":      ls.id,
+		"connection_id":   ls.connID,
+		"protocol":        ls.conn.Protocol,
+		"title":           ls.conn.Name,
+		"is_owner":        isOwner,
+		"has_control":     ls.hasControl(lp.id),
+		"controller":      ls.controllerID,
+		"controller_name": ls.controllerName,
+		"my_id":           lp.id,
+	})
+
+	if !graphical(ls.conn.Protocol) && ls.sshBuffer != nil {
+		if buf := ls.sshBuffer.Bytes(); len(buf) > 0 {
+			_ = ws.Write(ctx, websocket.MessageBinary, buf)
+		}
+	} else if graphical(ls.conn.Protocol) && ls.pd != nil {
+		_ = djtp.WriteControl(ls.pd, djtp.Control{Type: "refresh"})
+	}
+
+	_ = s.runParticipant(ctx, ls, lp, p, log)
+	ws.Close(websocket.StatusNormalClosure, "left")
+	return nil
+}
+
+// openapi:operation
+// summary: Create a share token for a live session
+// tags: [portal]
+// responses:
+//   '201': { schema: SessionShare, description: Share token created }
+//   '403': Error
+//   '404': Error
+func (s *Server) createSessionShare(w http.ResponseWriter, r *http.Request, p principal) error {
+	ctx, id := r.Context(), r.PathValue("id")
+	ls := s.live.get(id)
+	if ls == nil {
+		return notFound("no active session with this id")
+	}
+	if !p.Dev && !admins[p.User.Role] && ls.userID != p.User.ID {
+		return errForbidden
+	}
+	tok := ls.createShareToken(p.User.Username)
+	_ = store.Audit(ctx, s.Store.Q, store.Event{
+		Actor:      p.actor(),
+		Action:     "session.share",
+		ObjectType: "session",
+		ObjectID:   id,
+	})
+	return writeJSON(w, http.StatusCreated, map[string]any{
+		"share_token":   tok,
+		"session_id":    id,
+		"connection_id": ls.connID,
+	})
+}
+
+// openapi:operation
+// summary: Get live session sharing info or active token
+// tags: [portal]
+// responses:
+//   '200': { schema: SessionShare, description: Share token retrieved }
+//   '403': Error
+//   '404': Error
+func (s *Server) getSessionShare(w http.ResponseWriter, r *http.Request, p principal) error {
+	id := r.PathValue("id")
+	ls := s.live.get(id)
+	if ls == nil {
+		return notFound("no active session with this id")
+	}
+	if !p.Dev && !admins[p.User.Role] && ls.userID != p.User.ID {
+		return errForbidden
+	}
+	tok := ls.activeShareToken()
+	if tok == "" {
+		tok = ls.createShareToken(p.User.Username)
+	}
+	return writeJSON(w, http.StatusOK, map[string]any{
+		"share_token":   tok,
+		"session_id":    id,
+		"connection_id": ls.connID,
+	})
+}
+
+// openapi:operation
+// summary: Revoke share tokens for a live session
+// tags: [portal]
+// responses:
+//   '204': { description: Share token revoked }
+//   '403': Error
+//   '404': Error
+func (s *Server) revokeSessionShare(w http.ResponseWriter, r *http.Request, p principal) error {
+	ctx, id := r.Context(), r.PathValue("id")
+	ls := s.live.get(id)
+	if ls == nil {
+		return notFound("no active session with this id")
+	}
+	if !p.Dev && !admins[p.User.Role] && ls.userID != p.User.ID {
+		return errForbidden
+	}
+	ls.revokeShareTokens()
+	_ = store.Audit(ctx, s.Store.Q, store.Event{
+		Actor:      p.actor(),
+		Action:     "session.unshare",
+		ObjectType: "session",
+		ObjectID:   id,
+	})
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// openapi:operation
+// summary: Get metadata of a live session for joiners
+// tags: [portal]
+// responses:
+//   '200': { schema: SessionInfo, description: Session info }
+//   '403': Error
+//   '404': Error
+func (s *Server) getSessionInfo(w http.ResponseWriter, r *http.Request, p principal) error {
+	ctx, id := r.Context(), r.PathValue("id")
+	ls := s.live.get(id)
+	if ls == nil {
+		return notFound("session is not active or has ended")
+	}
+	tok := r.URL.Query().Get("token")
+	canAccess := p.Dev || admins[p.User.Role] || ls.userID == p.User.ID || (tok != "" && ls.validateShareToken(tok))
+	if !canAccess {
+		allowed, err := s.Store.CanConnect(ctx, p.User.ID, ls.connID)
+		if err != nil || !allowed {
+			return errForbidden
+		}
+	}
+	return writeJSON(w, http.StatusOK, map[string]any{
+		"session_id":      ls.id,
+		"connection_id":   ls.connID,
+		"connection_name": ls.conn.Name,
+		"protocol":        ls.conn.Protocol,
+		"owner_username":  ls.username,
+		"active":          true,
+	})
+}
+
+// openapi:operation
+// summary: Join a live session (WebSocket)
+// tags: [portal]
+// responses:
+//   '101': { description: Switching to WebSocket }
+//   '403': Error
+//   '404': Error
+func (s *Server) joinSessionEndpoint(w http.ResponseWriter, r *http.Request, p principal) error {
+	id := r.PathValue("id")
+	return s.joinSession(w, r, p, id)
 }
 
 // unverifiedHostKey handles a server whose key nobody approved yet: duckjumpd

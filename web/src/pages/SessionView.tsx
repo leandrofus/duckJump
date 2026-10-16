@@ -1,11 +1,11 @@
 import { t } from '../i18n'
 import { useEffect, useState } from 'react'
-import { ChevronRight, FolderInput } from 'lucide-react'
+import { ChevronRight, FolderInput, Users } from 'lucide-react'
 import { FilesPanel } from '../components/FilesPanel'
 import type { PortalConnection } from '../lib/api'
 import { useResource } from '../lib/store'
 import { usePref } from '../lib/prefs'
-import { href } from '../lib/router'
+import { href, useRoute } from '../lib/router'
 import { getMe, isAdmin } from '../lib/session'
 import { api, enc } from '../lib/api'
 import { confirm, toast } from '../ui/overlays'
@@ -18,16 +18,41 @@ import { go } from '../lib/router'
 import type { Recent } from '../App'
 
 export function SessionView({ id }: { id: string }) {
+  const route = useRoute()
+  const joinSessionId = route.query.get('join') || undefined
+  const shareToken = route.query.get('token') || undefined
+
   const { data } = useResource<PortalConnection[]>('/portal/connections')
   const [, setRecent] = usePref<Recent[]>('recent', [])
-  const c = data?.find((x) => x.id === id)
+  const [sessionInfo, setSessionInfo] = useState<{ connection_id: string; connection_name: string; protocol: string } | null>(null)
+
+  useEffect(() => {
+    if (joinSessionId) {
+      api.get<{ connection_id: string; connection_name: string; protocol: string }>(
+        `/sessions/${enc(joinSessionId)}/info${shareToken ? `?token=${enc(shareToken)}` : ''}`
+      ).then(setSessionInfo).catch(() => {})
+    }
+  }, [joinSessionId, shareToken])
+
+  let c = data?.find((x) => x.id === id)
+  if (!c && sessionInfo) {
+    c = {
+      id: sessionInfo.connection_id,
+      name: sessionInfo.connection_name,
+      protocol: sessionInfo.protocol,
+      credentials: 'vault',
+      record: false,
+      folder_path: '',
+    } as PortalConnection
+  }
+
   // Prompted credentials (connections without a vaulted one): asked before
   // connecting for "prompt", or when the server answers it needs them.
   const [creds, setCreds] = useState<PromptedCredentials | undefined>()
   const [ask, setAsk] = useState<{ reason?: string } | null>(null)
   useEffect(() => {
-    if (c?.credentials === 'prompt' && !creds) setAsk({})
-  }, [c?.id])
+    if (c?.credentials === 'prompt' && !creds && !joinSessionId) setAsk({})
+  }, [c?.id, joinSessionId])
   // The server's reason, in the user's language when we know the code.
   const needCredentials = (code: string, reason: string) =>
     setAsk({
@@ -66,7 +91,7 @@ export function SessionView({ id }: { id: string }) {
       document.title = 'DuckJump'
     }
   }, [c?.id])
-  if (!data) return <div className="center page"><Spinner /></div>
+  if (!data && !sessionInfo) return <div className="center page"><Spinner /></div>
   if (!c && !getMe()?.dev) {
     return (
       <div className="page">
@@ -82,7 +107,12 @@ export function SessionView({ id }: { id: string }) {
         <ChevronRight size={13} />
         {c?.folder_path && (<><span className="muted">{c.folder_path}</span><ChevronRight size={13} /></>)}
         <span>{c?.name ?? id}</span>
-        {c && (c.can_upload || c.can_download) && (
+        {joinSessionId && (
+          <span className="pill pill-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+            <Users size={12} /> {t('Shared session')}
+          </span>
+        )}
+        {c && (c.can_upload || c.can_download) && !joinSessionId && (
           <>
             <span className="grow" />
             <button className={`btn btn-sm${files ? ' on' : ''}`} onClick={() => setFiles(!files)}><FolderInput size={14} /> {t('Files')}</button>
@@ -94,14 +124,35 @@ export function SessionView({ id }: { id: string }) {
           onCancel={() => (setAsk(null), !creds && c.credentials === 'prompt' && go('portal'))}
           onSubmit={(v) => (setAsk(null), setCreds(v))} />
       )}
-      {c?.credentials === 'prompt' && !creds ? (
+      {c?.credentials === 'prompt' && !creds && !joinSessionId ? (
         <div className="terminal session-terminal waiting">{!ask && <button className="btn btn-primary" onClick={() => setAsk({})}>{t('Enter credentials')}</button>}</div>
       ) : c?.protocol === 'vnc' || c?.protocol === 'rdp' ? (
-        <RemoteSession key={attempt} connectionId={id} title={c.name} recorded={c.record} protocol={c.protocol} credentials={creds} onNeedCredentials={needCredentials} onUnverifiedKey={unverifiedKey} />
+        <RemoteSession
+          key={attempt}
+          connectionId={id}
+          joinSessionId={joinSessionId}
+          shareToken={shareToken}
+          title={c.name}
+          recorded={c.record}
+          protocol={c.protocol}
+          credentials={creds}
+          onNeedCredentials={needCredentials}
+          onUnverifiedKey={unverifiedKey}
+        />
       ) : (
         <div className="session-with-files">
-          <TerminalSession key={attempt} connectionId={id} title={c?.name ?? id} recorded={c?.record ?? true} credentials={creds} onNeedCredentials={needCredentials} onUnverifiedKey={unverifiedKey} />
-          {files && c && <FilesPanel conn={c} credentials={creds && { username: creds.username, password: creds.password }} onClose={() => setFiles(false)} />}
+          <TerminalSession
+            key={attempt}
+            connectionId={id}
+            joinSessionId={joinSessionId}
+            shareToken={shareToken}
+            title={c?.name ?? id}
+            recorded={c?.record ?? true}
+            credentials={creds}
+            onNeedCredentials={needCredentials}
+            onUnverifiedKey={unverifiedKey}
+          />
+          {files && c && !joinSessionId && <FilesPanel conn={c} credentials={creds && { username: creds.username, password: creds.password }} onClose={() => setFiles(false)} />}
         </div>
       )}
     </div>
