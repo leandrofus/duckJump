@@ -119,21 +119,100 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       </ul>
     </div>
 
-    <!-- Production HA Checklist -->
+    <!-- Production HA Checklist & Load Balancer Setup -->
     <div class="space-y-4 pt-4 border-t border-slate-800">
-      <h2 class="text-2xl font-bold text-white tracking-tight">5. Production HA Considerations</h2>
-      <div class="divide-y divide-slate-800 text-xs text-slate-300 border border-slate-800 rounded-lg overflow-hidden">
-        <div class="p-3 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <span class="font-bold text-amber-400">Reverse Proxy & WebSocket</span>
-          <span class="text-slate-300">Configure your load balancer for WebSocket upgrades (<code class="text-white">Upgrade</code> and <code class="text-white">Connection: Upgrade</code> headers) and pass-through client IP in <code class="text-white">X-Forwarded-For</code>.</span>
+      <h2 class="text-2xl font-bold text-white tracking-tight">5. Two-Node Cluster Behind a Load Balancer</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Running two or more <code class="text-white">duckjump-gw</code> instances behind a Load Balancer (HAProxy, NGINX, AWS ALB, Traefik) provides seamless High Availability and zero downtime. Ensure the following four key components are properly configured:
+      </p>
+
+      <div class="space-y-4 not-prose">
+        <!-- 1. Master Key -->
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold uppercase text-[10px]">Critical</span>
+            <span class="font-bold text-white text-sm">1. Identical Vault Master Key (/etc/duckjump/master.key)</span>
+          </div>
+          <p class="text-slate-300 leading-relaxed">
+            Connection passwords and private keys are encrypted in PostgreSQL using <strong>AES-256-GCM</strong> with the gateway's master key. All gateway nodes in the cluster <strong>must have the exact same key</strong>:
+          </p>
+          <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1">
+            <div class="text-slate-500"># Copy master.key from Node 1 to Node 2:</div>
+            <div>scp /etc/duckjump/master.key node2:/etc/duckjump/master.key</div>
+            <div>sudo chmod 600 /etc/duckjump/master.key && sudo chown duckjump:duckjump /etc/duckjump/master.key</div>
+          </div>
+          <p class="text-amber-400 text-[11px]">
+            ⚠️ If Node 2 uses a different master key, it will not be able to decrypt credentials created on Node 1 when dialing hosts.
+          </p>
         </div>
-        <div class="p-3 bg-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <span class="font-bold text-sky-400">Audit Stream Export</span>
-          <span class="text-slate-300">When using <code class="text-white">-audit-export</code> (syslog or WORM file), configure it on one designated gateway or send to a centralized syslog receiver.</span>
+
+        <!-- 2. Load Balancer Configuration -->
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded bg-sky-500/20 text-sky-400 font-bold uppercase text-[10px]">Load Balancer</span>
+            <span class="font-bold text-white text-sm">2. WebSocket Proxying & Sticky Sessions</span>
+          </div>
+          <p class="text-slate-300 leading-relaxed">
+            duckJump interactive terminal and desktop streams (SSH, RDP, VNC) rely on long-lived WebSocket connections (<code class="text-sky-300">/api/v1/connections/:id/session</code>). Your load balancer must support HTTP/1.1 WebSockets, pass client IP headers, and avoid killing idle sessions prematurely:
+          </p>
+          
+          <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1">
+            <div class="text-slate-500"># Example NGINX configuration:</div>
+            <div>upstream duckjump_cluster &#123;</div>
+            <div class="pl-4 text-emerald-400">ip_hash; # Sticky sessions recommended for browser consistency</div>
+            <div class="pl-4">server 192.168.1.10:8090 max_fails=3 fail_timeout=10s;</div>
+            <div class="pl-4">server 192.168.1.11:8090 max_fails=3 fail_timeout=10s;</div>
+            <div>&#125;</div>
+            <div class="pt-1">server &#123;</div>
+            <div class="pl-4">listen 443 ssl;</div>
+            <div class="pl-4">server_name bastion.example.com;</div>
+            <div class="pl-4">location / &#123;</div>
+            <div class="pl-8">proxy_pass http://duckjump_cluster;</div>
+            <div class="pl-8 text-sky-400">proxy_http_version 1.1;</div>
+            <div class="pl-8 text-sky-400">proxy_set_header Upgrade $http_upgrade;</div>
+            <div class="pl-8 text-sky-400">proxy_set_header Connection "upgrade";</div>
+            <div class="pl-8">proxy_set_header Host $host;</div>
+            <div class="pl-8">proxy_set_header X-Forwarded-For $remote_addr;</div>
+            <div class="pl-8">proxy_set_header X-Forwarded-Proto $scheme;</div>
+            <div class="pl-8 text-amber-300">proxy_read_timeout 3600s; # Prevent dropping long terminal sessions</div>
+            <div class="pl-4">&#125;</div>
+            <div>&#125;</div>
+          </div>
+          <p class="text-slate-400 text-[11px]">
+            Make sure to declare your Load Balancer's IP in <code class="text-white">DUCKJUMP_TRUSTED_PROXIES</code> on each gateway node.
+          </p>
         </div>
-        <div class="p-3 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <span class="font-bold text-emerald-400">Master Vault Key</span>
-          <span class="text-slate-300">Ensure all gateway nodes in the cluster share the exact same <code class="text-white">/etc/duckjump/master.key</code> so any node can decrypt connection secrets in memory.</span>
+
+        <!-- 3. Multi-IP Listen -->
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 font-bold uppercase text-[10px]">Networking</span>
+            <span class="font-bold text-white text-sm">3. Binding Specific IPs (-listen) Without Exposing Docker</span>
+          </div>
+          <p class="text-slate-300 leading-relaxed">
+            If your bastion nodes have multiple interfaces (e.g., LAN private IP, Tailscale IP, and internal Docker bridge IPs), you can bind specifically to the trusted interfaces using a comma-separated list, avoiding exposure on Docker interfaces:
+          </p>
+          <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1">
+            <div class="text-slate-500"># /etc/duckjump/duckjump.env</div>
+            <div class="text-amber-300">DUCKJUMP_LISTEN="127.0.0.1:8090,192.168.1.100:8090,100.83.173.113:8090"</div>
+            <div class="text-sky-300">DUCKJUMP_FRONTEND_URL="https://bastion.example.com,https://lucius.tailscale.net:8090"</div>
+          </div>
+        </div>
+
+        <!-- 4. Edge Agents in HA -->
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded bg-teal-500/20 text-teal-400 font-bold uppercase text-[10px]">Edge Sites</span>
+            <span class="font-bold text-white text-sm">4. Redundancy with Edge Agents</span>
+          </div>
+          <p class="text-slate-300 leading-relaxed">
+            Edge agents maintain a persistent outbound WebSocket tunnel to the gateway. In an HA setup:
+          </p>
+          <ul class="list-disc pl-5 text-slate-300 space-y-1.5 text-[11px]">
+            <li><strong>Multiple Agents per Site:</strong> You can install two or more <code class="text-white">duckjump-agent</code> instances within the same remote network using the same site token. The Load Balancer automatically distributes them across the cluster nodes.</li>
+            <li><strong>Automatic Reconnection:</strong> If Gateway #1 restarts or fails, connected agents immediately detect tunnel loss and reconnect to surviving nodes through the Load Balancer with exponential backoff.</li>
+            <li><strong>Clean Disconnect:</strong> When an agent process shuts down, the gateway immediately purges pending tickets and marks the site offline without leaving orphan listeners.</li>
+          </ul>
         </div>
       </div>
     </div>
