@@ -28,13 +28,14 @@ export function parseDisplay(b: Uint8Array): DisplayOp | null {
 }
 
 /**
- * Applies display operations to a canvas strictly in order. Images are
- * decoded as soon as they arrive (in parallel) but drawn in sequence.
+ * Applies display operations to a canvas. All image tiles of each frame are
+ * decoded concurrently via Promise.all and drawn in a single synchronous pass
+ * when sync arrives, completely eliminating sequential promise chain delays.
  */
 export class Painter {
-  private chain: Promise<void> = Promise.resolve()
   private ctx: CanvasRenderingContext2D
   private cursorURL = ''
+  private currentFrameOps: { op: DisplayOp; bmpPromise: Promise<ImageBitmap | null> }[] = []
   canvas: HTMLCanvasElement
   onCursor?: (css: string) => void
 
@@ -43,18 +44,51 @@ export class Painter {
     this.ctx = canvas.getContext('2d', { alpha: false })!
   }
 
-  /** Queues an op; `after` runs once it (and everything before) is drawn. */
+  /** Queues an op; `after` runs once the frame is rendered. */
   push(op: DisplayOp, after?: () => void) {
-    const decoded = op.op === 'image' ? createImageBitmap(new Blob([op.data as BlobPart], { type: op.mime })) : null
-    this.chain = this.chain
-      .then(async () => this.apply(op, decoded ? await decoded : null))
-      .catch(() => {}) // a broken tile must not stop the session
-      .then(() => after?.())
+    if (op.op === 'size') {
+      this.canvas.width = op.w
+      this.canvas.height = op.h
+      this.ctx.fillStyle = '#000'
+      this.ctx.fillRect(0, 0, op.w, op.h)
+      return
+    }
+
+    if (op.op === 'sync') {
+      const ops = this.currentFrameOps
+      this.currentFrameOps = []
+
+      if (ops.length === 0) {
+        after?.()
+        return
+      }
+
+      // Concurrently wait for all tile decodes in this frame
+      const promises = ops.map(item => item.bmpPromise)
+      Promise.all(promises).then((bmps) => {
+        // Draw all tiles of this frame in a single pass
+        for (let i = 0; i < ops.length; i++) {
+          this.apply(ops[i].op, bmps[i])
+        }
+        after?.()
+      }).catch((err) => {
+        console.warn('[Painter] Frame decode error:', err)
+        after?.()
+      })
+      return
+    }
+
+    const bmpPromise: Promise<ImageBitmap | null> = op.op === 'image'
+      ? createImageBitmap(new Blob([op.data as BlobPart], { type: op.mime })).catch(() => null)
+      : Promise.resolve(null)
+
+    this.currentFrameOps.push({ op, bmpPromise })
   }
 
-  /** Resolves when everything queued is drawn. */
-  idle() {
-    return this.chain
+  /** Resolves when current operations have settled. */
+  idle(): Promise<void> {
+    const promises = this.currentFrameOps.map(item => item.bmpPromise)
+    return Promise.all(promises).then(() => {})
   }
 
   private apply(op: DisplayOp, bmp: ImageBitmap | null) {

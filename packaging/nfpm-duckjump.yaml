@@ -31,6 +31,16 @@ contents:
   - src: ./dist/pkg/duckjumpd-rdp
     dst: /usr/libexec/duckjump/duckjumpd-rdp
     file_info: { mode: 0755 }
+  # Served by the gateway (/support/…): it looks next to its executable.
+  - src: ./dist/pkg/duckjump-assist
+    dst: /usr/libexec/duckjump/duckjump-assist
+    file_info: { mode: 0755 }
+  - src: ./dist/pkg/duckjump-assist-app.AppImage
+    dst: /usr/libexec/duckjump/duckjump-assist-app.AppImage
+    file_info: { mode: 0644 }
+  - src: ./dist/pkg/duckjump-assist-app.deb
+    dst: /usr/libexec/duckjump/duckjump-assist-app.deb
+    file_info: { mode: 0644 }
   - src: ./packaging/duckjump-cli
     dst: /usr/bin/duckjump
     file_info: { mode: 0755 }

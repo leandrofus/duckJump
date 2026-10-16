@@ -197,6 +197,30 @@ components:
         - remote_addr
         - connected_at
       type: object
+    AppTokenRequest:
+      additionalProperties: false
+      properties:
+        code:
+          description: One-time code from the loopback redirect.
+          type: string
+        code_verifier:
+          description: PKCE verifier of the code_challenge sent to /auth/oidc/login.
+          type: string
+      required:
+        - code
+        - code_verifier
+      type: object
+    AppTokenResponse:
+      properties:
+        token:
+          description: Session token; send it as the duckjump_session cookie.
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+        - token
+        - user
+      type: object
     ApproveHostKeyRequest:
       additionalProperties: false
       properties:
@@ -520,6 +544,25 @@ components:
         - reason
         - starts_at
         - ends_at
+      type: object
+    CreateSupportSession:
+      additionalProperties: false
+      properties:
+        reason:
+          description: Reason for the support session.
+          type: string
+        target_name:
+          description: Name or identifier of the user or machine receiving support.
+          type: string
+        ticket:
+          description: Optional ITSM ticket or issue ID.
+          type: string
+        ttl_minutes:
+          default: 30
+          description: How long until the invitation expires in minutes.
+          type: integer
+      required:
+        - target_name
       type: object
     CreateUserRequest:
       additionalProperties: false
@@ -1012,6 +1055,31 @@ components:
         - purgeable_bytes
         - oldest_started_at
       type: object
+    RequestSupportSession:
+      additionalProperties: false
+      properties:
+        account_type:
+          description: 'Account type: local, ad, or sso.'
+          type: string
+        client_os:
+          description: Client operating system.
+          type: string
+        domain:
+          description: Windows Active Directory domain if applicable.
+          type: string
+        hostname:
+          description: Client machine hostname.
+          type: string
+        reason:
+          description: Reason for the support session.
+          type: string
+        target_name:
+          description: 'User or machine requesting support (default: the caller).'
+          type: string
+        ticket:
+          description: Optional ticket identifier.
+          type: string
+      type: object
     ReviewAccessRequest:
       additionalProperties: false
       properties:
@@ -1246,6 +1314,138 @@ components:
       required:
         - name
         - kind
+      type: object
+    SupportEnded:
+      properties:
+        status:
+          enum:
+            - ended
+          type: string
+      required:
+        - status
+      type: object
+    SupportSession:
+      properties:
+        activated_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        client_hostname:
+          type: string
+        client_ip:
+          type: string
+        client_os:
+          type: string
+        connected_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          format: uuid
+          type: string
+        ended_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        join_url:
+          type: string
+        reason:
+          type: string
+        status:
+          enum:
+            - pending
+            - connected
+            - active
+            - ended
+            - expired
+          type: string
+        target_name:
+          type: string
+        ticket:
+          type: string
+        token:
+          type: string
+        totp_secret:
+          description: Verification code; only in the answer to /support/request.
+          type: string
+        verification_code:
+          description: Verification code the requester reads to the technician; only in the answer to /support/request.
+          type: string
+      required:
+        - id
+        - token
+        - join_url
+        - created_by
+        - target_name
+        - reason
+        - ticket
+        - status
+        - expires_at
+        - created_at
+      type: object
+    SupportStatus:
+      properties:
+        activated_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        client_hostname:
+          type: string
+        client_os:
+          type: string
+        connected_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        ended_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        reason:
+          type: string
+        status:
+          enum:
+            - pending
+            - connected
+            - active
+            - ended
+            - expired
+          type: string
+        target_name:
+          type: string
+        ticket:
+          type: string
+        token:
+          type: string
+      required:
+        - id
+        - token
+        - status
+        - target_name
+        - reason
+        - ticket
+        - expires_at
       type: object
     TOTPEnrollment:
       properties:
@@ -1514,6 +1714,15 @@ components:
         - created_at
         - updated_at
         - last_login_at
+      type: object
+    VerifySupportTOTP:
+      additionalProperties: false
+      properties:
+        code:
+          description: 6-digit TOTP verification code from the client.
+          type: string
+      required:
+        - code
       type: object
   securitySchemes:
     session:
@@ -2544,7 +2753,7 @@ paths:
         - user
   /auth/oidc/callback:
     get:
-      description: Where the identity provider returns the browser. Verifies the state, redeems the code, checks the ID token, provisions the user and opens a session; then redirects to the UI (with login_error on failure). Audited.
+      description: Where the identity provider returns the browser. Verifies the state, redeems the code, checks the ID token, provisions the user and opens a session; then redirects to the UI (with login_error on failure), or, for a native app login, to its loopback redirect_uri with a one-time code (or error). Audited.
       operationId: oidcCallback
       responses:
         "303":
@@ -2568,6 +2777,47 @@ paths:
           description: Not found
       security: []
       summary: Start single sign-on
+      tags:
+        - auth
+  /auth/oidc/token:
+    post:
+      description: 'For duckJump Assist: trades the one-time code of the loopback redirect and the PKCE verifier for a session token. Codes expire after a minute and work once.'
+      operationId: oidcAppToken
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppTokenRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppTokenResponse'
+          description: Logged in
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+      security: []
+      summary: Redeem a native app single sign-on code
       tags:
         - auth
   /auth/providers:
@@ -5088,6 +5338,390 @@ paths:
       x-duckjump-roles:
         - admin
         - superadmin
+  /support/agent-tunnel/{token}:
+    get:
+      description: Upgrades to a WebSocket carrying a multiplexed yamux session for display, control and sftp.
+      operationId: ServeSupportAgentTunnel
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      security: []
+      summary: Connect support agent tunnel (WebSocket)
+      tags:
+        - support
+  /support/end/{token}:
+    post:
+      description: Immediately closes an active support session from the client.
+      operationId: endSupportSessionByToken
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportEnded'
+          description: Ended
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      security: []
+      summary: End support session by token (for desktop app emergency stop)
+      tags:
+        - support
+  /support/request:
+    post:
+      description: Initiates a support request from the user's desktop application. Needs a logged-in session (password or single sign-on); the session is owned by the caller. target_name defaults to the caller's username.
+      operationId: requestSupportSession
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestSupportSession'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSession'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+      security: []
+      summary: Request an on-demand remote support session (from client desktop app)
+      tags:
+        - support
+  /support/sessions:
+    get:
+      description: |-
+        Lists support sessions created by the caller (or all if admin).
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: listSupportSessions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/SupportSession'
+                type: array
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+      summary: List support sessions
+      tags:
+        - support
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+    post:
+      description: |-
+        Generates a support session with a one-time token and TOTP secret.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: createSupportSession
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSupportSession'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSession'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+      summary: Create an on-demand remote support session
+      tags:
+        - support
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /support/sessions/{id}:
+    get:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: getSupportSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSession'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Get support session details
+      tags:
+        - support
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /support/sessions/{id}/end:
+    post:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: endSupportSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSession'
+          description: Session ended
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: End a support session
+      tags:
+        - support
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /support/sessions/{id}/verify-totp:
+    post:
+      description: |-
+        Validates the 6-digit TOTP code shown on the remote client.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: verifySupportTOTP
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifySupportTOTP'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportSession'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Verify remote user TOTP for support session
+      tags:
+        - support
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /support/sessions/{id}/ws:
+    get:
+      description: |-
+        Upgrades to a WebSocket streaming raw DJTP display frames and accepting input events.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: operatorSupportWS
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Connect operator to support display stream (WebSocket)
+      tags:
+        - support
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /support/status/{token}:
+    get:
+      description: Returns the current status of an ongoing support session.
+      operationId: getSupportStatusByToken
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportStatus'
+          description: Current state
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      security: []
+      summary: Get support session status by token (for desktop app)
+      tags:
+        - support
   /users:
     get:
       description: 'Roles: admin, superadmin.'

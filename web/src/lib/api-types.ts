@@ -449,7 +449,7 @@ export interface paths {
         };
         /**
          * Single sign-on callback
-         * @description Where the identity provider returns the browser. Verifies the state, redeems the code, checks the ID token, provisions the user and opens a session; then redirects to the UI (with login_error on failure). Audited.
+         * @description Where the identity provider returns the browser. Verifies the state, redeems the code, checks the ID token, provisions the user and opens a session; then redirects to the UI (with login_error on failure), or, for a native app login, to its loopback redirect_uri with a one-time code (or error). Audited.
          */
         get: operations["oidcCallback"];
         put?: never;
@@ -474,6 +474,26 @@ export interface paths {
         get: operations["oidcLogin"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/oidc/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redeem a native app single sign-on code
+         * @description For duckJump Assist: trades the one-time code of the loopback redirect and the PKCE verifier for a session token. Codes expire after a minute and work once.
+         */
+        post: operations["oidcAppToken"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1237,6 +1257,198 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/support/agent-tunnel/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connect support agent tunnel (WebSocket)
+         * @description Upgrades to a WebSocket carrying a multiplexed yamux session for display, control and sftp.
+         */
+        get: operations["ServeSupportAgentTunnel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/end/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End support session by token (for desktop app emergency stop)
+         * @description Immediately closes an active support session from the client.
+         */
+        post: operations["endSupportSessionByToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request an on-demand remote support session (from client desktop app)
+         * @description Initiates a support request from the user's desktop application. Needs a logged-in session (password or single sign-on); the session is owned by the caller. target_name defaults to the caller's username.
+         */
+        post: operations["requestSupportSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List support sessions
+         * @description Lists support sessions created by the caller (or all if admin).
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        get: operations["listSupportSessions"];
+        put?: never;
+        /**
+         * Create an on-demand remote support session
+         * @description Generates a support session with a one-time token and TOTP secret.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        post: operations["createSupportSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get support session details
+         * @description Roles: admin, auditor, superadmin, user.
+         */
+        get: operations["getSupportSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/sessions/{id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End a support session
+         * @description Roles: admin, auditor, superadmin, user.
+         */
+        post: operations["endSupportSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/sessions/{id}/verify-totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify remote user TOTP for support session
+         * @description Validates the 6-digit TOTP code shown on the remote client.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        post: operations["verifySupportTOTP"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/sessions/{id}/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connect operator to support display stream (WebSocket)
+         * @description Upgrades to a WebSocket streaming raw DJTP display frames and accepting input events.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        get: operations["operatorSupportWS"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support/status/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get support session status by token (for desktop app)
+         * @description Returns the current status of an ongoing support session.
+         */
+        get: operations["getSupportStatusByToken"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -1450,6 +1662,17 @@ export interface components {
             /** @description Public address the agent connects from. */
             remote_addr: string;
         };
+        AppTokenRequest: {
+            /** @description One-time code from the loopback redirect. */
+            code: string;
+            /** @description PKCE verifier of the code_challenge sent to /auth/oidc/login. */
+            code_verifier: string;
+        };
+        AppTokenResponse: {
+            /** @description Session token; send it as the duckjump_session cookie. */
+            token: string;
+            user: components["schemas"]["User"];
+        };
         ApproveHostKeyRequest: {
             /** @description The key to pin, as checked on the server itself (ssh-keygen -lf, or the certificate key for RDP and VNC). Usually the host_key_pending value. */
             fingerprint: string;
@@ -1600,6 +1823,19 @@ export interface components {
             starts_at: string;
             /** @description Optional reference to a ticket or issue ID. */
             ticket?: string;
+        };
+        CreateSupportSession: {
+            /** @description Reason for the support session. */
+            reason?: string;
+            /** @description Name or identifier of the user or machine receiving support. */
+            target_name: string;
+            /** @description Optional ITSM ticket or issue ID. */
+            ticket?: string;
+            /**
+             * @description How long until the invitation expires in minutes.
+             * @default 30
+             */
+            ttl_minutes: number;
         };
         CreateUserRequest: {
             display_name?: string;
@@ -1825,6 +2061,22 @@ export interface components {
             /** @description Recordings stored now. */
             recordings: number;
         };
+        RequestSupportSession: {
+            /** @description Account type: local, ad, or sso. */
+            account_type?: string;
+            /** @description Client operating system. */
+            client_os?: string;
+            /** @description Windows Active Directory domain if applicable. */
+            domain?: string;
+            /** @description Client machine hostname. */
+            hostname?: string;
+            /** @description Reason for the support session. */
+            reason?: string;
+            /** @description User or machine requesting support (default: the caller). */
+            target_name?: string;
+            /** @description Optional ticket identifier. */
+            ticket?: string;
+        };
         ReviewAccessRequest: {
             comment?: string;
         };
@@ -1934,6 +2186,60 @@ export interface components {
             /** @enum {string} */
             kind: "direct" | "agent";
             name: string;
+        };
+        SupportEnded: {
+            /** @enum {string} */
+            status: "ended";
+        };
+        SupportSession: {
+            /** Format: date-time */
+            activated_at?: string | null;
+            client_hostname?: string;
+            client_ip?: string;
+            client_os?: string;
+            /** Format: date-time */
+            connected_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by: string;
+            /** Format: date-time */
+            ended_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            join_url: string;
+            reason: string;
+            /** @enum {string} */
+            status: "pending" | "connected" | "active" | "ended" | "expired";
+            target_name: string;
+            ticket: string;
+            token: string;
+            /** @description Verification code; only in the answer to /support/request. */
+            totp_secret?: string;
+            /** @description Verification code the requester reads to the technician; only in the answer to /support/request. */
+            verification_code?: string;
+        };
+        SupportStatus: {
+            /** Format: date-time */
+            activated_at?: string | null;
+            client_hostname?: string;
+            client_os?: string;
+            /** Format: date-time */
+            connected_at?: string | null;
+            /** Format: date-time */
+            ended_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            reason: string;
+            /** @enum {string} */
+            status: "pending" | "connected" | "active" | "ended" | "expired";
+            target_name: string;
+            ticket: string;
+            token: string;
         };
         TOTPEnrollment: {
             /** @description otpauth:// URI to render as a QR code. */
@@ -2059,6 +2365,10 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             username: string;
+        };
+        VerifySupportTOTP: {
+            /** @description 6-digit TOTP verification code from the client. */
+            code: string;
         };
     };
     responses: never;
@@ -3255,6 +3565,60 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    oidcAppToken: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Logged in */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppTokenResponse"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6278,6 +6642,450 @@ export interface operations {
             };
             /** @description Conflicts with the current state */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    ServeSupportAgentTunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching to the WebSocket protocol */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    endSupportSessionByToken: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ended */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportEnded"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    requestSupportSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequestSupportSession"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportSession"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listSupportSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportSession"][];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createSupportSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSupportSession"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportSession"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSupportSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportSession"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    endSupportSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session ended */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportSession"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    verifySupportTOTP: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifySupportTOTP"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportSession"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    operatorSupportWS: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching to the WebSocket protocol */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSupportStatusByToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupportStatus"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

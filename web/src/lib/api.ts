@@ -24,6 +24,9 @@ export type HostListing = Schemas['HostListing']
 export type AccessRequest = Schemas['AccessRequest']
 export type AccessRequestTargets = Schemas['AccessRequestTargets']
 export type CreateAccessRequest = Schemas['CreateAccessRequest']
+export type SupportSession = Schemas['SupportSession']
+export type CreateSupportSession = Schemas['CreateSupportSession']
+export type VerifySupportTOTP = Schemas['VerifySupportTOTP']
 
 export class ApiError extends Error {
   status: number

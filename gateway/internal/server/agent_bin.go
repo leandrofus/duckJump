@@ -45,10 +45,9 @@ func (s *Server) ServeAgentInstallScript(w http.ResponseWriter, r *http.Request)
 	if allow == "" {
 		allow = "0.0.0.0/0:22,3389,5900"
 	}
-	binURL := r.URL.Query().Get("bin_url")
-	if binURL == "" {
-		binURL = dl
-	}
+	// Always this gateway's binary: the script runs as root, and a link to
+	// it must not be able to fetch one from elsewhere.
+	binURL := dl
 
 	script := generateInstallScript(token, server, allow, binURL)
 

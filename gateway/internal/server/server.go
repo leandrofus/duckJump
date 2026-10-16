@@ -37,6 +37,7 @@ type Server struct {
 	Vault       *vault.Vault
 	Auth        *auth.Service
 	Hub         *edge.Hub
+	SupportHub  *SupportHub
 	DaemonAddr  string
 	DaemonToken string
 	// DaemonTLS, when set, is how the link to duckjumpd is secured (it carries
@@ -80,6 +81,7 @@ type Server struct {
 	AgentServerURL string
 
 	limiter  *auth.Limiter
+	appCodes appCodes
 	live     liveSessions
 	checkMu  sync.Mutex
 	nodeOnce sync.Once
@@ -88,9 +90,23 @@ type Server struct {
 
 func (s *Server) Handler() http.Handler {
 	s.limiter = auth.NewLimiter()
+	if s.SupportHub == nil {
+		s.SupportHub = NewSupportHub()
+	}
 	mux := http.NewServeMux()
 	// Methodless so it does not clash with the /api/ catch-all; static() allows only GET/HEAD.
 	mux.Handle("/", s.static())
+
+	// Public support client endpoints.
+	mux.HandleFunc("GET /support/join/{token}", s.ServeSupportJoin)
+	mux.HandleFunc("GET /support/duckjump-assist", s.DownloadAssistAgent)
+	mux.HandleFunc("GET /support/duckjump-assist-app", s.DownloadAssistApp)
+	mux.HandleFunc("GET /support/launch.sh", s.ServeAssistLaunchScript)
+	mux.HandleFunc("GET /support/run.ps1", s.ServeAssistPowerShellScript)
+	mux.HandleFunc("GET /api/v1/support/agent-tunnel/{token}", s.ServeSupportAgentTunnel)
+	mux.HandleFunc("POST /api/v1/support/request", s.requestSupportSession)
+	mux.HandleFunc("GET /api/v1/support/status/{token}", s.getSupportStatusByToken)
+	mux.HandleFunc("POST /api/v1/support/end/{token}", s.endSupportSessionByToken)
 
 	// Edge agent binary download, install script and connect.
 	mux.HandleFunc("GET /agent/duckjump-agent", s.DownloadAgent)
@@ -104,6 +120,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/providers", s.authProviders)
 	mux.HandleFunc("GET /api/v1/auth/oidc/login", s.oidcLogin)
 	mux.HandleFunc("GET /api/v1/auth/oidc/callback", s.oidcCallback)
+	mux.HandleFunc("POST /api/v1/auth/oidc/token", s.oidcAppToken)
 	mux.Handle("POST /api/v1/auth/totp", s.pending(s.loginTOTP))
 	mux.Handle("POST /api/v1/auth/logout", s.pending(s.logout))
 	mux.Handle("GET /api/v1/auth/me", s.pending(s.me))
@@ -193,6 +210,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/access-requests/{id}/approve", s.authed(admins, s.approveAccessRequest))
 	mux.Handle("POST /api/v1/access-requests/{id}/reject", s.authed(admins, s.rejectAccessRequest))
 	mux.Handle("POST /api/v1/access-requests/{id}/cancel", s.authed(anyRole, s.cancelAccessRequest))
+
+	// On-demand remote support.
+	mux.Handle("GET /api/v1/support/sessions", s.authed(anyRole, s.listSupportSessions))
+	mux.Handle("POST /api/v1/support/sessions", s.authed(anyRole, s.createSupportSession))
+	mux.Handle("GET /api/v1/support/sessions/{id}", s.authed(anyRole, s.getSupportSession))
+	mux.Handle("POST /api/v1/support/sessions/{id}/verify-totp", s.authed(anyRole, s.verifySupportTOTP))
+	mux.Handle("POST /api/v1/support/sessions/{id}/end", s.authed(anyRole, s.endSupportSession))
+	mux.Handle("GET /api/v1/support/sessions/{id}/ws", s.authed(anyRole, s.operatorSupportWS))
 
 	// Audit.
 	mux.Handle("GET /api/v1/audit/events", s.authed(auditors, s.listAuditEvents))
@@ -413,6 +438,10 @@ func notFound(what string) error {
 
 func conflict(format string, a ...any) error {
 	return &apiError{http.StatusConflict, "conflict", fmt.Sprintf(format, a...)}
+}
+
+func forbidden(format string, a ...any) error {
+	return &apiError{http.StatusForbidden, "forbidden", fmt.Sprintf(format, a...)}
 }
 
 // fromStore maps store errors; what names the object for not-found.

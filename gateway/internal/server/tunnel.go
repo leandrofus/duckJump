@@ -425,10 +425,11 @@ func (s *Server) runParticipant(ctx context.Context, ls *liveSession, lp *livePa
 			}
 		case websocket.MessageText:
 			var m struct {
-				Type       string `json:"type"`
-				Cols, Rows int    `json:"cols"`
-				Text       string `json:"text"`
-				To         string `json:"to"`
+				Type string `json:"type"`
+				Cols int    `json:"cols"`
+				Rows int    `json:"rows"`
+				Text string `json:"text"`
+				To   string `json:"to"`
 			}
 			if json.Unmarshal(data, &m) != nil {
 				break

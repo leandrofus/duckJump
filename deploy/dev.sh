@@ -34,9 +34,25 @@ PROFILE=release; CARGO_FLAGS=--release
 (cd "$ROOT/duckjumpd/rdp" && cargo build -q $CARGO_FLAGS)   # worker RDP (workspace propio)
 D=$ROOT/duckjumpd/target/$PROFILE/duckjumpd
 export DUCKJUMPD_RDP_WORKER=$ROOT/duckjumpd/rdp/target/$PROFILE/duckjumpd-rdp
+
+# Mantener dist/bin/duckjump-assist actualizado para el endpoint de soporte
+mkdir -p "$ROOT/dist/bin"
+if [[ -f "$ROOT/duckjumpd/target/$PROFILE/duckjump-assist" ]]; then
+  cp -f "$ROOT/duckjumpd/target/$PROFILE/duckjump-assist" "$ROOT/dist/bin/duckjump-assist"
+fi
+# App de escritorio (instaladores que ofrece la página de soporte). Tarda
+# varios minutos (contenedor): solo con ASSIST_APP=1, o make assist-app-bundle.
+if [[ -n ${ASSIST_APP:-} ]]; then
+  "$ROOT/packaging/build-assist-app.sh"
+elif [[ ! -f "$ROOT/dist/bin/duckjump-assist-app.AppImage" ]]; then
+  echo "· App duckJump Assist sin compilar: la página de soporte no la ofrecerá (ASSIST_APP=1 make run)"
+fi
+
 # La UI se embebe en duckjump-gw; sin compilar, el gateway sirve el visor PoC.
-if command -v bun >/dev/null && [[ ! -f $ROOT/gateway/internal/server/ui/dist/index.html || -n ${WEB:-} ]]; then
-  (cd "$ROOT/gateway" && make -s web >/dev/null)
+# Recompila si no existe o si hay cambios en web/src.
+if command -v bun >/dev/null && [[ ! -f $ROOT/gateway/internal/server/ui/dist/index.html || -n ${WEB:-} || -n $(find "$ROOT/web/src" -newer "$ROOT/gateway/internal/server/ui/dist/index.html" 2>/dev/null) ]]; then
+  echo "==> Recompilando interfaz web (React + TypeScript)..."
+  (cd "$ROOT/gateway" && make web)
 fi
 (cd "$ROOT/gateway" && go build -o bin/duckjump-gw ./cmd/duckjump-gw && CGO_ENABLED=0 go build -o bin/duckjump-agent ./cmd/duckjump-agent)
 
