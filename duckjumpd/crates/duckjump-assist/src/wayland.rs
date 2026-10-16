@@ -17,7 +17,7 @@ use ashpd::desktop::{
 use ashpd::enumflags2::BitFlags;
 use duckjump_gfx::{Damage, Framebuffer};
 use duckjump_proto::gfx::Input;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::capture::{detect_damage, ScreenCapturer};
 

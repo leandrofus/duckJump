@@ -667,6 +667,9 @@ func (s *Server) ServeAssistPowerShellScript(w http.ResponseWriter, r *http.Requ
 
 if (-not $Token) {
     Write-Error "Session token is required"
+    Write-Host ""
+    Write-Host "Presione Enter para salir..." -ForegroundColor Gray
+    try { Read-Host } catch {}
     exit 1
 }
 
@@ -687,17 +690,28 @@ try {
         Write-Host "    Para conectarse a la asistencia, por favor ejecute el comando en un equipo Linux:" -ForegroundColor Cyan
         Write-Host "    curl -fsSL $Server/support/launch.sh?token=$Token | sh" -ForegroundColor White
         Write-Host ""
+        Write-Host "Presione Enter para salir..." -ForegroundColor Gray
+        try { Read-Host } catch {}
         exit 1
     }
 
     Write-Host "==> Iniciando duckJump Assist..." -ForegroundColor Green
     & $tempBin --server $Server --token $Token
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "duckJump Assist finalizo con codigo $LASTEXITCODE." -ForegroundColor Yellow
+        Write-Host "Presione Enter para salir..." -ForegroundColor Gray
+        try { Read-Host } catch {}
+    }
 } catch {
     Write-Host ""
     Write-Host "[!] Error: duckjump-assist.exe para Windows no esta disponible en el servidor." -ForegroundColor Red
+    Write-Host "    Detalle: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "    El servidor actualmente solo tiene disponible el agente para Linux (x86_64)." -ForegroundColor Yellow
     Write-Host "    Para conectarse a la asistencia, ejecute en Linux: curl -fsSL $Server/support/launch.sh?token=$Token | sh" -ForegroundColor Cyan
     Write-Host ""
+    Write-Host "Presione Enter para salir..." -ForegroundColor Gray
+    try { Read-Host } catch {}
     exit 1
 } finally {
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
