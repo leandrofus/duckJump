@@ -134,6 +134,7 @@ fn decode_png_to_fb(png_bytes: &[u8], fb: &mut Framebuffer) -> anyhow::Result<()
 pub struct X11Capturer {
     conn: RustConnection,
     root: u32,
+    pub depth: u8,
     pub width: u16,
     pub height: u16,
 }
@@ -148,12 +149,14 @@ impl X11Capturer {
             .get(screen_num)
             .ok_or_else(|| anyhow::anyhow!("No X11 root screen at index {}", screen_num))?;
         let root = screen.root;
+        let depth = screen.root_depth;
         let width = screen.width_in_pixels;
         let height = screen.height_in_pixels;
 
         Ok(Self {
             conn,
             root,
+            depth,
             width,
             height,
         })
@@ -169,7 +172,17 @@ impl X11Capturer {
             self.height = height;
         }
 
-        let reply = xproto::get_image(
+        // In X11 protocol GetImage, if format is ZPixmap, plane_mask must NOT have bits set beyond depth,
+        // otherwise X server returns BadValue. On standard 24-bit TrueColor visual: mask must be 0x00FFFFFF.
+        let plane_mask = if self.depth >= 32 {
+            !0
+        } else if self.depth > 0 {
+            (1u32 << self.depth).wrapping_sub(1)
+        } else {
+            0x00FFFFFF
+        };
+
+        let reply = match xproto::get_image(
             &self.conn,
             ImageFormat::Z_PIXMAP,
             self.root,
@@ -177,9 +190,36 @@ impl X11Capturer {
             0,
             width,
             height,
-            !0,
-        )?
-        .reply()?;
+            plane_mask,
+        ) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(r) => r,
+                Err(_) => {
+                    xproto::get_image(
+                        &self.conn,
+                        ImageFormat::Z_PIXMAP,
+                        self.root,
+                        0,
+                        0,
+                        width,
+                        height,
+                        0x00FFFFFF,
+                    )?.reply()?
+                }
+            },
+            Err(_) => {
+                xproto::get_image(
+                    &self.conn,
+                    ImageFormat::Z_PIXMAP,
+                    self.root,
+                    0,
+                    0,
+                    width,
+                    height,
+                    0x00FFFFFF,
+                )?.reply()?
+            }
+        };
 
         let data = &reply.data;
         if data.len() >= width as usize * height as usize * 4 {
@@ -204,18 +244,20 @@ impl X11Capturer {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum WaylandCommandKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandKind {
+    CinnamonScreenshot,
+    Spectacle,
     Grim,
     GnomeDbus,
     GnomeScreenshot,
-    Spectacle,
+    Scrot,
     Import,
 }
 
-/// Real Wayland / Linux CLI screen capturer.
+/// Real Linux CLI screen capturer supporting Cinnamon, KDE, GNOME, Wayland, and X11 tools.
 pub struct CommandCapturer {
-    kind: WaylandCommandKind,
+    kind: CommandKind,
     tmp_path: std::path::PathBuf,
 }
 
@@ -224,108 +266,156 @@ impl CommandCapturer {
         let tmp_file = std::env::temp_dir().join(format!("duckjump_capture_{}.png", std::process::id()));
         let tmp_str = tmp_file.to_string_lossy().to_string();
 
-        // 1. Check grim (Sway, Hyprland, wlroots, standard Wayland)
-        if std::process::Command::new("grim").arg("-h").output().is_ok() {
-            if let Ok(status) = std::process::Command::new("grim")
-                .args(["-t", "png", &tmp_str])
-                .status()
-            {
-                if status.success() && tmp_file.exists() {
-                    let _ = std::fs::remove_file(&tmp_file);
-                    return Some(Self {
-                        kind: WaylandCommandKind::Grim,
-                        tmp_path: tmp_file,
-                    });
-                }
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+            .or_else(|_| std::env::var("DESKTOP_SESSION"))
+            .unwrap_or_default()
+            .to_lowercase();
+
+        let mut candidates = Vec::new();
+
+        if desktop.contains("cinnamon") || desktop.contains("x-cinnamon") {
+            candidates.push(CommandKind::CinnamonScreenshot);
+            candidates.push(CommandKind::Scrot);
+            candidates.push(CommandKind::Import);
+        } else if desktop.contains("kde") || desktop.contains("plasma") {
+            candidates.push(CommandKind::Spectacle);
+            candidates.push(CommandKind::Grim);
+            candidates.push(CommandKind::Scrot);
+        } else if desktop.contains("gnome") {
+            candidates.push(CommandKind::GnomeDbus);
+            candidates.push(CommandKind::GnomeScreenshot);
+            candidates.push(CommandKind::Grim);
+        } else if desktop.contains("sway") || desktop.contains("hyprland") || desktop.contains("wayland") {
+            candidates.push(CommandKind::Grim);
+        }
+
+        for fallback in [
+            CommandKind::CinnamonScreenshot,
+            CommandKind::Spectacle,
+            CommandKind::Grim,
+            CommandKind::GnomeDbus,
+            CommandKind::GnomeScreenshot,
+            CommandKind::Scrot,
+            CommandKind::Import,
+        ] {
+            if !candidates.contains(&fallback) {
+                candidates.push(fallback);
             }
         }
 
-        // 2. Check gdbus calling org.gnome.Shell.Screenshot (GNOME on Fedora)
-        let gdbus_res = std::process::Command::new("gdbus")
-            .args([
-                "call",
-                "--session",
-                "--dest",
-                "org.gnome.Shell.Screenshot",
-                "--object-path",
-                "/org/gnome/Shell/Screenshot",
-                "--method",
-                "org.gnome.Shell.Screenshot.Screenshot",
-                "false",
-                "false",
-                &tmp_str,
-            ])
-            .output();
-        if let Ok(out) = gdbus_res {
-            if out.status.success() && tmp_file.exists() {
+        for kind in candidates {
+            if Self::probe(kind, &tmp_file, &tmp_str) {
                 let _ = std::fs::remove_file(&tmp_file);
                 return Some(Self {
-                    kind: WaylandCommandKind::GnomeDbus,
+                    kind,
                     tmp_path: tmp_file,
                 });
-            }
-        }
-
-        // 3. Check gnome-screenshot
-        if std::process::Command::new("gnome-screenshot").arg("--version").output().is_ok() {
-            if let Ok(status) = std::process::Command::new("gnome-screenshot")
-                .args(["-f", &tmp_str])
-                .status()
-            {
-                if status.success() && tmp_file.exists() {
-                    let _ = std::fs::remove_file(&tmp_file);
-                    return Some(Self {
-                        kind: WaylandCommandKind::GnomeScreenshot,
-                        tmp_path: tmp_file,
-                    });
-                }
-            }
-        }
-
-        // 4. Check spectacle (KDE Plasma)
-        if std::process::Command::new("spectacle").arg("-v").output().is_ok() {
-            if let Ok(status) = std::process::Command::new("spectacle")
-                .args(["-b", "-n", "-o", &tmp_str])
-                .status()
-            {
-                if status.success() && tmp_file.exists() {
-                    let _ = std::fs::remove_file(&tmp_file);
-                    return Some(Self {
-                        kind: WaylandCommandKind::Spectacle,
-                        tmp_path: tmp_file,
-                    });
-                }
-            }
-        }
-
-        // 5. Check import (ImageMagick)
-        if std::process::Command::new("import").arg("-version").output().is_ok() {
-            if let Ok(status) = std::process::Command::new("import")
-                .args(["-window", "root", &tmp_str])
-                .status()
-            {
-                if status.success() && tmp_file.exists() {
-                    let _ = std::fs::remove_file(&tmp_file);
-                    return Some(Self {
-                        kind: WaylandCommandKind::Import,
-                        tmp_path: tmp_file,
-                    });
-                }
             }
         }
 
         None
     }
 
+    fn probe(kind: CommandKind, tmp_file: &std::path::Path, tmp_str: &str) -> bool {
+        let res = match kind {
+            CommandKind::CinnamonScreenshot => {
+                std::process::Command::new("cinnamon-screenshot")
+                    .args(["-f", tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+            CommandKind::Spectacle => {
+                std::process::Command::new("spectacle")
+                    .args(["-b", "-n", "-o", tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+            CommandKind::Grim => {
+                std::process::Command::new("grim")
+                    .args(["-t", "png", tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+            CommandKind::GnomeDbus => {
+                std::process::Command::new("gdbus")
+                    .args([
+                        "call",
+                        "--session",
+                        "--dest",
+                        "org.gnome.Shell.Screenshot",
+                        "--object-path",
+                        "/org/gnome/Shell/Screenshot",
+                        "--method",
+                        "org.gnome.Shell.Screenshot.Screenshot",
+                        "false",
+                        "false",
+                        tmp_str,
+                    ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+            CommandKind::GnomeScreenshot => {
+                std::process::Command::new("gnome-screenshot")
+                    .args(["-f", tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+            CommandKind::Scrot => {
+                std::process::Command::new("scrot")
+                    .args(["-o", tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+            CommandKind::Import => {
+                std::process::Command::new("import")
+                    .args(["-window", "root", tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+        };
+
+        if let Ok(st) = res {
+            if st.success() && tmp_file.exists() {
+                if let Ok(meta) = tmp_file.metadata() {
+                    return meta.len() > 0;
+                }
+            }
+        }
+        false
+    }
+
     pub fn capture_to_fb(&self, fb: &mut Framebuffer) -> anyhow::Result<()> {
         let tmp_str = self.tmp_path.to_string_lossy().to_string();
         let status = match self.kind {
-            WaylandCommandKind::Grim => {
-                std::process::Command::new("grim")
-                    .args(["-t", "png", &tmp_str])
+            CommandKind::CinnamonScreenshot => {
+                std::process::Command::new("cinnamon-screenshot")
+                    .args(["-f", &tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status()?
             }
-            WaylandCommandKind::GnomeDbus => {
+            CommandKind::Spectacle => {
+                std::process::Command::new("spectacle")
+                    .args(["-b", "-n", "-o", &tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()?
+            }
+            CommandKind::Grim => {
+                std::process::Command::new("grim")
+                    .args(["-t", "png", &tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()?
+            }
+            CommandKind::GnomeDbus => {
                 std::process::Command::new("gdbus")
                     .args([
                         "call",
@@ -340,21 +430,29 @@ impl CommandCapturer {
                         "false",
                         &tmp_str,
                     ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status()?
             }
-            WaylandCommandKind::GnomeScreenshot => {
+            CommandKind::GnomeScreenshot => {
                 std::process::Command::new("gnome-screenshot")
                     .args(["-f", &tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status()?
             }
-            WaylandCommandKind::Spectacle => {
-                std::process::Command::new("spectacle")
-                    .args(["-b", "-n", "-o", &tmp_str])
+            CommandKind::Scrot => {
+                std::process::Command::new("scrot")
+                    .args(["-o", &tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status()?
             }
-            WaylandCommandKind::Import => {
+            CommandKind::Import => {
                 std::process::Command::new("import")
                     .args(["-window", "root", &tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .status()?
             }
         };
