@@ -1,6 +1,8 @@
 #!/bin/sh
 # Builds the rpm and deb packages (amd64) into dist/packages:
-#   duckjump        gateway + duckjumpd + RDP worker, systemd services
+#   duckjump        gateway + duckjumpd + RDP worker, systemd services, and
+#                   what the gateway serves for remote support: the
+#                   duckjump-assist CLI and the duckJump Assist app installers
 #   duckjump-agent  edge agent, systemd service
 # Go builds static (CGO off). Rust builds in a Debian 11 container so the
 # binaries need only glibc 2.31: RHEL/Rocky/Alma 9+, Debian 11+, Ubuntu 22.04+.
@@ -29,15 +31,19 @@ $ENGINE run --rm --security-opt label=disable \
 	-w /src "$RUST_IMAGE" sh -euc '
 		cargo build --release --locked --manifest-path duckjumpd/Cargo.toml --target-dir dist/build/target
 		cargo build --release --locked --manifest-path duckjumpd/rdp/Cargo.toml --target-dir dist/build/target-rdp
-		strip dist/build/target/release/duckjumpd dist/build/target-rdp/release/duckjumpd-rdp'
-cp dist/build/target/release/duckjumpd dist/build/target-rdp/release/duckjumpd-rdp "$OUT/"
+		strip dist/build/target/release/duckjumpd dist/build/target/release/duckjump-assist dist/build/target-rdp/release/duckjumpd-rdp'
+cp dist/build/target/release/duckjumpd dist/build/target/release/duckjump-assist dist/build/target-rdp/release/duckjumpd-rdp "$OUT/"
 
 # guard: highest glibc symbol version the Rust binaries need
-for f in "$OUT/duckjumpd" "$OUT/duckjumpd-rdp"; do
+for f in "$OUT/duckjumpd" "$OUT/duckjumpd-rdp" "$OUT/duckjump-assist"; do
 	max=$(strings "$f" | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n -u | tail -1)
 	echo "  $f needs $max"
 	case $max in GLIBC_2.3[2-9] | GLIBC_2.[4-9]*) echo "glibc too new: $max" >&2; exit 1 ;; esac
 done
+
+echo "→ duckJump Assist app (AppImage, deb)"
+packaging/build-assist-app.sh
+cp dist/bin/duckjump-assist-app.AppImage dist/bin/duckjump-assist-app.deb "$OUT/"
 
 NFPM=dist/build/nfpm
 [ -x "$NFPM" ] || GOBIN="$PWD/dist/build" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@$NFPM_VERSION"

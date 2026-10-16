@@ -40,6 +40,13 @@ mkdir -p "$ROOT/dist/bin"
 if [[ -f "$ROOT/duckjumpd/target/$PROFILE/duckjump-assist" ]]; then
   cp -f "$ROOT/duckjumpd/target/$PROFILE/duckjump-assist" "$ROOT/dist/bin/duckjump-assist"
 fi
+# App de escritorio (instaladores que ofrece la página de soporte). Tarda
+# varios minutos (contenedor): solo con ASSIST_APP=1, o make assist-app-bundle.
+if [[ -n ${ASSIST_APP:-} ]]; then
+  "$ROOT/packaging/build-assist-app.sh"
+elif [[ ! -f "$ROOT/dist/bin/duckjump-assist-app.AppImage" ]]; then
+  echo "· App duckJump Assist sin compilar: la página de soporte no la ofrecerá (ASSIST_APP=1 make run)"
+fi
 
 # La UI se embebe en duckjump-gw; sin compilar, el gateway sirve el visor PoC.
 # Recompila si no existe o si hay cambios en web/src.
