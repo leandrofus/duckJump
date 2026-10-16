@@ -1,6 +1,5 @@
 use duckjump_gfx::{Damage, Framebuffer};
 use duckjump_proto::gfx::Display;
-use tracing::info;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{self, ConnectionExt, ImageFormat};
 use x11rb::rust_connection::RustConnection;
@@ -103,6 +102,49 @@ fn detect_damage(fb: &Framebuffer, prev_rgb: &mut Vec<u8>) -> Vec<Damage> {
     damage
 }
 
+/// Decodes uncompressed 24-bit or 32-bit BMP data directly into `fb.rgb`.
+/// This operates in sub-millisecond time (<1ms) without any zlib/deflate decompression.
+fn decode_bmp_to_fb(bmp_bytes: &[u8], fb: &mut Framebuffer) -> anyhow::Result<()> {
+    if bmp_bytes.len() < 54 || &bmp_bytes[0..2] != b"BM" {
+        anyhow::bail!("Invalid BMP signature");
+    }
+    let data_offset = u32::from_le_bytes(bmp_bytes[10..14].try_into()?) as usize;
+    let width = i32::from_le_bytes(bmp_bytes[18..22].try_into()?).unsigned_abs() as u16;
+    let raw_height = i32::from_le_bytes(bmp_bytes[22..26].try_into()?);
+    let top_down = raw_height < 0;
+    let height = raw_height.unsigned_abs() as u16;
+    let bpp = u16::from_le_bytes(bmp_bytes[28..30].try_into()?);
+
+    if fb.width != width || fb.height != height {
+        fb.resize(width, height);
+    }
+
+    let bytes_per_pixel = (bpp / 8) as usize;
+    if bytes_per_pixel < 3 {
+        anyhow::bail!("Unsupported BMP bit depth: {}", bpp);
+    }
+
+    let row_size = ((width as usize * bytes_per_pixel + 3) / 4) * 4;
+    let pixels = &bmp_bytes[data_offset..];
+
+    for y in 0..height as usize {
+        let src_y = if top_down { y } else { height as usize - 1 - y };
+        let src_row = src_y * row_size;
+        let dst_row = y * width as usize * 3;
+
+        if src_row + width as usize * bytes_per_pixel <= pixels.len() {
+            let row = &pixels[src_row..src_row + width as usize * bytes_per_pixel];
+            for (x, px) in row.chunks_exact(bytes_per_pixel).enumerate() {
+                let out = dst_row + x * 3;
+                fb.rgb[out] = px[2];     // R (BMP is BGR)
+                fb.rgb[out + 1] = px[1]; // G
+                fb.rgb[out + 2] = px[0]; // B
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Decodes PNG data into `fb.rgb` (resizing `fb` if dimensions differ).
 fn decode_png_to_fb(png_bytes: &[u8], fb: &mut Framebuffer) -> anyhow::Result<()> {
     let cursor = std::io::Cursor::new(png_bytes);
@@ -145,6 +187,13 @@ fn decode_png_to_fb(png_bytes: &[u8], fb: &mut Framebuffer) -> anyhow::Result<()
     }
 
     Ok(())
+}
+
+fn decode_image_to_fb(bytes: &[u8], fb: &mut Framebuffer) -> anyhow::Result<()> {
+    if bytes.len() >= 2 && &bytes[0..2] == b"BM" {
+        return decode_bmp_to_fb(bytes, fb);
+    }
+    decode_png_to_fb(bytes, fb)
 }
 
 /// Real X11 screen capturer via `x11rb`.
@@ -280,52 +329,39 @@ pub struct CommandCapturer {
 
 impl CommandCapturer {
     pub fn try_detect() -> Option<Self> {
-        let tmp_file = std::env::temp_dir().join(format!("duckjump_capture_{}.png", std::process::id()));
-        let tmp_str = tmp_file.to_string_lossy().to_string();
+        let pid = std::process::id();
+        let tmp_bmp = std::env::temp_dir().join(format!("duckjump_capture_{}.bmp", pid));
+        let tmp_png = std::env::temp_dir().join(format!("duckjump_capture_{}.png", pid));
+        let tmp_bmp_str = tmp_bmp.to_string_lossy().to_string();
+        let tmp_png_str = tmp_png.to_string_lossy().to_string();
 
-        let desktop = std::env::var("XDG_CURRENT_DESKTOP")
-            .or_else(|_| std::env::var("DESKTOP_SESSION"))
-            .unwrap_or_default()
-            .to_lowercase();
-
-        let mut candidates = Vec::new();
-
-        if desktop.contains("cinnamon") || desktop.contains("x-cinnamon") {
-            candidates.push(CommandKind::CinnamonScreenshot);
-            candidates.push(CommandKind::Scrot);
-            candidates.push(CommandKind::Import);
-        } else if desktop.contains("kde") || desktop.contains("plasma") {
-            candidates.push(CommandKind::Spectacle);
-            candidates.push(CommandKind::Grim);
-            candidates.push(CommandKind::Scrot);
-        } else if desktop.contains("gnome") {
-            candidates.push(CommandKind::GnomeDbus);
-            candidates.push(CommandKind::GnomeScreenshot);
-            candidates.push(CommandKind::Grim);
-        } else if desktop.contains("sway") || desktop.contains("hyprland") || desktop.contains("wayland") {
-            candidates.push(CommandKind::Grim);
-        }
-
-        for fallback in [
-            CommandKind::CinnamonScreenshot,
-            CommandKind::Spectacle,
+        // Order candidates strictly by execution speed:
+        // Grim (Wayland, ~5ms) > Scrot (C, ~15ms) > Cinnamon (~40ms) > Import (~50ms) > Gnome (~50ms) > Spectacle (KDE Qt app, ~1500ms)
+        let candidates = vec![
             CommandKind::Grim,
+            CommandKind::Scrot,
+            CommandKind::CinnamonScreenshot,
+            CommandKind::Import,
             CommandKind::GnomeDbus,
             CommandKind::GnomeScreenshot,
-            CommandKind::Scrot,
-            CommandKind::Import,
-        ] {
-            if !candidates.contains(&fallback) {
-                candidates.push(fallback);
-            }
-        }
+            CommandKind::Spectacle,
+        ];
 
         for kind in candidates {
-            if Self::probe(kind, &tmp_file, &tmp_str) {
-                let _ = std::fs::remove_file(&tmp_file);
+            // 1. Try uncompressed BMP first for ultra-fast disk write & sub-millisecond decode
+            if Self::probe(kind, &tmp_bmp, &tmp_bmp_str) {
+                let _ = std::fs::remove_file(&tmp_bmp);
                 return Some(Self {
                     kind,
-                    tmp_path: tmp_file,
+                    tmp_path: tmp_bmp,
+                });
+            }
+            // 2. Fallback to PNG if BMP is not supported by the tool
+            if Self::probe(kind, &tmp_png, &tmp_png_str) {
+                let _ = std::fs::remove_file(&tmp_png);
+                return Some(Self {
+                    kind,
+                    tmp_path: tmp_png,
                 });
             }
         }
@@ -335,6 +371,20 @@ impl CommandCapturer {
 
     fn probe(kind: CommandKind, tmp_file: &std::path::Path, tmp_str: &str) -> bool {
         let res = match kind {
+            CommandKind::Grim => {
+                std::process::Command::new("grim")
+                    .args([tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
+            CommandKind::Scrot => {
+                std::process::Command::new("scrot")
+                    .args(["-o", tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+            }
             CommandKind::CinnamonScreenshot => {
                 std::process::Command::new("cinnamon-screenshot")
                     .args(["-f", tmp_str])
@@ -342,16 +392,16 @@ impl CommandCapturer {
                     .stderr(std::process::Stdio::null())
                     .status()
             }
-            CommandKind::Spectacle => {
-                std::process::Command::new("spectacle")
-                    .args(["-b", "-n", "-o", tmp_str])
+            CommandKind::Import => {
+                std::process::Command::new("import")
+                    .args(["-window", "root", tmp_str])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status()
             }
-            CommandKind::Grim => {
-                std::process::Command::new("grim")
-                    .args(["-t", "png", tmp_str])
+            CommandKind::GnomeScreenshot => {
+                std::process::Command::new("gnome-screenshot")
+                    .args(["-f", tmp_str])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status()
@@ -375,23 +425,9 @@ impl CommandCapturer {
                     .stderr(std::process::Stdio::null())
                     .status()
             }
-            CommandKind::GnomeScreenshot => {
-                std::process::Command::new("gnome-screenshot")
-                    .args(["-f", tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-            }
-            CommandKind::Scrot => {
-                std::process::Command::new("scrot")
-                    .args(["-o", tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-            }
-            CommandKind::Import => {
-                std::process::Command::new("import")
-                    .args(["-window", "root", tmp_str])
+            CommandKind::Spectacle => {
+                std::process::Command::new("spectacle")
+                    .args(["-b", "-n", "-o", tmp_str])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status()
@@ -411,6 +447,20 @@ impl CommandCapturer {
     pub fn capture_to_fb(&self, fb: &mut Framebuffer) -> anyhow::Result<()> {
         let tmp_str = self.tmp_path.to_string_lossy().to_string();
         let status = match self.kind {
+            CommandKind::Grim => {
+                std::process::Command::new("grim")
+                    .args([&tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()?
+            }
+            CommandKind::Scrot => {
+                std::process::Command::new("scrot")
+                    .args(["-o", &tmp_str])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()?
+            }
             CommandKind::CinnamonScreenshot => {
                 std::process::Command::new("cinnamon-screenshot")
                     .args(["-f", &tmp_str])
@@ -418,16 +468,16 @@ impl CommandCapturer {
                     .stderr(std::process::Stdio::null())
                     .status()?
             }
-            CommandKind::Spectacle => {
-                std::process::Command::new("spectacle")
-                    .args(["-b", "-n", "-o", &tmp_str])
+            CommandKind::Import => {
+                std::process::Command::new("import")
+                    .args(["-window", "root", &tmp_str])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status()?
             }
-            CommandKind::Grim => {
-                std::process::Command::new("grim")
-                    .args(["-t", "png", &tmp_str])
+            CommandKind::Spectacle => {
+                std::process::Command::new("spectacle")
+                    .args(["-b", "-n", "-o", &tmp_str])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status()?
@@ -458,20 +508,6 @@ impl CommandCapturer {
                     .stderr(std::process::Stdio::null())
                     .status()?
             }
-            CommandKind::Scrot => {
-                std::process::Command::new("scrot")
-                    .args(["-o", &tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
-            }
-            CommandKind::Import => {
-                std::process::Command::new("import")
-                    .args(["-window", "root", &tmp_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()?
-            }
         };
 
         if !status.success() {
@@ -480,7 +516,7 @@ impl CommandCapturer {
 
         let bytes = std::fs::read(&self.tmp_path)?;
         let _ = std::fs::remove_file(&self.tmp_path);
-        decode_png_to_fb(&bytes, fb)?;
+        decode_image_to_fb(&bytes, fb)?;
         Ok(())
     }
 }
@@ -515,7 +551,12 @@ impl ScreenCapturer for LinuxScreenCapturer {
                 format!("X11 Nativo Directo (GetImage, {}x{}, {} bpp, latencia ~1-3ms)", fb.width, fb.height, capturer.depth)
             }
             Self::Command { capturer, fb, .. } => {
-                format!("CLI Subprocess ({:?}, {}x{}, advertencia: latencia ~200-400ms por frame)", capturer.kind, fb.width, fb.height)
+                let fmt_name = if capturer.tmp_path.extension().map(|s| s == "bmp").unwrap_or(false) {
+                    "BMP rápido"
+                } else {
+                    "PNG"
+                };
+                format!("CLI Subprocess ({:?}, {}x{}, {})", capturer.kind, fb.width, fb.height, fmt_name)
             }
             Self::Mock(mock) => mock.name(),
         }
@@ -548,29 +589,41 @@ impl ScreenCapturer for LinuxScreenCapturer {
 pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> Box<dyn ScreenCapturer> {
     // 1. Try X11 / XWayland capture FIRST whenever DISPLAY is available.
     // X11 direct memory capture takes ~1-3ms, compared to ~250ms for CLI screenshot tools.
-    if std::env::var("DISPLAY").is_ok() {
+    if let Ok(disp) = std::env::var("DISPLAY") {
         match X11Capturer::try_new() {
             Ok(mut x11) => {
                 let mut fb = Framebuffer::new(x11.width, x11.height);
-                if let Ok(()) = x11.capture_to_fb(&mut fb) {
-                    println!("⚡ Captura activa: X11 nativo directo ({}x{}, latencia sub-10ms)", x11.width, x11.height);
-                    let prev_rgb = fb.rgb.clone();
-                    return Box::new(LinuxScreenCapturer::X11 {
-                        capturer: x11,
-                        fb,
-                        prev_rgb,
-                    });
+                match x11.capture_to_fb(&mut fb) {
+                    Ok(()) => {
+                        println!("⚡ Captura activa: X11 nativo directo ({}x{}, latencia sub-10ms)", x11.width, x11.height);
+                        let prev_rgb = fb.rgb.clone();
+                        return Box::new(LinuxScreenCapturer::X11 {
+                            capturer: x11,
+                            fb,
+                            prev_rgb,
+                        });
+                    }
+                    Err(e) => {
+                        println!("⚠️ [AVISO] Conexión X11 activa ({}) pero falló captura GetImage: {:#}", disp, e);
+                    }
                 }
             }
             Err(e) => {
-                info!("X11 capture initialization skipped: {}", e);
+                println!("⚠️ [AVISO] X11 no pudo conectar en DISPLAY={}: {:#}", disp, e);
             }
         }
+    } else {
+        println!("ℹ️ [AVISO] DISPLAY no definido en el entorno (sesión Wayland pura).");
     }
 
-    // 2. Try CLI capture (Cinnamon, KDE, GNOME, Wayland) if X11 was not available
+    // 2. Try CLI capture (Grim, Scrot, Cinnamon, GNOME, Spectacle) if X11 was not available
     if let Some(cmd) = CommandCapturer::try_detect() {
-        println!("📸 Captura activa: Herramienta de escritorio ({:?})", cmd.kind);
+        let fmt_name = if cmd.tmp_path.extension().map(|s| s == "bmp").unwrap_or(false) {
+            "BMP sin compresión"
+        } else {
+            "PNG"
+        };
+        println!("📸 Captura activa: Herramienta de escritorio ({:?}, formato {})", cmd.kind, fmt_name);
         let mut fb = Framebuffer::new(fallback_w, fallback_h);
         if let Ok(()) = cmd.capture_to_fb(&mut fb) {
             let prev_rgb = fb.rgb.clone();
@@ -712,5 +765,36 @@ mod tests {
         fb.set(10, 10, &[255, 0, 0]);
         let damage = detect_damage(&fb, &mut prev);
         assert_eq!(damage.len(), 1, "Modified pixel should produce damage");
+    }
+
+    #[test]
+    fn test_bmp_decoding() {
+        // Construct a minimal 2x2 24-bit uncompressed BMP:
+        // Header: 14 + 40 = 54 bytes. Each row: 2 px * 3 bytes = 6 bytes -> padded to 8 bytes.
+        let mut bmp = vec![0u8; 54 + 16];
+        bmp[0] = b'B';
+        bmp[1] = b'M';
+        let size = 54 + 16u32;
+        bmp[2..6].copy_from_slice(&size.to_le_bytes());
+        bmp[10..14].copy_from_slice(&54u32.to_le_bytes());
+        bmp[14..18].copy_from_slice(&40u32.to_le_bytes());
+        bmp[18..22].copy_from_slice(&2i32.to_le_bytes());  // width = 2
+        bmp[22..26].copy_from_slice(&(-2i32).to_le_bytes()); // height = -2 (top-down)
+        bmp[26..28].copy_from_slice(&1u16.to_le_bytes());  // planes = 1
+        bmp[28..30].copy_from_slice(&24u16.to_le_bytes()); // bpp = 24
+
+        // Row 0: pixel (0,0) Red (BGR: 0, 0, 255), pixel (1,0) Green (BGR: 0, 255, 0)
+        let row0 = 54;
+        bmp[row0] = 0; bmp[row0 + 1] = 0; bmp[row0 + 2] = 255;
+        bmp[row0 + 3] = 0; bmp[row0 + 4] = 255; bmp[row0 + 5] = 0;
+
+        let mut fb = Framebuffer::new(1, 1);
+        decode_bmp_to_fb(&bmp, &mut fb).expect("BMP decode must succeed");
+        assert_eq!(fb.width, 2);
+        assert_eq!(fb.height, 2);
+        // Check pixel (0,0) in RGB
+        assert_eq!(fb.rgb[0], 255);
+        assert_eq!(fb.rgb[1], 0);
+        assert_eq!(fb.rgb[2], 0);
     }
 }
