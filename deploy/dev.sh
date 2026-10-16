@@ -5,10 +5,12 @@
 #      SSO=1 deploy/dev.sh    -> además Keycloak (deploy/keycloak.sh) para el login SSO
 #      PG=1 deploy/dev.sh     -> base PostgreSQL (deploy/postgres.sh) en vez de SQLite
 #      S3=1 deploy/dev.sh     -> grabaciones terminadas en MinIO (deploy/minio.sh)
+#      LISTEN=127.0.0.1:8089 deploy/dev.sh -> otra dirección para el gateway
 #      deploy/dev.sh stop
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RUN=$ROOT/.dev
+LISTEN=${LISTEN:-127.0.0.1:8088}
 GW=$ROOT/gateway/bin/duckjump-gw
 
 stop() {
@@ -113,6 +115,6 @@ q "UPDATE config_connections SET host_key = NULL WHERE name = 'sshd-local'" >/de
 # -agent-listen en 0.0.0.0: los contenedores llegan al host por host.containers.internal.
 # -trust-on-first-use: los contenedores de prueba cambian de clave en cada arranque;
 # en producción las claves nuevas esperan la aprobación de un admin.
-"$GW" serve ${DEV:+-dev} -trust-on-first-use -listen 127.0.0.1:8088 -agent-listen 0.0.0.0:18443 -recordings "$RUN/rec" -files "$RUN/files" > "$RUN/gw.log" 2>&1 & echo $! >> "$RUN/pids"
+"$GW" serve ${DEV:+-dev} -trust-on-first-use -listen "$LISTEN" -agent-listen 0.0.0.0:18443 -recordings "$RUN/rec" -files "$RUN/files" > "$RUN/gw.log" 2>&1 & echo $! >> "$RUN/pids"
 sleep 3
-echo "listo: http://127.0.0.1:8088   usuario admin / duckjump-admin-123   (logs y grabaciones en $RUN)"
+echo "listo: http://$LISTEN   usuario admin / duckjump-admin-123   (logs y grabaciones en $RUN)"
