@@ -72,7 +72,7 @@ fn print_gone() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(duckjump_assist::DEFAULT_LOG_FILTER)))
         .init();
     let args = Args::parse();
     let fallback_code = args.code.clone().or_else(|| args.totp_secret.clone());

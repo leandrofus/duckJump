@@ -236,7 +236,7 @@ async fn stop_session(state: State<'_, AppState>) -> CmdResult<()> {
 
 fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(duckjump_assist::DEFAULT_LOG_FILTER)))
         .init();
 
     tauri::Builder::default()
