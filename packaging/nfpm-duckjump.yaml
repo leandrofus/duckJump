@@ -1,0 +1,49 @@
+# nfpm config: built by packaging/build.sh (make packages)
+name: duckjump
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+section: admin
+priority: optional
+maintainer: ${MAINTAINER}
+description: |
+  DuckJump access bastion: web access to SSH, RDP and VNC hosts with a
+  credential vault, access grants, session recording and an audit trail.
+  Includes the gateway (web UI and API) and the paltad session daemon.
+vendor: DuckJump
+license: Proprietary
+homepage: https://github.com/leandrofus/palta
+
+overrides:
+  rpm:
+    depends: [zlib, util-linux, shadow-utils]
+  deb:
+    depends: [zlib1g, util-linux, passwd]
+
+contents:
+  - src: ./dist/pkg/palta-gw
+    dst: /usr/libexec/duckjump/palta-gw
+    file_info: { mode: 0755 }
+  - src: ./dist/pkg/paltad
+    dst: /usr/libexec/duckjump/paltad
+    file_info: { mode: 0755 }
+  - src: ./dist/pkg/paltad-rdp
+    dst: /usr/libexec/duckjump/paltad-rdp
+    file_info: { mode: 0755 }
+  - src: ./packaging/duckjump-cli
+    dst: /usr/bin/duckjump
+    file_info: { mode: 0755 }
+  - src: ./packaging/systemd/duckjump.service
+    dst: /usr/lib/systemd/system/duckjump.service
+  - src: ./packaging/systemd/duckjump-paltad.service
+    dst: /usr/lib/systemd/system/duckjump-paltad.service
+  - src: ./packaging/duckjump.env
+    dst: /etc/duckjump/duckjump.env
+    type: config|noreplace
+    file_info: { mode: 0644 }
+
+scripts:
+  postinstall: ./packaging/scripts/postinstall.sh
+  preremove: ./packaging/scripts/preremove.sh
+  postremove: ./packaging/scripts/postremove.sh

@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 250">
+  <defs>
+    <linearGradient id="dj-body" gradientUnits="userSpaceOnUse" x1="0" y1="24" x2="0" y2="182">
+      <stop offset="0" stop-color="#FFD84A"/>
+      <stop offset="1" stop-color="#F7B31B"/>
+    </linearGradient>
+    <linearGradient id="dj-wing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFE06B"/>
+      <stop offset="1" stop-color="#F6B21E"/>
+    </linearGradient>
+    <linearGradient id="dj-trail" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#1F5FA8" stop-opacity="0"/>
+      <stop offset="0.35" stop-color="#2B7BC4"/>
+      <stop offset="0.75" stop-color="#F2A93B"/>
+      <stop offset="1" stop-color="#E98A2B"/>
+    </linearGradient>
+    <linearGradient id="dj-check" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#3FB8D6"/>
+      <stop offset="1" stop-color="#2A86C8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- motion trail from the ring up to the check -->
+  <path d="M132 214 C 168 206, 196 172, 206 122" fill="none" stroke="url(#dj-trail)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M146 222 C 182 212, 210 180, 222 134" fill="none" stroke="url(#dj-trail)" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- check mark -->
+  <path d="M184 84 L206 116 L276 44" fill="none" stroke="#16325C" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M184 84 L206 116 L276 44" fill="none" stroke="url(#dj-check)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- sparkle -->
+  <path d="M222 14 Q224 30 238 32 Q224 34 222 50 Q220 34 206 32 Q220 30 222 14 Z" fill="#3FB8D6"/>
+
+  <!-- splash dots -->
+  <g fill="#3FB8D6">
+    <circle cx="236" cy="96" r="3"/><circle cx="246" cy="112" r="2"/><circle cx="230" cy="150" r="3"/>
+    <circle cx="20" cy="168" r="3"/><circle cx="12" cy="182" r="2"/>
+  </g>
+  <g fill="#F2A93B"><circle cx="242" cy="132" r="2.5"/><circle cx="28" cy="190" r="2.5"/></g>
+  <path d="M22 150 L36 140 M16 160 L28 154" stroke="#3FB8D6" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- life ring -->
+  <ellipse cx="82" cy="230" rx="60" ry="10" fill="#16325C" opacity="0.08"/>
+  <ellipse cx="82" cy="220" rx="54" ry="22" fill="#FFFFFF" stroke="#16325C" stroke-width="5"/>
+  <path d="M40 210 A54 22 0 0 1 62 200 L70 210 A30 10 0 0 0 58 214 Z" fill="#1F5FA8"/>
+  <path d="M104 200 A54 22 0 0 1 126 212 L108 218 A30 10 0 0 0 98 211 Z" fill="#1F5FA8"/>
+  <path d="M60 239 A54 22 0 0 0 104 240 L98 229 A30 10 0 0 1 66 229 Z" fill="#1F5FA8"/>
+  <ellipse cx="82" cy="219" rx="28" ry="9" fill="#EAF2FB" stroke="#16325C" stroke-width="4"/>
+
+  <!-- far wing: scalloped feathers fanning up and back -->
+  <g stroke="#E39A10" stroke-width="3" stroke-linejoin="round" fill="url(#dj-wing)">
+    <path d="M108 104 C 92 90, 70 70, 58 40 C 54 30, 62 22, 70 30 C 74 18, 86 16, 90 28 C 94 16, 108 18, 108 32 C 116 24, 128 30, 124 44 C 122 64, 118 84, 116 100 Z"/>
+    <path d="M104 112 C 80 108, 52 96, 30 76 C 22 70, 26 60, 36 62 C 30 52, 38 44, 48 50 C 46 40, 58 36, 64 46 C 72 58, 88 74, 106 92 Z"/>
+  </g>
+  <path d="M84 40 C 92 60, 102 78, 110 96 M60 50 C 76 70, 92 86, 104 100 M40 64 C 60 80, 82 92, 102 104" stroke="#E39A10" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.8"/>
+
+  <!-- feet -->
+  <g fill="#F07C1A" stroke="#C85F0C" stroke-width="2.5" stroke-linejoin="round">
+    <path d="M80 170 L72 196 L58 205 L78 205 L88 199 L92 172 Z"/>
+    <path d="M106 170 L104 194 L94 205 L112 203 L118 193 L118 168 Z"/>
+  </g>
+
+  <!-- body + head as one silhouette: outlines first, fills on top -->
+  <g stroke="#E39A10" stroke-width="7" stroke-linejoin="round" fill="#E39A10">
+    <path d="M58 136 C 52 120, 46 108, 36 98 C 52 100, 62 104, 70 108 C 82 96, 102 92, 124 96 C 136 98, 142 96, 146 90 C 166 92, 176 110, 174 132 C 170 162, 140 180, 104 180 C 78 180, 62 162, 58 136 Z"/>
+    <circle cx="150" cy="58" r="31"/>
+    <path d="M128 70 C 124 82, 128 92, 140 100 L 170 104 C 176 90, 176 76, 172 66 Z"/>
+  </g>
+  <g fill="url(#dj-body)">
+    <path d="M58 136 C 52 120, 46 108, 36 98 C 52 100, 62 104, 70 108 C 82 96, 102 92, 124 96 C 136 98, 142 96, 146 90 C 166 92, 176 110, 174 132 C 170 162, 140 180, 104 180 C 78 180, 62 162, 58 136 Z"/>
+    <circle cx="150" cy="58" r="31"/>
+    <path d="M128 70 C 124 82, 128 92, 140 100 L 170 104 C 176 90, 176 76, 172 66 Z"/>
+  </g>
+  <!-- belly highlight -->
+  <path d="M150 120 C 156 140, 146 160, 126 170" stroke="#FFE88A" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.7"/>
+  <!-- near wing -->
+  <path d="M78 122 C 96 106, 126 106, 140 122 C 136 146, 112 160, 88 156 C 98 146, 92 134, 78 122 Z" fill="#FFD23F" stroke="#E39A10" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M98 128 C 110 126, 122 128, 130 134 M94 140 C 106 140, 116 142, 124 146" stroke="#E39A10" stroke-width="2" fill="none" stroke-linecap="round"/>
+
+  <!-- beak -->
+  <path d="M174 58 C 188 48, 204 50, 210 57 C 204 64, 190 66, 180 72 C 184 66, 180 62, 174 58 Z" fill="#F57C1A" stroke="#C85F0C" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M178 62 C 190 61, 200 60, 208 58" stroke="#C85F0C" stroke-width="1.5" fill="none"/>
+  <!-- eye -->
+  <circle cx="160" cy="49" r="5.5" fill="#16325C"/>
+  <circle cx="162" cy="47" r="1.8" fill="#FFFFFF"/>
+  <!-- cheek -->
+  <ellipse cx="162" cy="68" rx="6" ry="3" fill="#F7A43A" opacity="0.5"/>
+</svg>

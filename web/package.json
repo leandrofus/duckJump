@@ -1,0 +1,29 @@
+{
+  "name": "palta-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "gen-api": "openapi-typescript ../gateway/openapi/openapi.yaml -o src/lib/api-types.ts"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "asciinema-player": "3.10.0",
+    "lucide-react": "^1.55.0",
+    "react": "19",
+    "react-dom": "19",
+    "uqr": "0.1.2"
+  },
+  "devDependencies": {
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "@vitejs/plugin-react": "^6.1.2",
+    "openapi-typescript": "7.9.1",
+    "typescript": "5.9.3",
+    "vite": "^8.3.4"
+  }
+}

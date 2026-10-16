@@ -1,0 +1,30 @@
+[Unit]
+Description=DuckJump edge agent (outbound tunnel to the gateway)
+Documentation=https://github.com/leandrofus/palta
+After=network-online.target
+Wants=network-online.target
+# Stays idle until it is configured (see /etc/duckjump-agent/agent.env).
+ConditionFileNotEmpty=/etc/duckjump-agent/token
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/duckjump-agent/agent.env
+LoadCredential=agent-token:/etc/duckjump-agent/token
+ExecStart=/usr/bin/palta-agent
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

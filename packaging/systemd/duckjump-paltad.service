@@ -1,0 +1,37 @@
+[Unit]
+Description=DuckJump session daemon (paltad: SSH, VNC, RDP)
+Documentation=https://github.com/leandrofus/palta
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=duckjump
+Group=duckjump
+# Loopback only: the gateway hands paltad live credentials.
+Environment=PALTAD_LISTEN=127.0.0.1:4823
+Environment=PALTAD_RECORDINGS=/var/lib/duckjump/recordings
+Environment=PALTAD_RDP_WORKER=/usr/libexec/duckjump/paltad-rdp
+EnvironmentFile=-/etc/duckjump/duckjump.env
+# Shared secret with the gateway (root-only file, read through systemd).
+LoadCredential=paltad-token:/etc/duckjump/paltad.token
+ExecStart=/usr/libexec/duckjump/paltad
+Restart=on-failure
+RestartSec=3
+StateDirectory=duckjump duckjump/recordings
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

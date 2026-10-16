@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- PoC viewer: no auth, no styling. Requires the gateway in -dev mode. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>palta poc</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+</head>
+<body>
+<select id="conns"></select>
+<button id="go">connect</button>
+<span id="status"></span>
+<div id="term" style="height:90vh"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+
+fetch("/api/v1/portal/connections").then(r => r.json()).then(list => {
+  for (const c of list) $("conns").add(new Option(`${c.name} (${c.protocol})`, c.id));
+});
+
+$("go").onclick = () => {
+  $("term").innerHTML = "";
+  const term = new Terminal({ cursorBlink: true });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open($("term"));
+  fit.fit();
+
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/api/v1/connections/${$("conns").value}/session?cols=${term.cols}&rows=${term.rows}`);
+  ws.binaryType = "arraybuffer";
+  const enc = new TextEncoder();
+
+  ws.onmessage = (ev) => {
+    if (typeof ev.data !== "string") return term.write(new Uint8Array(ev.data));
+    const msg = JSON.parse(ev.data);
+    $("status").textContent = msg.type + (msg.message ? ": " + msg.message : "");
+  };
+  ws.onclose = (ev) => { $("status").textContent += " [closed " + ev.code + "]"; };
+  term.onData((d) => ws.readyState === 1 && ws.send(enc.encode(d)));
+  term.onResize(({ cols, rows }) => ws.readyState === 1 && ws.send(JSON.stringify({ type: "resize", cols, rows })));
+  window.onresize = () => fit.fit();
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+#!/bin/sh
+# duckjump: administration CLI (users, credentials, connections, grants).
+# Runs palta-gw as the service user against the service's database, e.g.:
+#   sudo duckjump user -name ana -password '...' -role admin
+set -e
+if [ "$(id -u)" != 0 ]; then
+	echo "run it with sudo" >&2
+	exit 1
+fi
+case "${1:-}" in
+serve) echo "the gateway runs as a service: systemctl status duckjump" >&2; exit 2 ;;
+esac
+PALTA_DB=/var/lib/duckjump/palta.db
+PALTA_MASTER_KEY=$(cat /etc/duckjump/master.key)
+export PALTA_DB PALTA_MASTER_KEY
+cd /var/lib/duckjump
+exec runuser -u duckjump -- /usr/libexec/duckjump/palta-gw "$@"

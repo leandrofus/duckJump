@@ -1,0 +1,9 @@
+# dev stack data (database, master key, recordings, logs)
+.dev/
+# build outputs
+target/
+gateway/bin/
+/dist/
+web/node_modules/
+web/dist/
+*.db

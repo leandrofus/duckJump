@@ -1,0 +1,31 @@
+# nfpm config: built by packaging/build.sh (make packages)
+name: duckjump-agent
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+section: admin
+priority: optional
+maintainer: ${MAINTAINER}
+description: |
+  DuckJump edge agent: runs inside a closed network and keeps an outbound
+  tunnel to the DuckJump gateway, reaching local hosts within its allow list.
+vendor: DuckJump
+license: Proprietary
+homepage: https://github.com/leandrofus/palta
+
+contents:
+  - src: ./dist/pkg/palta-agent
+    dst: /usr/bin/palta-agent
+    file_info: { mode: 0755 }
+  - src: ./packaging/systemd/duckjump-agent.service
+    dst: /usr/lib/systemd/system/duckjump-agent.service
+  - src: ./packaging/agent.env
+    dst: /etc/duckjump-agent/agent.env
+    type: config|noreplace
+    file_info: { mode: 0640 }
+
+scripts:
+  postinstall: ./packaging/scripts/agent-postinstall.sh
+  preremove: ./packaging/scripts/agent-preremove.sh
+  postremove: ./packaging/scripts/agent-postremove.sh

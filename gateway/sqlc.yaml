@@ -1,0 +1,16 @@
+version: "2"
+sql:
+  - engine: sqlite
+    schema: internal/store/migrations
+    queries: internal/store/queries
+    gen:
+      go:
+        package: db
+        out: internal/store/db
+        emit_empty_slices: true
+        rename:
+          actor_ip: ActorIP
+          client_ip: ClientIP
+          ip: IP
+          totp_sealed: TOTPSealed
+          totp_enabled: TOTPEnabled

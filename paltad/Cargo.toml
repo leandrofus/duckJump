@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = ["crates/palta-proto", "crates/palta-gfx", "crates/paltad"]
+# The RDP worker is its own workspace: IronRDP and russh pin incompatible
+# versions of curve25519-dalek, and a separate process isolates RDP anyway.
+exclude = ["rdp"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+russh = "0.64"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+flate2 = "1"
+des = "0.8"
+png = "0.18"
+jpeg-encoder = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
