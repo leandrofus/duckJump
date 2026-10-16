@@ -5,6 +5,7 @@
 pub mod capture;
 pub mod input;
 pub mod session;
+pub mod sysenv;
 pub mod totp;
 pub mod wayland;
 
