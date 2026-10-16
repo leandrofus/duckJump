@@ -7,6 +7,9 @@ use x11rb::rust_connection::RustConnection;
 
 /// Trait abstracting OS-level display capture.
 pub trait ScreenCapturer: Send {
+    /// Human-readable name describing the active capture engine and resolution.
+    fn name(&self) -> String;
+
     /// Captures the current screen and updates the internal framebuffer.
     /// Returns the list of damage events (areas changed).
     fn capture(&mut self) -> anyhow::Result<Vec<Damage>>;
@@ -506,6 +509,18 @@ pub enum LinuxScreenCapturer {
 }
 
 impl ScreenCapturer for LinuxScreenCapturer {
+    fn name(&self) -> String {
+        match self {
+            Self::X11 { capturer, fb, .. } => {
+                format!("X11 Nativo Directo (GetImage, {}x{}, {} bpp, latencia ~1-3ms)", fb.width, fb.height, capturer.depth)
+            }
+            Self::Command { capturer, fb, .. } => {
+                format!("CLI Subprocess ({:?}, {}x{}, advertencia: latencia ~200-400ms por frame)", capturer.kind, fb.width, fb.height)
+            }
+            Self::Mock(mock) => mock.name(),
+        }
+    }
+
     fn capture(&mut self) -> anyhow::Result<Vec<Damage>> {
         match self {
             Self::X11 { capturer, fb, prev_rgb } => {
@@ -637,6 +652,10 @@ impl MockCapturer {
 }
 
 impl ScreenCapturer for MockCapturer {
+    fn name(&self) -> String {
+        format!("Mock Headless Simulado ({}x{})", self.fb.width, self.fb.height)
+    }
+
     fn capture(&mut self) -> anyhow::Result<Vec<Damage>> {
         self.frame_counter += 1;
         let mut damage = Vec::new();

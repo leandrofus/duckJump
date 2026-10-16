@@ -215,12 +215,16 @@ export function SupportViewerModal({ session, onClose }: { session: SupportSessi
   const wsRef = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [stats, setStats] = useState<{ fps: number; frame: number } | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const painter = new Painter(canvas)
     painter.onCursor = (css) => (canvas.style.cursor = css)
+
+    let frameCount = 0
+    let lastTime = performance.now()
 
     const ws = new WebSocket(wsURL(`/support/sessions/${session.id}/ws`))
     ws.binaryType = 'arraybuffer'
@@ -240,7 +244,17 @@ export function SupportViewerModal({ session, onClose }: { session: SupportSessi
           canvas.width = op.w
           canvas.height = op.h
         }
-        painter.push(op, op.op === 'sync' ? () => ws.readyState === 1 && ws.send(ackEvent(op.frame)) : undefined)
+        painter.push(op, op.op === 'sync' ? () => {
+          if (ws.readyState === 1) ws.send(ackEvent(op.frame))
+          frameCount++
+          const now = performance.now()
+          if (now - lastTime >= 1000) {
+            const fps = Math.round((frameCount * 1000) / (now - lastTime))
+            setStats({ fps, frame: op.frame })
+            frameCount = 0
+            lastTime = now
+          }
+        } : undefined)
       }
     }
 
@@ -357,6 +371,11 @@ export function SupportViewerModal({ session, onClose }: { session: SupportSessi
             <Tag tone="ok"><CheckCircle2 size={11} /> {t('Live')}</Tag>
           ) : (
             <Tag tone="warn"><Clock size={11} /> {t('Connecting...')}</Tag>
+          )}
+          {stats && (
+            <Tag tone="accent">
+              <Monitor size={11} /> {stats.fps} FPS · #{stats.frame}
+            </Tag>
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use tracing::{info, warn};
@@ -197,14 +200,22 @@ async fn main() -> anyhow::Result<()> {
     let mut interval = tokio::time::interval(Duration::from_millis(16)); // Target up to 60 FPS (~16.6ms)
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    let acked_frame = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let acked_frame = Arc::new(AtomicU32::new(0));
     let acked_writer = acked_frame.clone();
     let acked_reader = acked_frame.clone();
+
+    let sent_timestamps = Arc::new(Mutex::new(HashMap::<u32, Instant>::new()));
+    let sent_ts_input = sent_timestamps.clone();
+    let sent_ts_capture = sent_timestamps.clone();
+
+    let last_rtt_us = Arc::new(AtomicU64::new(0));
+    let last_rtt_writer = last_rtt_us.clone();
+    let last_rtt_reader = last_rtt_us.clone();
 
     let mut input_ctrl = input::InputController::new();
     input_ctrl.set_enabled(true);
 
-    let verified = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let verified = Arc::new(AtomicBool::new(false));
     let verified_writer = verified.clone();
 
     // Dedicated Ctrl+C watcher that exits immediately
@@ -224,7 +235,7 @@ async fn main() -> anyhow::Result<()> {
                         let t = v.get("type").and_then(|s| s.as_str());
                         if t == Some("totp_verified") || t == Some("code_verified") {
                             info!("✅ ¡Código de verificación aceptado por el operador! Transmisión de pantalla activada.");
-                            verified_writer.store(true, std::sync::atomic::Ordering::Relaxed);
+                            verified_writer.store(true, Ordering::Relaxed);
                         }
                     }
                 }
@@ -251,7 +262,18 @@ async fn main() -> anyhow::Result<()> {
                         if let Some(input) = duckjump_proto::gfx::Input::decode(slice) {
                             match input {
                                 duckjump_proto::gfx::Input::Ack { frame } => {
-                                    acked_writer.store(frame, std::sync::atomic::Ordering::Release);
+                                    acked_writer.store(frame, Ordering::Release);
+                                    let mut map = sent_ts_input.lock().unwrap();
+                                    if let Some(sent_at) = map.remove(&frame) {
+                                        let rtt = sent_at.elapsed();
+                                        last_rtt_writer.store(rtt.as_micros() as u64, Ordering::Relaxed);
+                                        if frame <= 3 {
+                                            println!("⏱️ [TRACE] Frame #{} ACK recibido del visor! Latencia RTT: {:.1} ms", frame, rtt.as_secs_f64() * 1000.0);
+                                        }
+                                    }
+                                    if map.len() > 128 {
+                                        map.retain(|&f, _| frame.saturating_sub(f) < 120);
+                                    }
                                 }
                                 other => {
                                     input_ctrl.handle_remote_input(other);
@@ -270,12 +292,22 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Main capture loop (Adaptive up to 60 FPS)
+    // Main capture loop (Adaptive up to 60 FPS with real-time telemetry traces)
     println!("Presione Ctrl+C en cualquier momento para finalizar.");
     let mut capturer = capture::create_best_capturer(args.width, args.height);
+    println!("🔍 [TRACE] Motor de captura inicializado: {}", capturer.name());
+
     let mut sent_initial = false;
     let mut frame_counter: u32 = 0;
-    let mut last_send_time = std::time::Instant::now();
+    let mut last_send_time = Instant::now();
+
+    let mut stats_window_start = Instant::now();
+    let mut stats_frames = 0u32;
+    let mut stats_cap_total = Duration::ZERO;
+    let mut stats_enc_total = Duration::ZERO;
+    let mut stats_send_total = Duration::ZERO;
+    let mut stats_tiles_total = 0usize;
+    let mut stats_bytes_total = 0usize;
 
     'capture_loop: loop {
         tokio::select! {
@@ -292,11 +324,17 @@ async fn main() -> anyhow::Result<()> {
                 break 'capture_loop;
             }
             _ = interval.tick() => {
-                if verified.load(std::sync::atomic::Ordering::Relaxed) {
+                if verified.load(Ordering::Relaxed) {
                     if !sent_initial {
+                        let t_cap_start = Instant::now();
                         if let Ok(initial_tiles) = capturer.initial_frame() {
+                            let cap_dur = t_cap_start.elapsed();
+                            let t_send_start = Instant::now();
+                            let mut init_bytes = 0usize;
+                            let tile_cnt = initial_tiles.len();
                             for tile in initial_tiles {
                                 let bytes = tile.encode();
+                                init_bytes += bytes.len();
                                 if let Err(e) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(bytes.into())).await {
                                     info!("Error o cierre enviando frame inicial: {}", e);
                                     break 'capture_loop;
@@ -304,29 +342,45 @@ async fn main() -> anyhow::Result<()> {
                             }
                             frame_counter += 1;
                             let sync = duckjump_proto::gfx::Display::Sync { frame: frame_counter };
-                            if let Err(_) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(sync.encode().into())).await {
+                            let sync_bytes = sync.encode();
+                            init_bytes += sync_bytes.len();
+                            if let Err(_) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(sync_bytes.into())).await {
                                 break 'capture_loop;
                             }
                             if let Err(_) = disp_write.flush().await {
                                 break 'capture_loop;
                             }
+                            let send_dur = t_send_start.elapsed();
+                            sent_ts_capture.lock().unwrap().insert(frame_counter, Instant::now());
+                            println!(
+                                "⏱️ [TRACE] Frame inicial #{} enviado ({} tiles, {:.1} KB) | Captura: {:.1}ms | Red WS: {:.1}ms",
+                                frame_counter, tile_cnt, init_bytes as f64 / 1024.0, cap_dur.as_secs_f64() * 1000.0, send_dur.as_secs_f64() * 1000.0
+                            );
                             sent_initial = true;
-                            last_send_time = std::time::Instant::now();
+                            last_send_time = Instant::now();
                         }
                     } else {
                         // Adaptive low-latency rate control based on client render ACKs:
-                        // Only capture when the client has finished drawing the previous frame (in_flight == 0)
-                        // or if an ACK dropped after 100ms.
-                        let last_ack = acked_reader.load(std::sync::atomic::Ordering::Acquire);
+                        // Double-buffering: allow up to 2 frames in flight so pipelined 60 FPS is sustained
+                        // without waiting for full round trips, but capping maximum buffered lag at ~33ms.
+                        let last_ack = acked_reader.load(Ordering::Acquire);
                         let in_flight = frame_counter.saturating_sub(last_ack);
-                        let ack_timed_out = last_send_time.elapsed() > Duration::from_millis(100);
+                        let ack_timed_out = last_send_time.elapsed() > Duration::from_millis(120);
 
-                        if in_flight == 0 || ack_timed_out {
+                        if in_flight <= 1 || ack_timed_out {
+                            let t_cap_start = Instant::now();
                             if let Ok(damage) = capturer.capture() {
+                                let cap_dur = t_cap_start.elapsed();
                                 if !damage.is_empty() {
+                                    let t_enc_start = Instant::now();
                                     if let Ok(updates) = capturer.encode_damage(&damage) {
+                                        let enc_dur = t_enc_start.elapsed();
+                                        let t_send_start = Instant::now();
+                                        let mut frame_bytes = 0usize;
+                                        let tile_cnt = updates.len();
                                         for u in updates {
                                             let b = u.encode();
+                                            frame_bytes += b.len();
                                             if let Err(e) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(b.into())).await {
                                                 info!("Sesión cerrada por el servidor ({})", e);
                                                 break 'capture_loop;
@@ -334,16 +388,78 @@ async fn main() -> anyhow::Result<()> {
                                         }
                                         frame_counter += 1;
                                         let sync = duckjump_proto::gfx::Display::Sync { frame: frame_counter };
-                                        if let Err(_) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(sync.encode().into())).await {
+                                        let sync_b = sync.encode();
+                                        frame_bytes += sync_b.len();
+                                        if let Err(_) = disp_write.feed(tokio_tungstenite::tungstenite::Message::Binary(sync_b.into())).await {
                                             break 'capture_loop;
                                         }
                                         if let Err(_) = disp_write.flush().await {
                                             break 'capture_loop;
                                         }
-                                        last_send_time = std::time::Instant::now();
+                                        let send_dur = t_send_start.elapsed();
+                                        last_send_time = Instant::now();
+                                        sent_ts_capture.lock().unwrap().insert(frame_counter, Instant::now());
+
+                                        if frame_counter <= 3 {
+                                            println!(
+                                                "⏱️ [TRACE] Frame #{} enviado | Cap: {:.1}ms | Enc: {:.1}ms ({} tiles, {:.1} KB) | Red: {:.1}ms",
+                                                frame_counter,
+                                                cap_dur.as_secs_f64() * 1000.0,
+                                                enc_dur.as_secs_f64() * 1000.0,
+                                                tile_cnt,
+                                                frame_bytes as f64 / 1024.0,
+                                                send_dur.as_secs_f64() * 1000.0,
+                                            );
+                                        }
+
+                                        stats_frames += 1;
+                                        stats_cap_total += cap_dur;
+                                        stats_enc_total += enc_dur;
+                                        stats_send_total += send_dur;
+                                        stats_tiles_total += tile_cnt;
+                                        stats_bytes_total += frame_bytes;
                                     }
                                 }
                             }
+                        }
+
+                        // Periodic 1-second telemetry report:
+                        let elapsed = stats_window_start.elapsed();
+                        if elapsed >= Duration::from_millis(1000) {
+                            if stats_frames > 0 {
+                                let fps = stats_frames as f64 / elapsed.as_secs_f64();
+                                let avg_cap = (stats_cap_total.as_secs_f64() * 1000.0) / stats_frames as f64;
+                                let avg_enc = (stats_enc_total.as_secs_f64() * 1000.0) / stats_frames as f64;
+                                let avg_send = (stats_send_total.as_secs_f64() * 1000.0) / stats_frames as f64;
+                                let avg_tiles = stats_tiles_total as f64 / stats_frames as f64;
+                                let kb_sec = (stats_bytes_total as f64 / 1024.0) / elapsed.as_secs_f64();
+                                let rtt_us = last_rtt_reader.load(Ordering::Relaxed);
+                                let rtt_str = if rtt_us > 0 {
+                                    format!("{:.1}ms", rtt_us as f64 / 1000.0)
+                                } else {
+                                    "esperando ACK".to_string()
+                                };
+                                let current_in_flight = frame_counter.saturating_sub(acked_reader.load(Ordering::Acquire));
+
+                                println!(
+                                    "⏱️ [TRACE] FPS: {:>4.1} | RTT Visor: {:>7} | Cap: {:>4.1}ms | Enc: {:>4.1}ms ({:>4.1} tiles/f, {:>5.0} KB/s) | Red: {:>4.1}ms | En vuelo: {}",
+                                    fps, rtt_str, avg_cap, avg_enc, avg_tiles, kb_sec, avg_send, current_in_flight
+                                );
+
+                                if avg_cap > 50.0 {
+                                    println!("⚠️ [TRACE ALERTA] Captura lenta ({:.1}ms). Puede deberse a herramienta CLI en vez de X11 directo.", avg_cap);
+                                }
+                                if rtt_us > 400_000 {
+                                    println!("⚠️ [TRACE ALERTA] RTT elevado ({:.1}ms). El visor o la red están acumulando retraso.", rtt_us as f64 / 1000.0);
+                                }
+                            }
+                            stats_window_start = Instant::now();
+                            stats_frames = 0;
+                            stats_cap_total = Duration::ZERO;
+                            stats_enc_total = Duration::ZERO;
+                            stats_send_total = Duration::ZERO;
+                            stats_tiles_total = 0;
+                            stats_bytes_total = 0;
                         }
                     }
                 }
