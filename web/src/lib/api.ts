@@ -21,6 +21,9 @@ export type AccessEntry = Schemas['AccessEntry']
 export type Me = Schemas['Me']
 export type TrayFile = Schemas['TrayFile']
 export type HostListing = Schemas['HostListing']
+export type AccessRequest = Schemas['AccessRequest']
+export type AccessRequestTargets = Schemas['AccessRequestTargets']
+export type CreateAccessRequest = Schemas['CreateAccessRequest']
 
 export class ApiError extends Error {
   status: number

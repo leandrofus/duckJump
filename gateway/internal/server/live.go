@@ -2,14 +2,18 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
@@ -28,10 +32,353 @@ const SuperviseInterval = 10 * time.Second
 // lost (its gateway stopped) and closed by whichever gateway notices.
 const staleAfter = 3 * SuperviseInterval
 
+type wsMessage struct {
+	msgType websocket.MessageType
+	data    []byte
+}
+
+type liveParticipant struct {
+	id         string // random client participant id
+	userID     string
+	username   string
+	isOwner    bool
+	ws         *websocket.Conn
+	sendCh     chan wsMessage
+	closedOnce sync.Once
+}
+
+func (p *liveParticipant) send(msgType websocket.MessageType, data []byte) {
+	select {
+	case p.sendCh <- wsMessage{msgType: msgType, data: data}:
+	default:
+	}
+}
+
+func (p *liveParticipant) close() {
+	p.closedOnce.Do(func() {
+		close(p.sendCh)
+	})
+}
+
+type shareTokenInfo struct {
+	token     string
+	createdAt time.Time
+	createdBy string
+}
+
+type terminalBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func newTerminalBuffer(max int) *terminalBuffer {
+	if max <= 0 {
+		max = 128 * 1024
+	}
+	return &terminalBuffer{buf: make([]byte, 0, 4096), max: max}
+}
+
+func (tb *terminalBuffer) Write(p []byte) {
+	if tb == nil || len(p) == 0 {
+		return
+	}
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	if len(p) >= tb.max {
+		tb.buf = append(tb.buf[:0], p[len(p)-tb.max:]...)
+		return
+	}
+	if len(tb.buf)+len(p) > tb.max {
+		overflow := (len(tb.buf) + len(p)) - tb.max
+		copy(tb.buf, tb.buf[overflow:])
+		tb.buf = tb.buf[:len(tb.buf)-overflow]
+	}
+	tb.buf = append(tb.buf, p...)
+}
+
+func (tb *terminalBuffer) Bytes() []byte {
+	if tb == nil {
+		return nil
+	}
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	out := make([]byte, len(tb.buf))
+	copy(out, tb.buf)
+	return out
+}
+
 type liveSession struct {
 	id, userID, connID string
+	username           string
+	conn               db.ConfigConnection
+	siteName           string
 	notify             func(code, message string) // tells the client why, before the tunnel closes
 	cancel             context.CancelCauseFunc
+
+	mu             sync.RWMutex
+	pd             net.Conn
+	participants   map[string]*liveParticipant
+	controllerID   string // participant ID currently having input control
+	controllerName string
+	shareTokens    map[string]shareTokenInfo
+	sshBuffer      *terminalBuffer
+}
+
+func (ls *liveSession) addParticipant(p *liveParticipant) {
+	ls.mu.Lock()
+	if ls.participants == nil {
+		ls.participants = make(map[string]*liveParticipant)
+	}
+	ls.participants[p.id] = p
+	if ls.controllerID == "" {
+		ls.controllerID = p.id
+		ls.controllerName = p.username
+	}
+	count := len(ls.participants)
+	ls.mu.Unlock()
+	if count > 1 {
+		ls.broadcastPresence()
+	}
+}
+
+func (ls *liveSession) removeParticipant(id string) int {
+	ls.mu.Lock()
+	p, ok := ls.participants[id]
+	if !ok {
+		count := len(ls.participants)
+		ls.mu.Unlock()
+		return count
+	}
+	delete(ls.participants, id)
+	p.close()
+
+	// If controller left, assign control to owner or next participant
+	if ls.controllerID == id {
+		ls.controllerID = ""
+		ls.controllerName = ""
+		for _, other := range ls.participants {
+			if other.isOwner {
+				ls.controllerID = other.id
+				ls.controllerName = other.username
+				break
+			}
+		}
+		if ls.controllerID == "" {
+			for _, other := range ls.participants {
+				ls.controllerID = other.id
+				ls.controllerName = other.username
+				break
+			}
+		}
+	}
+	count := len(ls.participants)
+	ls.mu.Unlock()
+
+	if count > 0 {
+		ls.broadcastPresence()
+	}
+	return count
+}
+
+func (ls *liveSession) hasControl(participantID string) bool {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	return ls.controllerID == participantID
+}
+
+func (ls *liveSession) broadcastBinary(data []byte) {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	for _, p := range ls.participants {
+		p.send(websocket.MessageBinary, data)
+	}
+}
+
+func (ls *liveSession) broadcastText(data []byte) {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	for _, p := range ls.participants {
+		p.send(websocket.MessageText, data)
+	}
+}
+
+func (ls *liveSession) broadcastPresence() {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+
+	type partInfo struct {
+		ID         string `json:"id"`
+		UserID     string `json:"user_id"`
+		Username   string `json:"username"`
+		IsOwner    bool   `json:"is_owner"`
+		HasControl bool   `json:"has_control"`
+	}
+	parts := make([]partInfo, 0, len(ls.participants))
+	for _, p := range ls.participants {
+		parts = append(parts, partInfo{
+			ID:         p.id,
+			UserID:     p.userID,
+			Username:   p.username,
+			IsOwner:    p.isOwner,
+			HasControl: p.id == ls.controllerID,
+		})
+	}
+
+	for _, p := range ls.participants {
+		msg, _ := json.Marshal(map[string]any{
+			"type":            "presence",
+			"participants":    parts,
+			"controller":      ls.controllerID,
+			"controller_name": ls.controllerName,
+			"has_control":     p.id == ls.controllerID,
+			"my_id":           p.id,
+		})
+		p.send(websocket.MessageText, msg)
+	}
+}
+
+func (ls *liveSession) yieldControl(ctx context.Context, fromParticipantID, toParticipantID string, actor store.Actor, q *db.Queries) error {
+	ls.mu.Lock()
+	from, okFrom := ls.participants[fromParticipantID]
+	to, okTo := ls.participants[toParticipantID]
+	if !okFrom || !okTo {
+		ls.mu.Unlock()
+		return errors.New("participant not found")
+	}
+	// Current controller, session owner, or admin can yield control
+	if fromParticipantID != ls.controllerID && !from.isOwner && actor.Name != "root" {
+		ls.mu.Unlock()
+		return errors.New("not authorized to yield control")
+	}
+	ls.controllerID = to.id
+	ls.controllerName = to.username
+	ls.mu.Unlock()
+
+	ls.broadcastPresence()
+	ctrlMsg, _ := json.Marshal(map[string]any{
+		"type":            "control_granted",
+		"controller":      to.id,
+		"controller_name": to.username,
+	})
+	ls.broadcastText(ctrlMsg)
+
+	if q != nil {
+		_ = store.Audit(ctx, q, store.Event{
+			Actor:      actor,
+			Action:     "session.control_yield",
+			ObjectType: "session",
+			ObjectID:   ls.id,
+			Details:    map[string]any{"to": to.username, "to_id": to.userID},
+		})
+	}
+	return nil
+}
+
+func (ls *liveSession) takeControl(ctx context.Context, participantID string, actor store.Actor, q *db.Queries) error {
+	ls.mu.Lock()
+	p, ok := ls.participants[participantID]
+	if !ok {
+		ls.mu.Unlock()
+		return errors.New("participant not found")
+	}
+	if !p.isOwner && actor.Name != "root" {
+		ls.mu.Unlock()
+		return errors.New("only the owner can reclaim control")
+	}
+	ls.controllerID = p.id
+	ls.controllerName = p.username
+	ls.mu.Unlock()
+
+	ls.broadcastPresence()
+	ctrlMsg, _ := json.Marshal(map[string]any{
+		"type":            "control_granted",
+		"controller":      p.id,
+		"controller_name": p.username,
+	})
+	ls.broadcastText(ctrlMsg)
+
+	if q != nil {
+		_ = store.Audit(ctx, q, store.Event{
+			Actor:      actor,
+			Action:     "session.control_take",
+			ObjectType: "session",
+			ObjectID:   ls.id,
+		})
+	}
+	return nil
+}
+
+func (ls *liveSession) requestControl(participantID string) {
+	ls.mu.RLock()
+	p, ok := ls.participants[participantID]
+	ctrl, okCtrl := ls.participants[ls.controllerID]
+	ls.mu.RUnlock()
+
+	if !ok || !okCtrl {
+		return
+	}
+	msg, _ := json.Marshal(map[string]any{
+		"type":      "control_requested",
+		"from":      p.id,
+		"from_name": p.username,
+	})
+	ctrl.send(websocket.MessageText, msg)
+}
+
+func (ls *liveSession) createShareToken(createdBy string) string {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	if ls.shareTokens == nil {
+		ls.shareTokens = make(map[string]shareTokenInfo)
+	}
+	tok := randomID(16)
+	ls.shareTokens[tok] = shareTokenInfo{
+		token:     tok,
+		createdAt: time.Now(),
+		createdBy: createdBy,
+	}
+	return tok
+}
+
+func (ls *liveSession) activeShareToken() string {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	for tok := range ls.shareTokens {
+		return tok
+	}
+	return ""
+}
+
+func (ls *liveSession) validateShareToken(tok string) bool {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	if ls.shareTokens == nil {
+		return false
+	}
+	_, ok := ls.shareTokens[tok]
+	return ok
+}
+
+func (ls *liveSession) revokeShareTokens() {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	ls.shareTokens = make(map[string]shareTokenInfo)
+}
+
+func (ls *liveSession) notifyAll(code, reason string) {
+	if ls.notify != nil {
+		ls.notify(code, reason)
+		return
+	}
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	msg, _ := json.Marshal(map[string]string{"type": "error", "code": code, "message": reason})
+	for _, p := range ls.participants {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = p.ws.Write(ctx, websocket.MessageText, msg)
+		cancel()
+	}
 }
 
 // terminated is the cause a live session's context is cancelled with.
@@ -78,7 +425,7 @@ func (l *liveSessions) list() []*liveSession {
 // terminate ends a live session, telling the client why.
 func (s *Server) terminate(ls *liveSession, code, reason string) {
 	slog.Info("terminating session", "session", ls.id, "reason", reason)
-	ls.notify(code, reason)
+	ls.notifyAll(code, reason)
 	ls.cancel(&terminated{reason})
 }
 

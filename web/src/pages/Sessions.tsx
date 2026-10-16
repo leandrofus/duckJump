@@ -1,6 +1,6 @@
 import { t } from '../i18n'
 import { useEffect, useState } from 'react'
-import { History, RefreshCw, ChevronRight, PlayCircle, Trash2, Power } from 'lucide-react'
+import { History, RefreshCw, ChevronRight, PlayCircle, Trash2, Power, Users } from 'lucide-react'
 import { api, enc } from '../lib/api'
 import type { Session } from '../lib/api'
 import { useResource } from '../lib/store'
@@ -89,7 +89,12 @@ function SessionList() {
             { key: 'state', label: t('Status'), render: (s) => (s.ended_at ? <span className="muted small">{s.end_reason}</span> : (
               <span className="row gap">
                 <Pill state="active" />
-                {isAdmin() && <button className="icon-btn" title={t('Terminate')} onClick={(e) => (e.stopPropagation(), terminate(s).then((ok) => ok && setTimeout(() => load(true), 1500)))}><Power size={14} /></button>}
+                {isAdmin() && (
+                  <>
+                    <button className="icon-btn" title={t('Join session')} onClick={(e) => { e.stopPropagation(); window.location.hash = `#/session/${enc(s.connection_id)}?join=${enc(s.id)}` }}><Users size={14} /></button>
+                    <button className="icon-btn" title={t('Terminate')} onClick={(e) => (e.stopPropagation(), terminate(s).then((ok) => ok && setTimeout(() => load(true), 1500)))}><Power size={14} /></button>
+                  </>
+                )}
               </span>
             )) },
             { key: 'rec', label: '', render: (s) => (s.has_recording ? <PlayCircle size={15} className="muted" aria-label={t('recorded')} /> : s.recording_purged_at ? <span title={t('Recording deleted by the retention policy')}><Trash2 size={14} className="muted" /></span> : null) },
@@ -123,6 +128,9 @@ function SessionRecord({ id }: { id: string }) {
         </div>
         {!s.ended_at && isAdmin() && (
           <div className="record-actions">
+            <a className="btn btn-sm btn-primary" href={`#/session/${enc(s.connection_id)}?join=${enc(s.id)}`}>
+              <Users size={14} /> {t('Join session')}
+            </a>
             <button className="btn btn-sm btn-danger" onClick={() => terminate(s)}><Power size={14} /> {t('Terminate')}</button>
           </div>
         )}

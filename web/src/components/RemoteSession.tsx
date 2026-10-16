@@ -1,16 +1,20 @@
 import { t } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
-import { RotateCw, Maximize2, Minimize2, Circle, ClipboardList, Keyboard, Scaling, Send, Copy, X } from 'lucide-react'
+import { RotateCw, Maximize2, Minimize2, Circle, ClipboardList, Keyboard, Scaling, Send, Copy, X, Users, CheckCircle2, Eye, Shield, Hand } from 'lucide-react'
 import { enc, wsURL } from '../lib/api'
 import { KIND_DISPLAY, KEYSYM, SCANCODE, Painter, ackEvent, buttonMask, keyEvent, keysymFor, parseDisplay, pointerEvent, scancodeFor } from '../lib/gfx'
 import { toast } from '../ui/overlays'
 import type { SessionState } from './Terminal'
 import type { PromptedCredentials } from './CredentialsDialog'
 import { sessionErrorText } from '../lib/session'
+import { ShareSessionDialog } from './ShareSessionDialog'
+import type { Participant } from './ShareSessionDialog'
 
 /** A graphical session (VNC or RDP) drawn on a canvas. */
-export function RemoteSession({ connectionId, title, recorded, protocol, credentials, onNeedCredentials, onUnverifiedKey }: {
+export function RemoteSession({ connectionId, joinSessionId, shareToken, title, recorded, protocol, credentials, onNeedCredentials, onUnverifiedKey }: {
   connectionId: string
+  joinSessionId?: string
+  shareToken?: string
   title: string
   recorded?: boolean
   protocol: string
@@ -33,6 +37,23 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
   const [clipOpen, setClipOpen] = useState(false)
   const [clipText, setClipText] = useState('')
 
+  const [sessionId, setSessionId] = useState<string>(joinSessionId || '')
+  const [myId, setMyId] = useState<string>('')
+  const [isOwner, setIsOwner] = useState<boolean>(!joinSessionId)
+  const [hasControl, setHasControl] = useState<boolean>(!joinSessionId)
+  const hasControlRef = useRef<boolean>(!joinSessionId)
+  const [controllerName, setControllerName] = useState<string>('')
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [shareOpen, setShareOpen] = useState(false)
+
+  const updateControl = (has: boolean) => {
+    if (!has && hasControlRef.current) {
+      releaseAll()
+    }
+    hasControlRef.current = has
+    setHasControl(has)
+  }
+
   const send = (b: Uint8Array) => wsRef.current?.readyState === 1 && wsRef.current.send(b)
 
   useEffect(() => {
@@ -49,9 +70,12 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
       q.set('height', String(Math.max(480, el.clientHeight & ~1)))
     }
     if (credentials) q.set('credentials', '1')
-    const ws = new WebSocket(wsURL(`/connections/${enc(connectionId)}/session${q.size ? '?' + q : ''}`))
+    const wsEndpoint = joinSessionId
+      ? `/sessions/${enc(joinSessionId)}/join${shareToken ? `?token=${enc(shareToken)}` : ''}`
+      : `/connections/${enc(connectionId)}/session${q.size ? '?' + q : ''}`
+    const ws = new WebSocket(wsURL(wsEndpoint))
     // Prompted credentials travel as the first message, never in the URL.
-    if (credentials) ws.onopen = () => ws.send(JSON.stringify({ type: 'credentials', ...credentials }))
+    if (credentials && !joinSessionId) ws.onopen = () => ws.send(JSON.stringify({ type: 'credentials', ...credentials }))
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
     let ended = false
@@ -75,6 +99,26 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
       if (m.type === 'ready') {
         setState('open')
         canvas.focus()
+        if (m.session_id) setSessionId(m.session_id)
+        if (m.my_id) setMyId(m.my_id)
+        if (m.is_owner != null) setIsOwner(Boolean(m.is_owner))
+        if (m.has_control != null) updateControl(Boolean(m.has_control))
+        if (m.controller_name) setControllerName(m.controller_name)
+      } else if (m.type === 'presence') {
+        if (m.participants) setParticipants(m.participants)
+        if (m.has_control != null) updateControl(Boolean(m.has_control))
+        if (m.controller_name) setControllerName(m.controller_name)
+      } else if (m.type === 'control_granted') {
+        if (m.controller_name) setControllerName(m.controller_name)
+        const granted = m.controller === myId
+        updateControl(granted)
+        if (granted) {
+          toast.ok(t('You now have control of the session'))
+        } else {
+          toast.info(t('Control transferred to {0}', m.controller_name))
+        }
+      } else if (m.type === 'control_requested') {
+        toast.info(t('{0} has requested session control', m.from_name || t('A participant')))
       } else if (m.type === 'clipboard') {
         setClipText(m.text)
         toast.info(t('The remote clipboard changed; open the clipboard panel to copy it.'))
@@ -100,7 +144,7 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
       painter.dispose()
       wsRef.current = null
     }
-  }, [connectionId, attempt, credentials])
+  }, [connectionId, joinSessionId, shareToken, attempt, credentials])
 
   // Scale the desktop to the space available (or 1:1).
   useEffect(() => {
@@ -126,6 +170,7 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
     return { x: ((e.clientX - r.left) * c.width) / r.width, y: ((e.clientY - r.top) * c.height) / r.height }
   }
   const onMove = (e: React.MouseEvent) => {
+    if (!hasControlRef.current) return
     lastMove.current = toDesktop(e)
     if (!raf.current) {
       // Coalesce moves to one event per animation frame.
@@ -139,17 +184,20 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
   const onButton = (e: React.MouseEvent) => {
     e.preventDefault()
     canvasRef.current?.focus()
+    if (!hasControlRef.current) return
     buttons.current = buttonMask(e.buttons)
     const p = toDesktop(e)
     send(pointerEvent(p.x, p.y, buttons.current))
   }
   const onWheel = (e: React.WheelEvent) => {
+    if (!hasControlRef.current) return
     const p = toDesktop(e)
     const bit = e.deltaY < 0 ? 8 : e.deltaY > 0 ? 16 : e.deltaX < 0 ? 32 : 64
     send(pointerEvent(p.x, p.y, buttons.current | bit))
     send(pointerEvent(p.x, p.y, buttons.current))
   }
   const onKey = (down: boolean) => (e: React.KeyboardEvent) => {
+    if (!hasControlRef.current) return
     e.preventDefault()
     const n = e.nativeEvent
     if (down) {
@@ -173,18 +221,37 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
     }
   }
   const releaseAll = () => {
+    if (!hasControlRef.current) return
     for (const k of pressed.current.values()) send(keyEvent(k.ks, false, k.sc))
     pressed.current.clear()
   }
   const ctrlAltDel = () => {
+    if (!hasControlRef.current) return
     const keys: [number, number][] = [[KEYSYM.Control_L, SCANCODE.Control_L], [KEYSYM.Alt_L, SCANCODE.Alt_L], [KEYSYM.Delete, SCANCODE.Delete]]
     for (const [k, sc] of keys) send(keyEvent(k, true, sc))
     for (const [k, sc] of [...keys].reverse()) send(keyEvent(k, false, sc))
     canvasRef.current?.focus()
   }
   const sendClipboard = () => {
+    if (!hasControlRef.current) {
+      toast.err(t('You must have session control to send clipboard'))
+      return
+    }
     wsRef.current?.readyState === 1 && wsRef.current.send(JSON.stringify({ type: 'clipboard', text: clipText }))
     toast.ok(t('Sent to the remote clipboard'))
+  }
+
+  const yieldControl = (targetParticipantId: string) => {
+    wsRef.current?.readyState === 1 && wsRef.current.send(JSON.stringify({ type: 'yield_control', to: targetParticipantId }))
+  }
+
+  const takeControl = () => {
+    wsRef.current?.readyState === 1 && wsRef.current.send(JSON.stringify({ type: 'take_control' }))
+  }
+
+  const requestControl = () => {
+    wsRef.current?.readyState === 1 && wsRef.current.send(JSON.stringify({ type: 'request_control' }))
+    toast.ok(t('Control requested'))
   }
 
   const stateLabel = { connecting: t('Connecting'), open: t('Connected'), closed: t('Disconnected'), error: t('Error') }[state]
@@ -195,8 +262,38 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
         <strong className="ellipsis">{title}</strong>
         <span className="muted small">{stateLabel}{size.w ? ` · ${size.w}×${size.h}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}` : ''}</span>
         {recorded && state === 'open' && <span className="rec-badge" title={t('This session is recorded and audited.')}><Circle size={8} fill="currentColor" /> {t('Recording')}</span>}
+        {state === 'open' && (
+          <>
+            {hasControl ? (
+              <span className="rec-badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }} title={t('You have control')}>
+                <CheckCircle2 size={11} /> {t('Control')}
+              </span>
+            ) : (
+              <span className="rec-badge" style={{ background: 'rgba(234, 179, 8, 0.15)', color: '#eab308' }} title={t('View-only mode')}>
+                <Eye size={11} /> {t('View-only (Control: {0})', controllerName || t('Owner'))}
+              </span>
+            )}
+            {!hasControl && isOwner && (
+              <button className="btn btn-xs btn-outline" onClick={takeControl} title={t('Reclaim control')}>
+                <Shield size={12} /> {t('Reclaim control')}
+              </button>
+            )}
+            {!hasControl && !isOwner && (
+              <button className="btn btn-xs btn-outline" onClick={requestControl} title={t('Request control')}>
+                <Hand size={12} /> {t('Request control')}
+              </button>
+            )}
+            <button
+              className={`btn btn-xs${participants.length > 1 ? ' btn-primary' : ' btn-outline'}`}
+              onClick={() => setShareOpen(true)}
+              title={t('Share session')}
+            >
+              <Users size={12} /> {participants.length > 1 ? participants.length : t('Share')}
+            </button>
+          </>
+        )}
         <span className="grow" />
-        <button className="icon-btn" title="Ctrl+Alt+Del" onClick={ctrlAltDel} disabled={state !== 'open'}><Keyboard size={15} /></button>
+        <button className="icon-btn" title="Ctrl+Alt+Del" onClick={ctrlAltDel} disabled={state !== 'open' || !hasControl}><Keyboard size={15} /></button>
         <button className={`icon-btn${clipOpen ? ' on' : ''}`} title={t('Clipboard')} onClick={() => setClipOpen(!clipOpen)}><ClipboardList size={15} /></button>
         <button className={`icon-btn${fit ? ' on' : ''}`} title={fit ? t('Actual size (1:1)') : t('Fit to window')} onClick={() => setFit(!fit)}><Scaling size={15} /></button>
         <button className="icon-btn" title={t('Reconnect')} onClick={() => setAttempt((n) => n + 1)}><RotateCw size={15} /></button>
@@ -206,7 +303,7 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
         <div className="clip-panel">
           <textarea className="mono" rows={3} placeholder={t('Paste here to send it to the remote clipboard; text copied on the remote shows up here.')} value={clipText} onChange={(e) => setClipText(e.target.value)} />
           <div className="row gap">
-            <button className="btn btn-sm" disabled={!clipText} onClick={sendClipboard}><Send size={13} /> {t('Send to remote')}</button>
+            <button className="btn btn-sm" disabled={!clipText || !hasControl} onClick={sendClipboard}><Send size={13} /> {t('Send to remote')}</button>
             <button className="btn btn-sm" disabled={!clipText} onClick={() => navigator.clipboard.writeText(clipText).then(() => toast.ok(t('Copied')))}><Copy size={13} /> {t('Copy here')}</button>
             <span className="grow" />
             <button className="icon-btn" onClick={() => setClipOpen(false)}><X size={14} /></button>
@@ -234,6 +331,26 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
         <div className="terminal-closed">
           {message ? <span className="tone-bad">{message}</span> : t('Session closed')} · <button className="link" onClick={() => setAttempt((n) => n + 1)}>{t('reconnect')}</button>
         </div>
+      )}
+      {shareOpen && (sessionId || joinSessionId) && (
+        <ShareSessionDialog
+          sessionId={sessionId || joinSessionId!}
+          connectionId={connectionId}
+          participants={participants.length > 0 ? participants : [{
+            id: myId || 'owner',
+            user_id: '',
+            username: controllerName || 'Me',
+            is_owner: isOwner,
+            has_control: hasControl,
+          }]}
+          myId={myId}
+          isOwner={isOwner}
+          hasControl={hasControl}
+          controllerName={controllerName}
+          onYieldControl={yieldControl}
+          onTakeControl={takeControl}
+          onClose={() => setShareOpen(false)}
+        />
       )}
     </div>
   )

@@ -337,3 +337,131 @@ func TestSweepStaleSessions(t *testing.T) {
 		t.Fatalf("audit: %+v", res)
 	}
 }
+
+func (c *client) joinSession(t *testing.T, sessionID string, query string) *websocket.Conn {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	u := strings.Replace(c.e.srv.URL, "http", "ws", 1) + "/api/v1/sessions/" + sessionID + "/join"
+	if query != "" {
+		u += "?" + query
+	}
+	hdr := http.Header{}
+	for _, ck := range c.http.Jar.Cookies(mustURL(c.e.srv.URL)) {
+		hdr.Add("Cookie", ck.Name + "=" + ck.Value)
+	}
+	ws, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPHeader: hdr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ws.CloseNow() })
+	return ws
+}
+
+func TestSharedSessionAndControlCession(t *testing.T) {
+	e, root, ana, connID, _, _ := liveEnv(t)
+	wsAna := ana.openSession(t, connID)
+	defer wsAna.CloseNow()
+	readyAna := readMsg(t, wsAna)
+	sessionID := readyAna["session_id"]
+	anaPartID := readyAna["my_id"]
+
+	if readyAna["type"] != "ready" || sessionID == "" || anaPartID == "" {
+		t.Fatalf("unexpected ready message for ana: %v", readyAna)
+	}
+
+	// Ana creates a share token
+	var share sessionShareDTO
+	ana.do("POST", "/sessions/"+sessionID+"/share", nil, 201, &share)
+	if share.ShareToken == "" {
+		t.Fatal("empty share token")
+	}
+
+	// Info endpoint check
+	var info sessionInfoDTO
+	ana.do("GET", "/sessions/"+sessionID+"/info", nil, 200, &info)
+	if info.SessionID != sessionID || !info.Active {
+		t.Fatalf("unexpected session info: %+v", info)
+	}
+
+	// Bob joins using the share token
+	e.mkUser("bob", "user")
+	bob := e.as("bob")
+	wsBob := bob.joinSession(t, sessionID, "token="+share.ShareToken)
+	defer wsBob.CloseNow()
+	readyBob := readMsg(t, wsBob)
+	bobPartID := readyBob["my_id"]
+
+	if readyBob["type"] != "ready" || bobPartID == "" {
+		t.Fatalf("unexpected ready message for bob: %v", readyBob)
+	}
+	if readyBob["is_owner"] == "true" {
+		t.Fatal("bob should not be owner")
+	}
+
+	// Ana and Bob receive presence update
+	presAna := readMsg(t, wsAna)
+	if presAna["type"] != "presence" || presAna["controller"] != anaPartID {
+		t.Fatalf("expected presence with controller ana: %v", presAna)
+	}
+
+	presBob := readMsg(t, wsBob)
+	if presBob["type"] != "presence" || presBob["controller"] != anaPartID {
+		t.Fatalf("expected presence with controller ana: %v", presBob)
+	}
+
+	// Ana yields control to Bob
+	yieldPayload, _ := json.Marshal(map[string]string{"type": "yield_control", "to": bobPartID})
+	if err := wsAna.Write(context.Background(), websocket.MessageText, yieldPayload); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both should receive control_granted
+	msgAna := readMsg(t, wsAna)
+	for msgAna["type"] == "presence" {
+		msgAna = readMsg(t, wsAna)
+	}
+	if msgAna["type"] != "control_granted" || msgAna["controller"] != bobPartID {
+		t.Fatalf("expected control_granted to bob: %v", msgAna)
+	}
+
+	msgBob := readMsg(t, wsBob)
+	for msgBob["type"] == "presence" {
+		msgBob = readMsg(t, wsBob)
+	}
+	if msgBob["type"] != "control_granted" || msgBob["controller"] != bobPartID {
+		t.Fatalf("expected control_granted to bob: %v", msgBob)
+	}
+
+	// Bob requests control (or asks)
+	reqPayload, _ := json.Marshal(map[string]string{"type": "request_control"})
+	if err := wsAna.Write(context.Background(), websocket.MessageText, reqPayload); err != nil {
+		t.Fatal(err)
+	}
+	reqMsg := readMsg(t, wsBob)
+	if reqMsg["type"] != "control_requested" {
+		t.Fatalf("expected control_requested message: %v", reqMsg)
+	}
+
+	// Ana (owner) takes back control
+	takePayload, _ := json.Marshal(map[string]string{"type": "take_control"})
+	if err := wsAna.Write(context.Background(), websocket.MessageText, takePayload); err != nil {
+		t.Fatal(err)
+	}
+
+	takeAna := readMsg(t, wsAna)
+	for takeAna["type"] == "presence" {
+		takeAna = readMsg(t, wsAna)
+	}
+	if takeAna["type"] != "control_granted" || takeAna["controller"] != anaPartID {
+		t.Fatalf("expected control reclaimed by ana: %v", takeAna)
+	}
+
+	// Root can also join directly
+	wsRoot := root.joinSession(t, sessionID, "")
+	defer wsRoot.CloseNow()
+	readyRoot := readMsg(t, wsRoot)
+	if readyRoot["type"] != "ready" {
+		t.Fatalf("root failed to join: %v", readyRoot)
+	}
+}

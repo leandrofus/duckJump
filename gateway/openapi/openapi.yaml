@@ -22,6 +22,166 @@ components:
         - connection
         - grants
       type: object
+    AccessRequest:
+      properties:
+        can_connect:
+          type: boolean
+        can_download:
+          type: boolean
+        can_upload:
+          type: boolean
+        can_view_recordings:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        created_policy_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        ends_at:
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        object_name:
+          type: string
+        object_ref:
+          type: string
+        object_type:
+          enum:
+            - connection
+            - folder
+            - tag
+          type: string
+        reason:
+          type: string
+        review_comment:
+          type: string
+        reviewed_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        reviewed_by:
+          format: uuid
+          type:
+            - string
+            - "null"
+        reviewer_username:
+          type:
+            - string
+            - "null"
+        starts_at:
+          format: date-time
+          type: string
+        status:
+          enum:
+            - pending
+            - approved
+            - rejected
+            - canceled
+          type: string
+        ticket:
+          description: Optional reference to a ticket or issue ID.
+          type: string
+        user_display_name:
+          type: string
+        user_id:
+          format: uuid
+          type: string
+        user_username:
+          type: string
+      required:
+        - id
+        - user_id
+        - user_username
+        - user_display_name
+        - object_type
+        - object_ref
+        - object_name
+        - ticket
+        - can_connect
+        - can_view_recordings
+        - can_upload
+        - can_download
+        - reason
+        - starts_at
+        - ends_at
+        - status
+        - reviewed_by
+        - reviewer_username
+        - reviewed_at
+        - review_comment
+        - created_policy_id
+        - created_at
+      type: object
+    AccessRequestConnectionTarget:
+      properties:
+        environment:
+          type: string
+        folder_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        id:
+          format: uuid
+          type: string
+        name:
+          type: string
+        protocol:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+      required:
+        - id
+        - name
+        - protocol
+        - environment
+        - folder_id
+        - tags
+      type: object
+    AccessRequestFolderTarget:
+      properties:
+        id:
+          format: uuid
+          type: string
+        name:
+          type: string
+        parent_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+      required:
+        - id
+        - parent_id
+        - name
+      type: object
+    AccessRequestTargets:
+      properties:
+        connections:
+          items:
+            $ref: '#/components/schemas/AccessRequestConnectionTarget'
+          type: array
+        folders:
+          items:
+            $ref: '#/components/schemas/AccessRequestFolderTarget'
+          type: array
+        tags:
+          items:
+            type: string
+          type: array
+      required:
+        - connections
+        - folders
+        - tags
+      type: object
     Agent:
       properties:
         connected_at:
@@ -320,6 +480,47 @@ components:
         - protocol
         - host
       type: object
+    CreateAccessRequest:
+      additionalProperties: false
+      properties:
+        can_connect:
+          default: true
+          type: boolean
+        can_download:
+          default: false
+          type: boolean
+        can_upload:
+          default: false
+          type: boolean
+        can_view_recordings:
+          default: false
+          type: boolean
+        ends_at:
+          format: date-time
+          type: string
+        object_ref:
+          type: string
+        object_type:
+          default: connection
+          enum:
+            - connection
+            - folder
+            - tag
+          type: string
+        reason:
+          type: string
+        starts_at:
+          format: date-time
+          type: string
+        ticket:
+          description: Optional reference to a ticket or issue ID.
+          type: string
+      required:
+        - object_ref
+        - reason
+        - starts_at
+        - ends_at
+      type: object
     CreateUserRequest:
       additionalProperties: false
       properties:
@@ -614,6 +815,11 @@ components:
             - folder
             - tag
           type: string
+        starts_at:
+          format: date-time
+          type:
+            - string
+            - "null"
         subject_id:
           format: uuid
           type: string
@@ -672,6 +878,12 @@ components:
             - folder
             - tag
           type: string
+        starts_at:
+          description: Start of access window.
+          format: date-time
+          type:
+            - string
+            - "null"
         subject_id:
           format: uuid
           type: string
@@ -799,6 +1011,12 @@ components:
         - purgeable
         - purgeable_bytes
         - oldest_started_at
+      type: object
+    ReviewAccessRequest:
+      additionalProperties: false
+      properties:
+        comment:
+          type: string
       type: object
     Role:
       description: superadmin manages everything; admin manages the catalog, users and policies (not superadmins); auditor reads the audit log and recordings; user opens what they are granted.
@@ -931,6 +1149,41 @@ components:
         - started_at
         - ended_at
         - end_reason
+      type: object
+    SessionInfo:
+      properties:
+        active:
+          type: boolean
+        connection_id:
+          type: string
+        connection_name:
+          type: string
+        owner_username:
+          type: string
+        protocol:
+          type: string
+        session_id:
+          type: string
+      required:
+        - session_id
+        - connection_id
+        - connection_name
+        - protocol
+        - owner_username
+        - active
+      type: object
+    SessionShare:
+      properties:
+        connection_id:
+          type: string
+        session_id:
+          type: string
+        share_token:
+          type: string
+      required:
+        - share_token
+        - session_id
+        - connection_id
       type: object
     Site:
       properties:
@@ -1169,6 +1422,11 @@ components:
           type:
             - string
             - "null"
+        starts_at:
+          format: date-time
+          type:
+            - string
+            - "null"
       type: object
     UpdateSecretRequest:
       additionalProperties: false
@@ -1271,6 +1529,342 @@ info:
   version: 0.1.0
 openapi: 3.1.0
 paths:
+  /access-requests:
+    get:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: listAccessRequests
+      parameters:
+        - description: Filter by user id (admins only).
+          in: query
+          name: user_id
+          schema:
+            type: string
+        - description: Filter by request status.
+          in: query
+          name: status
+          schema:
+            enum:
+              - pending
+              - approved
+              - rejected
+              - canceled
+            type: string
+        - description: Return only the caller's requests.
+          in: query
+          name: mine
+          schema:
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AccessRequest'
+                type: array
+          description: Access requests
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+      summary: List access requests
+      tags:
+        - access-requests
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+    post:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: createAccessRequest
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccessRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflicts with the current state
+      summary: Create an access request
+      tags:
+        - access-requests
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /access-requests/{id}:
+    get:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: getAccessRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+          description: The access request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Get an access request
+      tags:
+        - access-requests
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /access-requests/{id}/approve:
+    post:
+      description: 'Roles: admin, superadmin.'
+      operationId: approveAccessRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewAccessRequest'
+        required: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+          description: Approved
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflicts with the current state
+      summary: Approve an access request
+      tags:
+        - access-requests
+      x-duckjump-roles:
+        - admin
+        - superadmin
+  /access-requests/{id}/cancel:
+    post:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: cancelAccessRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+          description: Canceled
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflicts with the current state
+      summary: Cancel a pending access request
+      tags:
+        - access-requests
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /access-requests/{id}/reject:
+    post:
+      description: 'Roles: admin, superadmin.'
+      operationId: rejectAccessRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewAccessRequest'
+        required: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+          description: Rejected
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflicts with the current state
+      summary: Reject an access request
+      tags:
+        - access-requests
+      x-duckjump-roles:
+        - admin
+        - superadmin
+  /access-requests/targets:
+    get:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: accessRequestTargets
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestTargets'
+          description: Available connections, folders and tags
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+      summary: List available targets for access requests
+      tags:
+        - access-requests
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
   /audit/events:
     get:
       description: |-
@@ -3855,6 +4449,225 @@ paths:
       x-duckjump-roles:
         - admin
         - superadmin
+  /sessions/{id}/info:
+    get:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: getSessionInfo
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+          description: Session info
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Get metadata of a live session for joiners
+      tags:
+        - portal
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /sessions/{id}/join:
+    get:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: joinSessionEndpoint
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: Switching to WebSocket
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Join a live session (WebSocket)
+      tags:
+        - portal
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /sessions/{id}/share:
+    delete:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: revokeSessionShare
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        "204":
+          description: Share token revoked
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Revoke share tokens for a live session
+      tags:
+        - portal
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+    get:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: getSessionShare
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionShare'
+          description: Share token retrieved
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Get live session sharing info or active token
+      tags:
+        - portal
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+    post:
+      description: 'Roles: admin, auditor, superadmin, user.'
+      operationId: createSessionShare
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionShare'
+          description: Share token created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Create a share token for a live session
+      tags:
+        - portal
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
   /settings/recordings:
     get:
       description: 'Roles: admin, superadmin.'

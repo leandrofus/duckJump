@@ -1,11 +1,11 @@
 import { t } from '../i18n'
 import { useMemo, useState } from 'react'
-import { ShieldCheck, Plus, Search, X, Trash2, Clock, User as UserIcon, UsersRound, Server, Folder as FolderIcon, Tag as TagIcon, Pencil } from 'lucide-react'
+import { ShieldCheck, Plus, Search, X, Trash2, Clock, User as UserIcon, UsersRound, Server, Folder as FolderIcon, Tag as TagIcon, Pencil, Ticket } from 'lucide-react'
 import { api } from '../lib/api'
-import type { Policy } from '../lib/api'
+import type { Policy, AccessRequest } from '../lib/api'
 import { invalidate, useResource } from '../lib/store'
 import { ago, dateTime } from '../lib/format'
-import { href } from '../lib/router'
+import { href, go } from '../lib/router'
 import { folderTree, useConnections, useFolders, useGroups, useUsers } from '../lib/lookup'
 import { DataTable, Empty, Spinner, Tag } from '../ui/common'
 import { Modal, confirm, openDialog, toast } from '../ui/overlays'
@@ -103,6 +103,7 @@ export function PolicyList({ rows, hideObject, hideSubject }: { rows: Policy[]; 
 
 export function Policies() {
   const { data, loading, error } = useResource<Policy[]>('/policies')
+  const { data: requests } = useResource<AccessRequest[]>('/access-requests')
   const names = usePolicyNames()
   const [q, setQ] = useState('')
   const [showExpired, setShowExpired] = useState(false)
@@ -111,6 +112,7 @@ export function Policies() {
     return (data || []).filter((p) => (showExpired || expiryState(p) !== 'expired') && words.every((w) => `${names.subject(p).name} ${names.object(p).name} ${p.description}`.toLowerCase().includes(w)))
   }, [data, q, showExpired, names])
   const expiredCount = (data || []).filter((p) => expiryState(p) === 'expired').length
+  const pendingRequests = (requests || []).filter((r) => r.status === 'pending').length
   return (
     <div className="page">
       <div className="page-head">
@@ -133,6 +135,17 @@ export function Policies() {
         </div>
       </div>
       <div className="page-body">
+        {pendingRequests > 0 && (
+          <div className="alert alert-info row gap" style={{ justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <span>
+              <Ticket size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: 'text-bottom' }} />
+              {t('There are {0} pending access requests waiting for review.', pendingRequests)}
+            </span>
+            <button className="btn btn-sm btn-primary" onClick={() => go('access-requests')}>
+              {t('Review requests')}
+            </button>
+          </div>
+        )}
         <p className="help">{t('A grant gives a user or a group access to one connection, to everything inside a folder, or to every connection with a tag. Nobody bypasses grants, administrators included.')}</p>
         {error && <div className="alert alert-bad">{error.message}</div>}
         <DataTable

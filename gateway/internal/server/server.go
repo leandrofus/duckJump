@@ -126,6 +126,11 @@ func (s *Server) Handler() http.Handler {
 	// Portal: what the caller may open.
 	mux.Handle("GET /api/v1/portal/connections", s.authed(anyRole, s.portalConnections))
 	mux.Handle("GET /api/v1/connections/{id}/session", s.authed(anyRole, s.tunnel))
+	mux.Handle("GET /api/v1/sessions/{id}/join", s.authed(anyRole, s.joinSessionEndpoint))
+	mux.Handle("POST /api/v1/sessions/{id}/share", s.authed(anyRole, s.createSessionShare))
+	mux.Handle("GET /api/v1/sessions/{id}/share", s.authed(anyRole, s.getSessionShare))
+	mux.Handle("DELETE /api/v1/sessions/{id}/share", s.authed(anyRole, s.revokeSessionShare))
+	mux.Handle("GET /api/v1/sessions/{id}/info", s.authed(anyRole, s.getSessionInfo))
 
 	// Administration.
 	mux.Handle("GET /api/v1/users", s.authed(admins, s.listUsers))
@@ -179,6 +184,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/policies/{id}", s.authed(admins, s.getPolicy))
 	mux.Handle("PATCH /api/v1/policies/{id}", s.authed(admins, s.updatePolicy))
 	mux.Handle("DELETE /api/v1/policies/{id}", s.authed(admins, s.deletePolicy))
+
+	// Access requests.
+	mux.Handle("GET /api/v1/access-requests", s.authed(anyRole, s.listAccessRequests))
+	mux.Handle("POST /api/v1/access-requests", s.authed(anyRole, s.createAccessRequest))
+	mux.Handle("GET /api/v1/access-requests/targets", s.authed(anyRole, s.accessRequestTargets))
+	mux.Handle("GET /api/v1/access-requests/{id}", s.authed(anyRole, s.getAccessRequest))
+	mux.Handle("POST /api/v1/access-requests/{id}/approve", s.authed(admins, s.approveAccessRequest))
+	mux.Handle("POST /api/v1/access-requests/{id}/reject", s.authed(admins, s.rejectAccessRequest))
+	mux.Handle("POST /api/v1/access-requests/{id}/cancel", s.authed(anyRole, s.cancelAccessRequest))
 
 	// Audit.
 	mux.Handle("GET /api/v1/audit/events", s.authed(auditors, s.listAuditEvents))

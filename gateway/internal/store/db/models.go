@@ -71,6 +71,27 @@ type AuditSessionKill struct {
 	Reason      string
 }
 
+type ConfigAccessRequest struct {
+	ID                string
+	UserID            string
+	ObjectType        string
+	ObjectRef         string
+	Ticket            string
+	CanConnect        bool
+	CanViewRecordings bool
+	CanUpload         bool
+	CanDownload       bool
+	Reason            string
+	StartsAt          time.Time
+	EndsAt            time.Time
+	Status            string
+	ReviewedBy        sql.NullString
+	ReviewedAt        sql.NullTime
+	ReviewComment     string
+	CreatedPolicyID   sql.NullString
+	CreatedAt         time.Time
+}
+
 type ConfigConnection struct {
 	ID             string
 	Name           string
@@ -132,6 +153,7 @@ type ConfigPolicy struct {
 	CreatedAt         time.Time
 	CanUpload         bool
 	CanDownload       bool
+	StartsAt          sql.NullTime
 }
 
 type ConfigSecret struct {

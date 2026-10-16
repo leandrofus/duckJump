@@ -2,7 +2,7 @@ import { t, LANGUAGES, getLang, setLang } from './i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MonitorSmartphone, Server, Users as UsersIcon, UsersRound, ShieldCheck, KeyRound, Network, ScrollText, History,
-  Search, Plus, Languages, LogOut, Moon, Sun, Check, PanelLeftClose, PanelLeft, Star, Clock, UserCog, TerminalSquare, Settings as SettingsIcon, FolderInput,
+  Search, Plus, Languages, LogOut, Moon, Sun, Check, PanelLeftClose, PanelLeft, Star, Clock, UserCog, TerminalSquare, Settings as SettingsIcon, FolderInput, Ticket,
 } from 'lucide-react'
 import { api, setUnauthorizedHandler } from './lib/api'
 import type { Me, PortalConnection } from './lib/api'
@@ -28,6 +28,7 @@ import { Sessions } from './pages/Sessions'
 import { Account } from './pages/Account'
 import { Files } from './pages/Files'
 import { Settings } from './pages/Settings'
+import { AccessRequests, RequestAccessDialog } from './pages/AccessRequests'
 
 export type Recent = { id: string; name: string; protocol: string }
 
@@ -41,6 +42,7 @@ interface NavItem {
 const NAV_PORTAL: NavItem[] = [
   { id: 'portal', label: t('My connections'), icon: MonitorSmartphone },
   { id: 'files', label: t('My files'), icon: FolderInput },
+  { id: 'access-requests', label: t('Access requests'), icon: Ticket },
 ]
 const NAV_ADMIN: NavItem[] = [
   { id: 'connections', label: t('Connections'), icon: Server },
@@ -219,6 +221,7 @@ function createItems(): MenuEntry[] {
     { label: t('Connection'), icon: <Server size={14} />, onClick: () => openDialog((c) => <ConnectionFormDialog onClose={c} />) },
     { label: t('Credential'), icon: <KeyRound size={14} />, onClick: () => openDialog((c) => <SecretFormDialog onClose={c} />) },
     { label: t('Access grant'), icon: <ShieldCheck size={14} />, onClick: () => openDialog((c) => <PolicyDialog onClose={c} />) },
+    { label: t('Access request'), icon: <Ticket size={14} />, onClick: () => openDialog((c) => <RequestAccessDialog onClose={c} />) },
     'sep',
     { label: t('User'), icon: <UsersIcon size={14} />, onClick: () => openDialog((c) => <UserFormDialog onClose={c} />) },
     { label: t('Group'), icon: <UsersRound size={14} />, onClick: () => openDialog((c) => <GroupFormDialog onClose={c} />) },
@@ -329,6 +332,7 @@ function Shell() {
     case 'settings': page = admin(<Settings />); break
     case 'account': page = <Account />; break
     case 'files': page = <Files />; break
+    case 'access-requests': page = <AccessRequests />; break
     default: page = <Portal />
   }
   return (

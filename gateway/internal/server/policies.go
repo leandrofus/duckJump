@@ -22,6 +22,7 @@ import (
 //   can_view_recordings: { type: boolean, default: false }
 //   can_upload: { type: boolean, default: false, description: Send files from the user's file tray to the host. }
 //   can_download: { type: boolean, default: false, description: Take files from the host into the user's file tray (and on to their computer). }
+//   starts_at: { type: [string, 'null'], format: date-time, description: Start of access window. }
 //   expires_at: { type: [string, 'null'], format: date-time, description: Just-in-time access. Mutually exclusive with ttl_seconds. }
 //   ttl_seconds: { type: integer, minimum: 1, description: Expire this many seconds from now. }
 //   description: { type: string }
@@ -35,6 +36,7 @@ type policyRequest struct {
 	CanViewRecordings bool       `json:"can_view_recordings"`
 	CanUpload         bool       `json:"can_upload"`
 	CanDownload       bool       `json:"can_download"`
+	StartsAt          *time.Time `json:"starts_at"`
 	ExpiresAt         *time.Time `json:"expires_at"`
 	TTLSeconds        int64      `json:"ttl_seconds"`
 	Description       string     `json:"description"`
@@ -48,6 +50,7 @@ type policyRequest struct {
 //   can_view_recordings: { type: boolean }
 //   can_upload: { type: boolean }
 //   can_download: { type: boolean }
+//   starts_at: { type: [string, 'null'], format: date-time }
 //   expires_at: { type: [string, 'null'], format: date-time, description: null makes it permanent. }
 //   description: { type: string }
 
@@ -56,6 +59,7 @@ type updatePolicyRequest struct {
 	CanViewRecordings opt[bool]      `json:"can_view_recordings"`
 	CanUpload         opt[bool]      `json:"can_upload"`
 	CanDownload       opt[bool]      `json:"can_download"`
+	StartsAt          opt[time.Time] `json:"starts_at"`
 	ExpiresAt         opt[time.Time] `json:"expires_at"`
 	Description       opt[string]    `json:"description"`
 }
@@ -165,9 +169,14 @@ func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request, p principa
 				return conflict("this access already exists; edit it instead")
 			}
 		}
+		var start time.Time
+		if req.StartsAt != nil {
+			start = *req.StartsAt
+		}
 		if err := q.CreatePolicy(ctx, db.CreatePolicyParams{
 			ID: id, SubjectType: req.SubjectType, SubjectID: req.SubjectID, ObjectType: req.ObjectType, ObjectRef: req.ObjectRef,
 			CanConnect: canConnect, CanViewRecordings: req.CanViewRecordings, CanUpload: req.CanUpload, CanDownload: req.CanDownload,
+			StartsAt:    store.NullTime(start),
 			ExpiresAt:   store.NullTime(exp),
 			Description: req.Description, CreatedBy: store.NullString(p.User.ID), Now: store.Now(),
 		}); err != nil {
@@ -236,6 +245,9 @@ func (s *Server) updatePolicy(w http.ResponseWriter, r *http.Request, p principa
 		if req.CanDownload.Set {
 			pol.CanDownload = req.CanDownload.V
 		}
+		if req.StartsAt.Set {
+			pol.StartsAt = store.NullTime(req.StartsAt.V)
+		}
 		if req.ExpiresAt.Set {
 			pol.ExpiresAt = store.NullTime(req.ExpiresAt.V) // zero (null) = permanent
 		}
@@ -246,7 +258,7 @@ func (s *Server) updatePolicy(w http.ResponseWriter, r *http.Request, p principa
 			return badRequest("a policy must grant at least one permission")
 		}
 		if err := q.UpdatePolicy(ctx, db.UpdatePolicyParams{ID: id, CanConnect: pol.CanConnect, CanViewRecordings: pol.CanViewRecordings,
-			CanUpload: pol.CanUpload, CanDownload: pol.CanDownload, ExpiresAt: pol.ExpiresAt, Description: pol.Description}); err != nil {
+			CanUpload: pol.CanUpload, CanDownload: pol.CanDownload, StartsAt: pol.StartsAt, ExpiresAt: pol.ExpiresAt, Description: pol.Description}); err != nil {
 			return err
 		}
 		d := map[string]any{"can_connect": pol.CanConnect, "can_view_recordings": pol.CanViewRecordings,

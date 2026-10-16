@@ -97,6 +97,8 @@ func TestGrants(t *testing.T) {
 	// Expires on a whole second: stored without fractional digits, which
 	// compares wrong as text against a "now" that has them.
 	roundExp := conn("round", "")
+	future := conn("future", "")        // starts in future
+	pastStart := conn("past", "")     // started in past
 	conn("hidden", "") // no grant at all
 
 	grant("user", ana, "folder", prod, time.Time{})
@@ -104,6 +106,17 @@ func TestGrants(t *testing.T) {
 	grant("user", ana, "connection", expired, now.Add(-time.Minute))
 	grant("group", gid, "tag", "databases", now.Add(time.Hour))
 	grant("user", beto, "connection", roundExp, now.Add(2*time.Hour).Truncate(time.Second))
+
+	// future start: not active yet
+	must(t, q.CreatePolicy(ctx, db.CreatePolicyParams{
+		ID: NewID(), SubjectType: "user", SubjectID: ana, ObjectType: "connection", ObjectRef: future,
+		CanConnect: true, StartsAt: NullTime(now.Add(time.Hour)), ExpiresAt: NullTime(now.Add(2 * time.Hour)), Now: now,
+	}))
+	// past start: currently active
+	must(t, q.CreatePolicy(ctx, db.CreatePolicyParams{
+		ID: NewID(), SubjectType: "user", SubjectID: ana, ObjectType: "connection", ObjectRef: pastStart,
+		CanConnect: true, StartsAt: NullTime(now.Add(-time.Hour)), ExpiresAt: NullTime(now.Add(2 * time.Hour)), Now: now,
+	}))
 
 	names := func(uid string) string {
 		cs, err := s.GrantedConnections(ctx, uid)
@@ -114,8 +127,8 @@ func TestGrants(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if got := names(ana); got != "jump,web1" {
-		t.Fatalf("ana sees %q", got)
+	if got := names(ana); got != "jump,past,web1" {
+		t.Fatalf("ana sees %q, want jump,past,web1", got)
 	}
 	if got := names(beto); got != "db1,round" {
 		t.Fatalf("beto sees %q", got)
@@ -123,11 +136,11 @@ func TestGrants(t *testing.T) {
 	for _, c := range []struct {
 		user, conn string
 		want       bool
-	}{{ana, web1, true}, {ana, db1, false}, {ana, expired, false}, {beto, db1, true}, {beto, web1, false}} {
+	}{{ana, web1, true}, {ana, db1, false}, {ana, expired, false}, {ana, future, false}, {ana, pastStart, true}, {beto, db1, true}, {beto, web1, false}} {
 		ok, err := s.CanConnect(ctx, c.user, c.conn)
 		must(t, err)
 		if ok != c.want {
-			t.Errorf("CanConnect(%s,%s) = %v", c.user, c.conn, ok)
+			t.Errorf("CanConnect(%s,%s) = %v, want %v", c.user, c.conn, ok, c.want)
 		}
 	}
 }
