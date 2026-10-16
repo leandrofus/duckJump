@@ -1,0 +1,80 @@
+# Tests on every pull request (and on main, so the badge and caches stay
+# fresh). Also called by release.yml before building a tag.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: web (typecheck, API types)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - run: make test-web
+      - name: API types match the OpenAPI spec
+        run: |
+          cd web && bun run gen-api
+          git diff --exit-code -- src/lib/api-types.ts
+
+  go:
+    name: go (vet, test, generated code)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      # go vet + go test + OpenAPI spec up to date
+      - run: make test-go
+      - name: sqlc code matches the queries
+        run: |
+          make -C gateway generate
+          git diff --exit-code -- gateway/internal/store/db
+
+  rust:
+    name: rust (test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            duckjumpd
+            duckjumpd/rdp
+      - run: cd duckjumpd && cargo test --locked
+      - run: cd duckjumpd/rdp && cargo test --locked
+
+  integration:
+    name: integration (Keycloak, PostgreSQL, MinIO, OpenSSH)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: duckjumpd
+      # Each target starts its container with docker and removes it after.
+      - run: make test-postgres
+      - run: make test-oidc
+      - run: make test-s3
+      - run: make test-sftp

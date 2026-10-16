@@ -1,0 +1,60 @@
+# On a version tag (v1.2.3, v1.2.3-rc1): run the tests, build the rpm/deb
+# packages and a tarball, and publish them as a GitHub release.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+
+      - name: Version from the tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      # UI, static Go binaries, Rust built in a Debian 11 container (glibc 2.31),
+      # then rpm + deb with nfpm. Binaries land in dist/pkg, packages in dist/packages.
+      - name: Packages
+        run: make packages VERSION="$VERSION"
+
+      # Tarball from the same portable binaries as the packages (not `make dist`,
+      # which would link the Rust binaries against the runner's newer glibc).
+      - name: Tarball and checksums
+        run: |
+          name=duckjump-$VERSION-linux-amd64
+          mkdir -p "dist/$name"
+          cp dist/pkg/* README.md LICENSE ROADMAP.md "dist/$name/"
+          tar -C dist -czf "dist/packages/$name.tar.gz" "$name"
+          cd dist/packages && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duckjump-${{ env.VERSION }}
+          path: dist/packages/*
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=; case $VERSION in *-*) pre=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/packages/* \
+            --title "duckJump $VERSION" --generate-notes --verify-tag $pre

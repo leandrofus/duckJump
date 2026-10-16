@@ -20,7 +20,7 @@ It is not a fork. Both the gateway and the session daemon were written from scra
 | Getting started | Tomcat + external database + guacd | embedded SQLite, rpm/deb packages with the services ready to run |
 
 > Status: under active development (0.1). Some internal names (`duckjump-gw`, `duckjumpd`) come from the project's
-> code name.
+> code name. What is planned: [ROADMAP.md](ROADMAP.md).
 
 ## Features
 
