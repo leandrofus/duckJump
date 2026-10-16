@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -575,13 +574,22 @@ func (s *Server) DownloadAssistAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	path, err := s.findAssistBinary()
+	osTarget := r.URL.Query().Get("os")
+	path, err := s.findAssistBinary(osTarget)
 	if err != nil {
+		if osTarget == "windows" {
+			http.Error(w, "duckjump-assist.exe para Windows no está disponible en este servidor (solo Linux x86_64 disponible)", http.StatusNotFound)
+			return
+		}
 		writeErr(w, &apiError{http.StatusNotFound, "not_found", err.Error()})
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="duckjump-assist"`)
+	if osTarget == "windows" || strings.HasSuffix(path, ".exe") {
+		w.Header().Set("Content-Disposition", `attachment; filename="duckjump-assist.exe"`)
+	} else {
+		w.Header().Set("Content-Disposition", `attachment; filename="duckjump-assist"`)
+	}
 	http.ServeFile(w, r, path)
 }
 
@@ -648,7 +656,7 @@ func (s *Server) ServeAssistPowerShellScript(w http.ResponseWriter, r *http.Requ
 	}
 	binURL := r.URL.Query().Get("bin_url")
 	if binURL == "" {
-		binURL = baseURL + "/support/duckjump-assist"
+		binURL = baseURL + "/support/duckjump-assist?os=windows"
 	}
 
 	script := fmt.Sprintf(`param(
@@ -668,9 +676,29 @@ $tempBin = Join-Path $tempDir "duckjump-assist.exe"
 
 try {
     Write-Host "==> Descargando agente duckJump Assist..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $BinUrl -OutFile $tempBin
+    Invoke-WebRequest -Uri $BinUrl -OutFile $tempBin -ErrorAction Stop
+
+    # Verificar si es un ejecutable PE de Windows valido (empieza con 'MZ')
+    $bytes = [System.IO.File]::ReadAllBytes($tempBin)
+    if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+        Write-Host ""
+        Write-Host "[!] Error: duckjump-assist.exe para Windows no esta compilado en este servidor." -ForegroundColor Red
+        Write-Host "    El servidor actualmente solo tiene disponible el agente para Linux (x86_64)." -ForegroundColor Yellow
+        Write-Host "    Para conectarse a la asistencia, por favor ejecute el comando en un equipo Linux:" -ForegroundColor Cyan
+        Write-Host "    curl -fsSL $Server/support/launch.sh?token=$Token | sh" -ForegroundColor White
+        Write-Host ""
+        exit 1
+    }
+
     Write-Host "==> Iniciando duckJump Assist..." -ForegroundColor Green
     & $tempBin --server $Server --token $Token
+} catch {
+    Write-Host ""
+    Write-Host "[!] Error: duckjump-assist.exe para Windows no esta disponible en el servidor." -ForegroundColor Red
+    Write-Host "    El servidor actualmente solo tiene disponible el agente para Linux (x86_64)." -ForegroundColor Yellow
+    Write-Host "    Para conectarse a la asistencia, ejecute en Linux: curl -fsSL $Server/support/launch.sh?token=$Token | sh" -ForegroundColor Cyan
+    Write-Host ""
+    exit 1
 } finally {
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -747,10 +775,15 @@ exit $STATUS
 	)
 }
 
-func (s *Server) findAssistBinary() (string, error) {
+func (s *Server) findAssistBinary(osTarget string) (string, error) {
+	name := "duckjump-assist"
+	if osTarget == "windows" {
+		name = "duckjump-assist.exe"
+	}
+
 	// 1. Next to the running executable
 	if exe, err := os.Executable(); err == nil {
-		p := filepath.Join(filepath.Dir(exe), "duckjump-assist")
+		p := filepath.Join(filepath.Dir(exe), name)
 		if isFile(p) {
 			return p, nil
 		}
@@ -758,15 +791,15 @@ func (s *Server) findAssistBinary() (string, error) {
 
 	// 2. Relative to current working directory or known build locations
 	candidates := []string{
-		"bin/duckjump-assist",
-		"dist/bin/duckjump-assist",
-		"../dist/bin/duckjump-assist",
-		"duckjumpd/target/release/duckjump-assist",
-		"../duckjumpd/target/release/duckjump-assist",
-		"duckjumpd/target/debug/duckjump-assist",
-		"gateway/bin/duckjump-assist",
-		"/usr/bin/duckjump-assist",
-		"/usr/local/bin/duckjump-assist",
+		"bin/" + name,
+		"dist/bin/" + name,
+		"../dist/bin/" + name,
+		"duckjumpd/target/release/" + name,
+		"../duckjumpd/target/release/" + name,
+		"duckjumpd/target/debug/" + name,
+		"gateway/bin/" + name,
+		"/usr/bin/" + name,
+		"/usr/local/bin/" + name,
 	}
 	for _, c := range candidates {
 		if isFile(c) {
@@ -775,9 +808,9 @@ func (s *Server) findAssistBinary() (string, error) {
 	}
 
 	// 3. System PATH
-	if p, err := exec.LookPath("duckjump-assist"); err == nil {
+	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
 	}
 
-	return "", errors.New("duckjump-assist binary not found on server")
+	return "", fmt.Errorf("%s binary not found on server", name)
 }
