@@ -1,6 +1,6 @@
 [Unit]
 Description=DuckJump edge agent (outbound tunnel to the gateway)
-Documentation=https://github.com/leandrofus/palta
+Documentation=https://github.com/leandrofus/duckJump
 After=network-online.target
 Wants=network-online.target
 # Stays idle until it is configured (see /etc/duckjump-agent/agent.env).

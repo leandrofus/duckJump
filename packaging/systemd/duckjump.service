@@ -1,6 +1,6 @@
 [Unit]
 Description=DuckJump access gateway (web UI, API, vault, audit)
-Documentation=https://github.com/leandrofus/palta
+Documentation=https://github.com/leandrofus/duckJump
 After=network-online.target duckjump-paltad.service
 Wants=network-online.target duckjump-paltad.service
 

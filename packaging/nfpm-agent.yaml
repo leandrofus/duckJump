@@ -11,8 +11,8 @@ description: |
   DuckJump edge agent: runs inside a closed network and keeps an outbound
   tunnel to the DuckJump gateway, reaching local hosts within its allow list.
 vendor: DuckJump
-license: Proprietary
-homepage: https://github.com/leandrofus/palta
+license: AGPL-3.0-or-later
+homepage: https://github.com/leandrofus/duckJump
 
 contents:
   - src: ./dist/pkg/palta-agent

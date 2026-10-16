@@ -1,6 +1,6 @@
 [Unit]
 Description=DuckJump session daemon (paltad: SSH, VNC, RDP)
-Documentation=https://github.com/leandrofus/palta
+Documentation=https://github.com/leandrofus/duckJump
 After=network-online.target
 Wants=network-online.target
 

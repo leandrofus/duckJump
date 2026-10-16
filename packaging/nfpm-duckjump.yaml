@@ -12,8 +12,8 @@ description: |
   credential vault, access grants, session recording and an audit trail.
   Includes the gateway (web UI and API) and the paltad session daemon.
 vendor: DuckJump
-license: Proprietary
-homepage: https://github.com/leandrofus/palta
+license: AGPL-3.0-or-later
+homepage: https://github.com/leandrofus/duckJump
 
 overrides:
   rpm:

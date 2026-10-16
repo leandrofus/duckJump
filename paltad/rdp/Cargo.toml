@@ -2,7 +2,7 @@
 name = "paltad-rdp"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
 description = "RDP worker for paltad: one process per session, speaking PTP on stdin/stdout"
 
 # Own workspace (see the paltad workspace's `exclude`).
