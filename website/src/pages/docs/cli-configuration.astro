@@ -1,0 +1,114 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout 
+  title="Configuration & CLI Reference" 
+  description="Complete configuration options for /etc/duckjump/duckjump.env and duckjump CLI administration commands."
+  currentSlug="cli-configuration"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-slate-800 text-slate-300 border border-slate-700 text-xs font-mono mb-3">
+        System Reference
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        Configuration & CLI Reference
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        Environment variables reference and CLI administration commands for managing duckJump in headless and automated environments.
+      </p>
+    </div>
+
+    <!-- Configuration File -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. Configuration: duckjump.env</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Service settings are stored in <code class="text-amber-300">/etc/duckjump/duckjump.env</code>:
+      </p>
+
+      <div class="overflow-x-auto border border-slate-800 rounded-xl">
+        <table class="w-full text-left text-xs text-slate-300">
+          <thead class="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider text-[11px] border-b border-slate-800">
+            <tr>
+              <th class="p-3">Variable</th>
+              <th class="p-3">Default</th>
+              <th class="p-3">Description</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 font-mono">
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">DUCKJUMP_ADDR</td>
+              <td class="p-3">:8443</td>
+              <td class="p-3 font-sans text-slate-300">Listen address and port for the HTTPS/WSS web gateway.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">DUCKJUMP_DB</td>
+              <td class="p-3">/var/lib/duckjump/duckjump.db</td>
+              <td class="p-3 font-sans text-slate-300">SQLite database file or PostgreSQL connection URL.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">DUCKJUMP_TLS_CERT</td>
+              <td class="p-3">/etc/duckjump/tls.crt</td>
+              <td class="p-3 font-sans text-slate-300">Path to the gateway's TLS certificate file.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">DUCKJUMP_TLS_KEY</td>
+              <td class="p-3">/etc/duckjump/tls.key</td>
+              <td class="p-3 font-sans text-slate-300">Path to the gateway's TLS private key file (0600).</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">DUCKJUMP_MASTER_KEY_FILE</td>
+              <td class="p-3">/etc/duckjump/master.key</td>
+              <td class="p-3 font-sans text-slate-300">AES-256 vault encryption key file. Keep backed up!</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">DUCKJUMP_TRUSTED_PROXIES</td>
+              <td class="p-3">127.0.0.1,::1</td>
+              <td class="p-3 font-sans text-slate-300">Reverse proxy CIDRs for client IP audit & X-Forwarded headers.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- CLI Commands -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. CLI Administration Commands</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        On Linux package installs, use the <code class="text-amber-300">sudo duckjump</code> wrapper (or <code class="text-amber-300">duckjump-gw</code> directly):
+      </p>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-200 space-y-3">
+        <div>
+          <span class="text-slate-500"># User and role administration:</span>
+          <div class="text-amber-400">sudo duckjump user add alice --role admin --email alice@corp.com</div>
+          <div class="text-slate-300">sudo duckjump user passwd alice</div>
+          <div class="text-slate-300">sudo duckjump user disable bob</div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/80">
+          <span class="text-slate-500"># Storing encrypted credentials into the vault:</span>
+          <div class="text-amber-400">sudo duckjump secret add --name "prod-key" --type ssh-key --file ~/.ssh/id_ed25519</div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/80">
+          <span class="text-slate-500"># Issue a Just-In-Time access grant:</span>
+          <div class="text-amber-400">sudo duckjump grant add --user alice --conn "db-server-01" --ttl 2h --upload --download</div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/80">
+          <span class="text-slate-500"># Emergency terminate a live session:</span>
+          <div class="text-rose-400">sudo duckjump kill s-8472f10b</div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/80">
+          <span class="text-slate-500"># Zero-downtime migration to PostgreSQL:</span>
+          <div class="text-sky-400">sudo duckjump migrate-to-postgres -to 'postgres://duckjump:pwd@pg.internal:5432/duckjump'</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</DocsLayout>

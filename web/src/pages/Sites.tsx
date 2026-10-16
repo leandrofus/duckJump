@@ -6,7 +6,6 @@ import type { Agent, Site } from '../lib/api'
 import { invalidate, useResource } from '../lib/store'
 import { go } from '../lib/router'
 import { ago, copy, dateTime } from '../lib/format'
-import { useSites } from '../lib/lookup'
 import type { MenuEntry } from '../ui/ContextMenu'
 import { DataTable, Empty, MenuButton, Pill, Props, Section, Spinner, Tag } from '../ui/common'
 import { Drawer, Modal, confirm, openDialog, prompt, toast } from '../ui/overlays'
@@ -45,7 +44,8 @@ async function rotate(s: Site) {
 }
 
 export function Sites({ id }: { id?: string }) {
-  const sites = useSites()
+  const { data: rows, loading } = useResource<Site[]>('/sites', { poll: 4000 })
+  const sites = { rows: rows || [], loading }
   return (
     <div className="page">
       <div className="page-head">
@@ -67,7 +67,7 @@ export function Sites({ id }: { id?: string }) {
           onOpen={(s) => go('sites', s.id)}
           rowMenu={siteActions}
           defaultSort={{ key: 'name', dir: 1 }}
-          empty={sites.data && <Empty icon={<Network size={28} />} title={t('No sites yet')}>{t('Connections without a site are reached directly. Create an agent site for hosts in closed networks.')}</Empty>}
+          empty={sites.rows.length === 0 && !sites.loading && <Empty icon={<Network size={28} />} title={t('No sites yet')}>{t('Connections without a site are reached directly. Create an agent site for hosts in closed networks.')}</Empty>}
           columns={[
             { key: 'name', label: t('Name'), sort: (s) => s.name, render: (s) => <strong>{s.name}</strong> },
             { key: 'kind', label: t('Type'), sort: (s) => s.kind, render: (s) => <Tag tone={s.kind === 'agent' ? 'info' : undefined}>{s.kind === 'agent' ? t('edge agent') : t('direct')}</Tag> },
@@ -83,8 +83,8 @@ export function Sites({ id }: { id?: string }) {
 }
 
 function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
-  const { data: s, error } = useResource<Site>(`/sites/${enc(id)}`, { poll: 10000 })
-  const { data: agents } = useResource<Agent[]>(s?.kind === 'agent' ? `/sites/${enc(id)}/agents` : null, { poll: 10000 })
+  const { data: s, error } = useResource<Site>(`/sites/${enc(id)}`, { poll: 3000 })
+  const { data: agents } = useResource<Agent[]>(s?.kind === 'agent' ? `/sites/${enc(id)}/agents` : null, { poll: 3000 })
   return (
     <Drawer onClose={onClose} width={620}>
       {error && <div className="alert alert-bad">{error.message}</div>}
@@ -117,7 +117,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
                 ) : <span className="muted">{t('No agent connected. Install one with the site token.')}</span>}
               </Section>
               <Section title={t('Install an agent')}>
-                <AgentInstructions token="<TOKEN>" />
+                <AgentInstructions site={s} token="<TOKEN>" />
               </Section>
             </>
           )}
@@ -127,21 +127,117 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   )
 }
 
-function agentCommand(token: string) {
-  const server = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:18443/agent/connect`
-  return `DUCKJUMP_AGENT_TOKEN=${token} duckjump-agent \\\n  -server ${server} \\\n  -allow 192.168.1.0/24:22,3389,5900`
-}
+function AgentInstructions({ site, token }: { site?: Site; token: string }) {
+  const [allow, setAllow] = useState('0.0.0.0/0:22,3389,5900')
+  const [mode, setMode] = useState<'service' | 'manual'>('service')
 
-function AgentInstructions({ token }: { token: string }) {
-  const cmd = agentCommand(token)
+  const envUrl = (import.meta.env.VITE_FRONTEND_URL as string | undefined) ||
+    (import.meta.env.FRONTEND_URL as string | undefined) ||
+    (import.meta.env.FRONTENDURL as string | undefined) ||
+    (import.meta.env.DUCKJUMP_FRONTEND_URL as string | undefined)
+  const frontendUrl = (site?.frontend_url || envUrl || `${location.protocol}//${location.host}`).replace(/\/+$/, '')
+  const downloadUrl = site?.agent_download_url || `${frontendUrl}/agent/duckjump-agent`
+  const installUrl = site?.agent_install_url || `${frontendUrl}/agent/install.sh`
+  const defaultServer = site?.agent_server_url || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/agent/connect`
+  const [server, setServer] = useState(defaultServer)
+
+  const cleanAllow = allow.trim() || '0.0.0.0/0:22,3389,5900'
+  const cleanServer = server.trim() || defaultServer
+
+  const serviceCmd = token && token !== '<TOKEN>'
+    ? `curl -fsSL "${installUrl}?token=${encodeURIComponent(token)}&server=${encodeURIComponent(cleanServer)}&allow=${encodeURIComponent(cleanAllow)}" | sudo bash`
+    : `curl -fsSL "${installUrl}?server=${encodeURIComponent(cleanServer)}&allow=${encodeURIComponent(cleanAllow)}" | sudo DUCKJUMP_AGENT_TOKEN="<TOKEN>" bash`
+
+  const manualCmd = `curl -fsSL ${downloadUrl} -o duckjump-agent && chmod +x duckjump-agent && \\\n  DUCKJUMP_AGENT_TOKEN=${token} ./duckjump-agent \\\n  -server ${cleanServer} \\\n  -allow ${cleanAllow}`
+
+  const cmd = mode === 'service' ? serviceCmd : manualCmd
+
+  const presets = [
+    { label: '0.0.0.0/0', val: '0.0.0.0/0:22,3389,5900' },
+    { label: '10.0.0.0/8', val: '10.0.0.0/8:22,3389,5900' },
+    { label: '192.168.1.0/24', val: '192.168.1.0/24:22,3389,5900' },
+    { label: '172.16.0.0/12', val: '172.16.0.0/12:22,3389,5900' },
+  ]
+
   return (
-    <>
-      <p className="help">{t('Run it on a machine inside the closed network. It only opens outbound connections. Adjust -allow to the networks and ports it may reach: the agent refuses everything else, whatever the bastion asks.')}</p>
-      <div className="code-block">
-        <pre className="mono">{cmd}</pre>
-        <button className="icon-btn" title={t('Copy')} onClick={() => (copy(cmd.replace(/\\\n\s+/g, ' ')), toast.ok(t('Copied')))}><Copy size={14} /></button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <p className="help">
+        {t('Run it on a machine inside the closed network. It only opens outbound connections. Adjust -allow to the networks and ports it may reach: the agent refuses everything else, whatever the bastion asks.')}
+      </p>
+
+      <div className="field">
+        <span>{t('Allowed networks & ports (-allow)')}</span>
+        <input
+          value={allow}
+          onChange={(e) => setAllow(e.target.value)}
+          placeholder="0.0.0.0/0:22,3389,5900"
+          className="mono"
+        />
+        <div className="row gap" style={{ marginTop: 4, flexWrap: 'wrap' }}>
+          <span className="muted small">{t('Presets:')}</span>
+          {presets.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              className={`btn btn-sm ${allow === p.val ? 'on' : 'btn-ghost'}`}
+              style={{ height: 22, padding: '0 6px', fontSize: 11 }}
+              onClick={() => setAllow(p.val)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
-    </>
+
+      <div className="field">
+        <span>{t('Gateway agent endpoint (-server)')}</span>
+        <input
+          value={server}
+          onChange={(e) => setServer(e.target.value)}
+          placeholder={defaultServer}
+          className="mono"
+        />
+        <small className="help">
+          {t('The WebSocket address where the agent connects (e.g. Tailscale or private IP).')}
+        </small>
+      </div>
+
+      <div className="row gap" style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+        <div className="seg seg-text">
+          <button
+            type="button"
+            className={mode === 'service' ? 'on' : ''}
+            onClick={() => setMode('service')}
+          >
+            {t('Systemd service')}
+          </button>
+          <button
+            type="button"
+            className={mode === 'manual' ? 'on' : ''}
+            onClick={() => setMode('manual')}
+          >
+            {t('Run directly')}
+          </button>
+        </div>
+        {mode === 'service' && (
+          <span className="muted small">{t('Installs and enables duckjump-agent.service')}</span>
+        )}
+      </div>
+
+      <div className="code-block">
+        <pre className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cmd}</pre>
+        <button
+          className="icon-btn"
+          title={t('Copy')}
+          onClick={() => {
+            copy(cmd.replace(/\\\n\s+/g, ' '))
+            toast.ok(t('Copied'))
+          }}
+        >
+          <Copy size={14} />
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -154,7 +250,7 @@ function TokenDialog({ site, onClose }: { site: Site; onClose: () => void }) {
         <pre className="mono">{site.agent_token}</pre>
         <button className="icon-btn" title={t('Copy')} onClick={() => (copy(site.agent_token || ''), toast.ok(t('Copied')))}><Copy size={14} /></button>
       </div>
-      <AgentInstructions token={site.agent_token || ''} />
+      <AgentInstructions site={site} token={site.agent_token || ''} />
     </Modal>
   )
 }

@@ -70,6 +70,15 @@ type Server struct {
 	// that may open any connection. PoC only; never expose it.
 	Dev bool
 
+	// FrontendURL is the public base URL of the frontend/gateway (e.g. https://bastion.example.com).
+	FrontendURL string
+	// AgentBinPath overrides the location of duckjump-agent binary to serve.
+	AgentBinPath string
+	// AgentListen is the address where edge agents connect (e.g. 0.0.0.0:18443).
+	AgentListen string
+	// AgentServerURL overrides the WebSocket URL edge agents connect to.
+	AgentServerURL string
+
 	limiter  *auth.Limiter
 	live     liveSessions
 	checkMu  sync.Mutex
@@ -82,6 +91,13 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// Methodless so it does not clash with the /api/ catch-all; static() allows only GET/HEAD.
 	mux.Handle("/", s.static())
+
+	// Edge agent binary download, install script and connect.
+	mux.HandleFunc("GET /agent/duckjump-agent", s.DownloadAgent)
+	mux.HandleFunc("GET /agent/install.sh", s.ServeAgentInstallScript)
+	if s.Hub != nil {
+		mux.HandleFunc("GET /agent/connect", s.Hub.ServeAgent)
+	}
 
 	// Authentication and the caller's own account.
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)

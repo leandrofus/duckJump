@@ -1,0 +1,121 @@
+---
+interface Props {
+  lang?: 'en' | 'es';
+}
+
+const { lang = 'en' } = Astro.props;
+const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const isEs = lang === 'es';
+
+const rows = isEs ? [
+  {
+    feature: "Web Gateway",
+    guac: "Java (Tomcat / Servlet container)",
+    dj: "Go, binario único con la interfaz web React embebida",
+  },
+  {
+    feature: "Session Daemon",
+    guac: "guacd, escrito en C",
+    dj: "duckjumpd, en Rust; RDP en IronRDP; un proceso por sesión",
+  },
+  {
+    feature: "Protocolo interno",
+    guac: "Guacamole (texto)",
+    dj: "DJTP, protocolo binario nativo con ACK flow control",
+  },
+  {
+    feature: "Terminal SSH",
+    guac: "Rasterizado en servidor y enviado como imágenes",
+    dj: "Stream PTY directo, renderizado en el navegador con xterm.js",
+  },
+  {
+    feature: "Credenciales",
+    guac: "Guardadas en la configuración de conexión",
+    dj: "Bóveda cifrada (AES-256-GCM), inyectada gateway → daemon en memoria",
+  },
+  {
+    feature: "Puesta en marcha",
+    guac: "Tomcat + base de datos externa + guacd",
+    dj: "SQLite embebido, paquetes rpm/deb con servicios listos para correr",
+  },
+  {
+    feature: "Alta Disponibilidad (HA)",
+    guac: "Requiere cluster Tomcat + balanceo guacd externo y DB manual",
+    dj: "Soporte nativo PostgreSQL para clusters activos, heartbeats y failover automático",
+  },
+] : [
+  {
+    feature: "Web gateway",
+    guac: "Java (Tomcat)",
+    dj: "Go, a single binary with the UI embedded",
+  },
+  {
+    feature: "Session daemon",
+    guac: "guacd, in C",
+    dj: "duckjumpd, in Rust; RDP on IronRDP, one process per session",
+  },
+  {
+    feature: "Internal protocol",
+    guac: "Guacamole (text)",
+    dj: "DJTP, a native binary protocol with ACK flow control",
+  },
+  {
+    feature: "SSH terminal",
+    guac: "Rasterized on the server, sent as images",
+    dj: "Raw PTY stream, rendered in the browser by xterm.js",
+  },
+  {
+    feature: "Credentials",
+    guac: "Stored in the connection settings",
+    dj: "Encrypted vault (AES-256-GCM), injected gateway → daemon only",
+  },
+  {
+    feature: "Getting started",
+    guac: "Tomcat + external database + guacd",
+    dj: "Embedded SQLite, rpm/deb packages with services ready to run",
+  },
+  {
+    feature: "High Availability (HA)",
+    guac: "Requires Tomcat clustering + external guacd proxy + manual DB",
+    dj: "Native PostgreSQL clustering with session heartbeats, orphan cleanup and distributed kill",
+  },
+];
+---
+
+<section id="vs-guacamole" class="wrap block">
+  <h2>{isEs ? 'Una reimaginación de Apache Guacamole' : 'A reimagining of Apache Guacamole'}</h2>
+
+  <div class="comp-table-wrap">
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th>{isEs ? 'Componente' : 'Component'}</th>
+          <th>Apache Guacamole</th>
+          <th style="color: var(--duck);">duckJump</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr>
+            <td style="font-weight: 600; color: var(--ink); white-space: nowrap;">
+              {row.feature}
+            </td>
+            <td style="color: var(--muted);">
+              {row.guac}
+            </td>
+            <td style="font-weight: 500; color: var(--ink);">
+              <span style="color: var(--duck); margin-right: 4px;">✓</span>
+              {row.dj}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="more">
+    <a href={`${baseUrl}/docs/architecture/`}>
+      {isEs ? 'Ver arquitectura y protocolo DJTP →' : 'Architecture & DJTP protocol →'}
+    </a>
+  </p>
+</section>

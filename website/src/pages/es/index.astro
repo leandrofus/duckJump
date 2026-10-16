@@ -1,0 +1,36 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Hero from '../../components/Hero.astro';
+import Quickstart from '../../components/Quickstart.astro';
+import Features from '../../components/Features.astro';
+import GuacamoleComparison from '../../components/GuacamoleComparison.astro';
+import Architecture from '../../components/Architecture.astro';
+import Footer from '../../components/Footer.astro';
+---
+
+<Layout 
+  lang="es"
+  title="duckJump — Bastión PAM sin clientes en Go y Rust"
+  description="Reimaginación de Apache Guacamole: terminal y escritorio web con bóveda de credenciales cifrada, permisos JIT temporales y auditoría a prueba de manipulación."
+>
+  <!-- Hero Section con Header y Ondas -->
+  <Hero lang="es" />
+
+  <!-- Sección de Instalación sobrepuesta -->
+  <Quickstart lang="es" />
+
+  <!-- Secciones Principales -->
+  <main>
+    <!-- Lo que obtienes en el navegador -->
+    <Features lang="es" />
+
+    <!-- Una reimaginación de Apache Guacamole -->
+    <GuacamoleComparison lang="es" />
+
+    <!-- Accede a cualquier host, sin exponer credenciales + Diseñado para estar junto a producción -->
+    <Architecture lang="es" />
+  </main>
+
+  <!-- Footer -->
+  <Footer lang="es" />
+</Layout>

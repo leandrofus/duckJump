@@ -6,17 +6,19 @@
 #      PG=1 deploy/dev.sh     -> base PostgreSQL (deploy/postgres.sh) en vez de SQLite
 #      S3=1 deploy/dev.sh     -> grabaciones terminadas en MinIO (deploy/minio.sh)
 #      LISTEN=127.0.0.1:8089 deploy/dev.sh -> otra dirección para el gateway
+#      FRONTEND_URL=http://... deploy/dev.sh -> URL pública para el frontend y descargas del agente
 #      deploy/dev.sh stop
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RUN=$ROOT/.dev
 LISTEN=${LISTEN:-127.0.0.1:8088}
 GW=$ROOT/gateway/bin/duckjump-gw
+ENGINE=${ENGINE:-$(command -v docker || command -v podman || echo "")}
 
 stop() {
   [[ -f $RUN/pids ]] && kill $(cat "$RUN/pids") 2>/dev/null || true
   rm -f "$RUN/pids"
-  podman rm -f duckjump-sshd duckjump-vnc duckjump-rdp >/dev/null 2>&1 || true
+  [[ -n $ENGINE ]] && "$ENGINE" rm -f duckjump-sshd duckjump-vnc duckjump-rdp >/dev/null 2>&1 || true
   "$ROOT/deploy/edge.sh" stop >/dev/null 2>&1 || true
   "$ROOT/deploy/keycloak.sh" stop >/dev/null 2>&1 || true
 }
@@ -38,25 +40,27 @@ if command -v bun >/dev/null && [[ ! -f $ROOT/gateway/internal/server/ui/dist/in
 fi
 (cd "$ROOT/gateway" && go build -o bin/duckjump-gw ./cmd/duckjump-gw && CGO_ENABLED=0 go build -o bin/duckjump-agent ./cmd/duckjump-agent)
 
-podman run -d --rm --name duckjump-sshd -p 127.0.0.1:2222:2222 \
-  -e PASSWORD_ACCESS=true -e USER_NAME=duckjump -e USER_PASSWORD=duckjump123 \
-  docker.io/linuxserver/openssh-server:latest >/dev/null
+if [[ -n $ENGINE ]]; then
+  "$ENGINE" run -d --rm --name duckjump-sshd -p 127.0.0.1:2222:2222 \
+    -e PASSWORD_ACCESS=true -e USER_NAME=duckjump -e USER_PASSWORD=duckjump123 \
+    docker.io/linuxserver/openssh-server:latest >/dev/null
 
-# Escritorio VNC de prueba (Xvfb + x11vnc + twm + xterm), contraseña vncpass123.
-podman run -d --name duckjump-vnc -p 127.0.0.1:5900:5900 docker.io/library/alpine:3.20 sh -c '
-  apk add --no-cache xvfb x11vnc xterm twm font-misc-misc xsetroot >/dev/null &&
-  (Xvfb :0 -screen 0 1280x800x24 &) && sleep 2 && export DISPLAY=:0 &&
-  xsetroot -solid "#2b4a6f" && (twm &) && (xterm -geometry 90x28+40+40 -bg "#101418" -fg "#d8e0e8" &) &&
-  exec x11vnc -display :0 -forever -shared -passwd vncpass123 -rfbport 5900 -noxdamage -quiet' >/dev/null
+  # Escritorio VNC de prueba (Xvfb + x11vnc + twm + xterm), contraseña vncpass123.
+  "$ENGINE" run -d --name duckjump-vnc -p 127.0.0.1:5900:5900 docker.io/library/alpine:3.20 sh -c '
+    apk add --no-cache xvfb x11vnc xterm twm font-misc-misc xsetroot >/dev/null &&
+    (Xvfb :0 -screen 0 1280x800x24 &) && sleep 2 && export DISPLAY=:0 &&
+    xsetroot -solid "#2b4a6f" && (twm &) && (xterm -geometry 90x28+40+40 -bg "#101418" -fg "#d8e0e8" &) &&
+    exec x11vnc -display :0 -forever -shared -passwd vncpass123 -rfbport 5900 -noxdamage -quiet' >/dev/null
 
-# Servidor RDP de prueba (xrdp + Xorg + twm + xterm), usuario rdpuser / rdppass123.
-podman run -d --name duckjump-rdp -p 127.0.0.1:3389:3389 docker.io/library/alpine:3.20 sh -c '
-  apk add --no-cache xrdp xorgxrdp xorg-server xterm twm font-misc-misc xsetroot openssl >/dev/null
-  id rdpuser >/dev/null 2>&1 || { adduser -D rdpuser && echo "rdpuser:rdppass123" | chpasswd; }
-  printf "#!/bin/sh\nxsetroot -solid \"#3d2b6f\" &\nxterm -geometry 90x28+40+40 &\nexec twm\n" > /etc/xrdp/startwm.sh && chmod +x /etc/xrdp/startwm.sh
-  [ -f /etc/xrdp/cert.pem ] || openssl req -x509 -newkey rsa:2048 -nodes -keyout /etc/xrdp/key.pem -out /etc/xrdp/cert.pem -days 365 -subj /CN=duckjump-rdp 2>/dev/null
-  sed -i "s|^certificate=.*|certificate=/etc/xrdp/cert.pem|; s|^key_file=.*|key_file=/etc/xrdp/key.pem|" /etc/xrdp/xrdp.ini
-  xrdp-keygen xrdp auto >/dev/null 2>&1; xrdp-sesman --nodaemon & sleep 1; exec xrdp --nodaemon' >/dev/null
+  # Servidor RDP de prueba (xrdp + Xorg + twm + xterm), usuario rdpuser / rdppass123.
+  "$ENGINE" run -d --name duckjump-rdp -p 127.0.0.1:3389:3389 docker.io/library/alpine:3.20 sh -c '
+    apk add --no-cache xrdp xorgxrdp xorg-server xterm twm font-misc-misc xsetroot openssl >/dev/null
+    id rdpuser >/dev/null 2>&1 || { adduser -D rdpuser && echo "rdpuser:rdppass123" | chpasswd; }
+    printf "#!/bin/sh\nxsetroot -solid \"#3d2b6f\" &\nxterm -geometry 90x28+40+40 &\nexec twm\n" > /etc/xrdp/startwm.sh && chmod +x /etc/xrdp/startwm.sh
+    [ -f /etc/xrdp/cert.pem ] || openssl req -x509 -newkey rsa:2048 -nodes -keyout /etc/xrdp/key.pem -out /etc/xrdp/cert.pem -days 365 -subj /CN=duckjump-rdp 2>/dev/null
+    sed -i "s|^certificate=.*|certificate=/etc/xrdp/cert.pem|; s|^key_file=.*|key_file=/etc/xrdp/key.pem|" /etc/xrdp/xrdp.ini
+    xrdp-keygen xrdp auto >/dev/null 2>&1; xrdp-sesman --nodaemon & sleep 1; exec xrdp --nodaemon' >/dev/null
+fi
 
 if [[ -n ${SSO:-} ]]; then
   "$ROOT/deploy/keycloak.sh" start
@@ -81,11 +85,12 @@ export DUCKJUMP_MASTER_KEY=$(cat "$RUN/master.key")
 
 # SQL directo sobre la base de desarrollo, sea SQLite o PostgreSQL.
 q() {
-  if [[ $DUCKJUMP_DB == postgres://* ]]; then docker exec duckjump-postgres psql -U duckjump -d duckjump -tAc "$1"
-  else sqlite3 "$DUCKJUMP_DB" "$1"; fi
+  if [[ $DUCKJUMP_DB == postgres://* ]]; then "$ENGINE" exec duckjump-postgres psql -U duckjump -d duckjump -tAc "$1"
+  elif command -v sqlite3 >/dev/null 2>&1; then sqlite3 "$DUCKJUMP_DB" "$1"
+  else python3 -c 'import sqlite3, sys; con = sqlite3.connect(sys.argv[1]); cur = con.cursor(); cur.execute(sys.argv[2]); con.commit(); [print("\t".join(str(x) for x in row)) for row in cur.fetchall()]' "$DUCKJUMP_DB" "$1"; fi
 }
 # Base de la PoC anterior (otro esquema): se recrea.
-if [[ $DUCKJUMP_DB != postgres://* && -f $DUCKJUMP_DB ]] && ! sqlite3 "$DUCKJUMP_DB" "SELECT 1 FROM config_users LIMIT 1" >/dev/null 2>&1; then
+if [[ $DUCKJUMP_DB != postgres://* && -f $DUCKJUMP_DB ]] && ! q "SELECT 1 FROM config_users LIMIT 1" >/dev/null 2>&1; then
   echo "base con esquema viejo: recreando"
   rm -f "$DUCKJUMP_DB" "$DUCKJUMP_DB-wal" "$DUCKJUMP_DB-shm" "$RUN/edge.token"
 fi
@@ -111,10 +116,16 @@ q "UPDATE config_connections SET host_key = NULL WHERE name = 'sshd-local'" >/de
 # Bases de antes de las MAC de auditoría: sellar la cadena (idempotente).
 "$GW" audit-seal >/dev/null
 
-"$D" --recordings "$RUN/rec" > "$RUN/duckjumpd.log" 2>&1 & echo $! > "$RUN/pids"
+nohup "$D" --recordings "$RUN/rec" > "$RUN/duckjumpd.log" 2>&1 & echo $! > "$RUN/pids"
 # -agent-listen en 0.0.0.0: los contenedores llegan al host por host.containers.internal.
 # -trust-on-first-use: los contenedores de prueba cambian de clave en cada arranque;
 # en producción las claves nuevas esperan la aprobación de un admin.
-"$GW" serve ${DEV:+-dev} -trust-on-first-use -listen "$LISTEN" -agent-listen 0.0.0.0:18443 -recordings "$RUN/rec" -files "$RUN/files" > "$RUN/gw.log" 2>&1 & echo $! >> "$RUN/pids"
-sleep 3
-echo "listo: http://$LISTEN   usuario admin / duckjump-admin-123   (logs y grabaciones en $RUN)"
+nohup "$GW" serve ${DEV:+-dev} -trust-on-first-use -listen "$LISTEN" ${AGENT_LISTEN:+-agent-listen "$AGENT_LISTEN"} -trusted-proxies 127.0.0.1/32 ${FRONTEND_URL:+-frontend-url "$FRONTEND_URL"} -recordings "$RUN/rec" -files "$RUN/files" > "$RUN/gw.log" 2>&1 & echo $! >> "$RUN/pids"
+if [[ -n ${FOREGROUND:-} ]]; then
+  echo "listo: http://$LISTEN   usuario admin / duckjump-admin-123   (logs y grabaciones en $RUN)"
+  wait $(cat "$RUN/pids")
+else
+  disown -a
+  sleep 3
+  echo "listo: http://$LISTEN   usuario admin / duckjump-admin-123   (logs y grabaciones en $RUN)"
+fi

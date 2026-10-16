@@ -1,0 +1,79 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout 
+  title="Access Grants & JIT PAM" 
+  description="Manage Privileged Access Management (PAM), Just-In-Time grants, live session termination, and RBAC roles."
+  currentSlug="pam-grants"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-mono mb-3">
+        Privileged Access Management
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        Access Grants & Just-In-Time (JIT) PAM
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        Unlike traditional bastions where user permissions are static, duckJump enforces granular, time-bound access grants that are actively validated throughout the life of every session.
+      </p>
+    </div>
+
+    <!-- The Grant Concept -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. Universal Access Grants</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        In duckJump, nobody bypasses access grants—including superadmins. An access grant defines:
+      </p>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li><strong>Principal:</strong> A specific local/SSO user, or a group synchronized from your OIDC provider.</li>
+        <li><strong>Target Scope:</strong> An individual connection, a whole folder hierarchy (e.g., <code class="text-amber-300">Production / Database Cluster</code>), or a tag (e.g., <code class="text-sky-400">#tier-1-prod</code>).</li>
+        <li><strong>Permissions:</strong> Connect permission, plus granular <code class="text-emerald-400">can_upload</code> and <code class="text-emerald-400">can_download</code> file tray permissions.</li>
+        <li><strong>Expiry (JIT):</strong> Optional expiration timestamp. When the grant expires, access is revoked automatically.</li>
+      </ul>
+    </div>
+
+    <!-- Live Enforcement & Kill -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. Real-Time Session Enforcement</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Access grants are not just checked at session handshake:
+      </p>
+      <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2 text-xs text-slate-300">
+        <p><strong class="text-amber-400">Automated Termination:</strong> If a grant reaches its expiration time while a user is actively typing in a terminal or moving the mouse in an RDP session, the gateway terminates the connection immediately.</p>
+        <p><strong class="text-rose-400">Emergency Revocation:</strong> Administrators can revoke a grant or disable a user account in the UI or via CLI; all corresponding live sessions are severed within milliseconds.</p>
+      </div>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
+        <div class="text-slate-500"># Terminate any active session via CLI:</div>
+        <div class="text-amber-400">duckjump-gw kill &lt;session-id&gt;</div>
+      </div>
+    </div>
+
+    <!-- Role Matrix -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. System Roles & RBAC</h2>
+      <div class="divide-y divide-slate-800 text-xs text-slate-300 border border-slate-800 rounded-lg overflow-hidden">
+        <div class="p-3 bg-slate-950 grid grid-cols-1 md:grid-cols-4 gap-2">
+          <span class="font-bold text-amber-400">superadmin</span>
+          <span class="md:col-span-3">Full control over settings, certificates, edge agent tokens, system user administration, and raw database migrations.</span>
+        </div>
+        <div class="p-3 bg-slate-900 grid grid-cols-1 md:grid-cols-4 gap-2">
+          <span class="font-bold text-sky-400">admin</span>
+          <span class="md:col-span-3">Creates connections, folders, and tags; issues access grants to users/groups; manages stored secrets and pins target certificates.</span>
+        </div>
+        <div class="p-3 bg-slate-950 grid grid-cols-1 md:grid-cols-4 gap-2">
+          <span class="font-bold text-purple-400">auditor</span>
+          <span class="md:col-span-3">Read-only access to chained audit logs, session recordings player, and file transfer forensics. Cannot launch connections or view secrets.</span>
+        </div>
+        <div class="p-3 bg-slate-900 grid grid-cols-1 md:grid-cols-4 gap-2">
+          <span class="font-bold text-slate-300">user</span>
+          <span class="md:col-span-3">Standard operator. Can only view and launch connections granted explicitly to their account or groups.</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</DocsLayout>

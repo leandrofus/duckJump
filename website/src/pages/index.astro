@@ -1,0 +1,32 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Hero from '../components/Hero.astro';
+import Quickstart from '../components/Quickstart.astro';
+import Features from '../components/Features.astro';
+import GuacamoleComparison from '../components/GuacamoleComparison.astro';
+import Architecture from '../components/Architecture.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<Layout lang="en">
+  <!-- Hero Section with Header & Waves (ducktainer style) -->
+  <Hero lang="en" />
+
+  <!-- Overlapping Install Section -->
+  <Quickstart lang="en" />
+
+  <!-- Main Content Sections -->
+  <main>
+    <!-- What you get in the browser -->
+    <Features lang="en" />
+
+    <!-- A reimagining of Apache Guacamole -->
+    <GuacamoleComparison lang="en" />
+
+    <!-- Reach every host, without exposing credentials + Built to sit next to production -->
+    <Architecture lang="en" />
+  </main>
+
+  <!-- Footer -->
+  <Footer lang="en" />
+</Layout>

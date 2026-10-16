@@ -124,17 +124,25 @@ func toFolder(f db.ConfigFolder) folderDTO {
 //   agents_online: { type: integer, description: Agent sites only. }
 //   created_at: { type: string, format: date-time }
 //   agent_token: { type: string, description: Only when created or rotated. Store it; it is not shown again. }
+//   agent_download_url: { type: string, description: Download URL for the edge agent binary. }
+//   agent_install_url: { type: string, description: Installer script URL to install the edge agent as a systemd service. }
+//   agent_server_url: { type: string, description: WebSocket URL the edge agent connects to. }
+//   frontend_url: { type: string, description: Base URL where the frontend/gateway is reached. }
 
 type siteDTO struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Kind            string    `json:"kind"`
-	Description     string    `json:"description"`
-	ConnectionCount *int64    `json:"connection_count,omitempty"`
-	AgentsOnline    *int      `json:"agents_online,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Kind             string    `json:"kind"`
+	Description      string    `json:"description"`
+	ConnectionCount  *int64    `json:"connection_count,omitempty"`
+	AgentsOnline     *int      `json:"agents_online,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
 	// Only in the responses that create or rotate it.
-	AgentToken string `json:"agent_token,omitempty"`
+	AgentToken       string    `json:"agent_token,omitempty"`
+	AgentDownloadURL string    `json:"agent_download_url,omitempty"`
+	AgentInstallURL  string    `json:"agent_install_url,omitempty"`
+	AgentServerURL   string    `json:"agent_server_url,omitempty"`
+	FrontendURL      string    `json:"frontend_url,omitempty"`
 }
 
 // openapi:schema Secret

@@ -1,0 +1,111 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout 
+  title="REST API & OpenAPI 3.1" 
+  description="duckJump REST API specification: authentication, CSRF protection, and OpenAPI 3.1 contract."
+  currentSlug="api"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 text-xs font-mono mb-3">
+        Developer Interface
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        REST API & OpenAPI 3.1
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        Everything manageable through the duckJump web dashboard is 100% accessible via a versioned REST API described in OpenAPI 3.1.
+      </p>
+    </div>
+
+    <!-- Auth and CSRF -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. Authentication & CSRF Protection</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        The API resides under the prefix <code class="text-amber-300">/api/v1</code>.
+      </p>
+
+      <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3 text-xs text-slate-300">
+        <div>
+          <span class="font-bold text-amber-400">Step 1 — Login:</span>
+          <pre class="bg-slate-950 p-2.5 rounded mt-1 font-mono text-slate-200">POST /api/v1/auth/login
+Content-Type: application/json
+&#123; "username": "admin", "password": "your-password" &#125;</pre>
+        </div>
+
+        <div>
+          <span class="font-bold text-sky-400">Step 2 — TOTP Challenge (if enabled):</span>
+          <pre class="bg-slate-950 p-2.5 rounded mt-1 font-mono text-slate-200">POST /api/v1/auth/totp
+Content-Type: application/json
+&#123; "code": "582194" &#125;</pre>
+        </div>
+
+        <div>
+          <span class="font-bold text-emerald-400">Mandatory CSRF Header:</span>
+          <p class="mt-1">All state-changing requests (<code class="text-white">POST</code>, <code class="text-white">PUT</code>, <code class="text-white">PATCH</code>, <code class="text-white">DELETE</code>) must include the custom header:</p>
+          <pre class="bg-slate-950 p-2 rounded mt-1 font-mono text-amber-300">X-DuckJump-Request: 1</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Core Endpoints Table -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. Core API Resource Groups</h2>
+      <div class="overflow-x-auto border border-slate-800 rounded-xl">
+        <table class="w-full text-left text-xs text-slate-300">
+          <thead class="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider text-[11px] border-b border-slate-800">
+            <tr>
+              <th class="p-3">Resource</th>
+              <th class="p-3">Path</th>
+              <th class="p-3">Supported Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800 font-mono">
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">Connections</td>
+              <td class="p-3">/api/v1/connections</td>
+              <td class="p-3 font-sans text-slate-300">List, create, update, delete SSH/RDP/VNC targets and pin certificates.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">Grants</td>
+              <td class="p-3">/api/v1/grants</td>
+              <td class="p-3 font-sans text-slate-300">Issue expiring JIT grants, list active grants, revoke immediately.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">Vault Secrets</td>
+              <td class="p-3">/api/v1/secrets</td>
+              <td class="p-3 font-sans text-slate-300">Store AES-256 encrypted passwords and private keys (write-only).</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">Live Sessions</td>
+              <td class="p-3">/api/v1/sessions</td>
+              <td class="p-3 font-sans text-slate-300">List active user sessions; <code class="text-rose-400">POST /sessions/&#123;id&#125;/kill</code> to terminate.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">Audit Ledger</td>
+              <td class="p-3">/api/v1/audit</td>
+              <td class="p-3 font-sans text-slate-300">Retrieve paginated cryptographically chained audit events.</td>
+            </tr>
+            <tr>
+              <td class="p-3 text-amber-400 font-bold">File Tray</td>
+              <td class="p-3">/api/v1/files</td>
+              <td class="p-3 font-sans text-slate-300">Upload to personal file tray, initiate audited host SFTP bridge transfers.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- OpenAPI Spec -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. OpenAPI Contract</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        The complete contract is available in the repository at <code class="text-amber-300">gateway/openapi/openapi.yaml</code>. It is generated automatically from inline Go handler docstrings during <code class="text-amber-300">make generate</code> and verified in CI.
+      </p>
+    </div>
+
+  </div>
+</DocsLayout>

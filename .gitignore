@@ -9,3 +9,8 @@ web/dist/
 *.db
 # internal planning notes
 docs/SCOPE.md
+# website
+website/node_modules/
+website/dist/
+website/.astro/
+

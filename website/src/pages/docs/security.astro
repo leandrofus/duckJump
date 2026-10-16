@@ -1,0 +1,69 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout 
+  title="Credential Vault & Key Pinning" 
+  description="Security architecture of duckJump: AES-256-GCM credential vault, master keys, and strict target certificate approval."
+  currentSlug="security"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-mono mb-3">
+        Cryptographic Security
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        Credential Vault & Host Key Pinning
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        DuckJump enforces a zero-knowledge credential philosophy: passwords and SSH private keys are never transmitted to the browser, and target host keys must be cryptographically verified.
+      </p>
+    </div>
+
+    <!-- Master Key & Vault -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. In-Memory Credential Vault</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        Credentials stored in duckJump (SSH private keys, passwords, passphrase secrets) are encrypted with <strong class="text-white">AES-256-GCM</strong>.
+      </p>
+
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-800 text-xs font-mono text-slate-300 space-y-2">
+        <div class="text-amber-400 font-bold">Master Key Location:</div>
+        <div>/etc/duckjump/master.key (File permissions: 0600, owned by root/duckjump)</div>
+      </div>
+
+      <div class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-200">
+        <strong class="font-bold">CRITICAL BACKUP REQUIREMENT:</strong> Always backup <code class="text-white">/etc/duckjump/master.key</code> together with the database in <code class="text-white">/var/lib/duckjump</code>. Without this master key, the vault cannot be decrypted, making stored secrets permanently unrecoverable.
+      </div>
+    </div>
+
+    <!-- Zero-Knowledge Guarantee -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. Zero Browser Exposure</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        When an authorized user launches an SSH or RDP connection:
+      </p>
+      <ol class="list-decimal pl-5 text-sm text-slate-300 space-y-2">
+        <li>The browser sends a connection request with the authenticated session cookie.</li>
+        <li>The gateway checks that an active, non-expired Access Grant exists for that user on the connection.</li>
+        <li>The gateway pulls the encrypted secret from the vault, decrypts it in gateway memory, and injects it over the secure DJTP TCP/TLS link to <code class="text-amber-300">duckjumpd</code>.</li>
+        <li>The worker authenticates with the target host.</li>
+        <li>The user interacts exclusively with the remote desktop or terminal stream—the plaintext credentials never touch the browser DOM or network payload.</li>
+      </ol>
+    </div>
+
+    <!-- Host Key Pinning -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. Host Key & Certificate Pinning</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        To prevent Man-in-the-Middle (MITM) attacks and rogue hosts from intercepting sessions:
+      </p>
+      <ul class="list-disc pl-5 text-sm text-slate-300 space-y-2">
+        <li><strong>SSH Host Keys:</strong> On the first connection to an SSH server, the public host key fingerprint is recorded. If a key has not been approved by an administrator, the session is halted before any credentials or secrets are transmitted.</li>
+        <li><strong>RDP & VNC TLS Certificates:</strong> Target certificates (including self-signed or enterprise PKI certificates) are pinned by SHA-256 fingerprint. Any change halts the connection until an admin approves the new certificate fingerprint.</li>
+      </ul>
+    </div>
+
+  </div>
+</DocsLayout>

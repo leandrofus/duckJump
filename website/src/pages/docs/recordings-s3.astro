@@ -1,0 +1,69 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout 
+  title="Session Recordings & S3 Storage" 
+  description="Record SSH asciicast and graphical RDP/VNC sessions with direct streaming to AWS S3, MinIO, or Ceph."
+  currentSlug="recordings-s3"
+>
+  <div class="space-y-8">
+    
+    <div>
+      <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-xs font-mono mb-3">
+        Compliance & Archival
+      </div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        Session Recordings & S3 Storage
+      </h1>
+      <p class="text-slate-400 text-lg mt-2 leading-relaxed">
+        Record all privileged activity in high-fidelity formats with automated cloud object storage uploads and built-in browser playback.
+      </p>
+    </div>
+
+    <!-- Recording Formats -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">1. Native Recording Formats</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose">
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-2">
+          <div class="font-bold text-amber-400 text-sm">SSH: Asciicast (.cast)</div>
+          <p class="text-slate-300">Captures raw terminal output and exact timing timestamps. Playable in the browser with asciinema-player with full text search, copy-paste, and playback speed control.</p>
+        </div>
+        <div class="p-5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-2">
+          <div class="font-bold text-sky-400 text-sm">RDP & VNC: Native Graphical Stream</div>
+          <p class="text-slate-300">Recorded using a custom high-efficiency delta stream format. Stores tile updates and cursor movements without the massive disk bloat of raw MP4 video re-encoding.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- S3 Object Storage -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">2. Object Storage Configuration (S3 / MinIO)</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        By default, recordings are saved to local disk. For multi-node deployments or long-term retention, configure S3-compatible storage. <code class="text-amber-300">duckjumpd</code> uploads the recording upon session finish and deletes the local file:
+      </p>
+
+      <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-1 overflow-x-auto">
+        <div class="text-slate-500"># Set in /etc/duckjump/duckjump.env (for both gateway and duckjumpd):</div>
+        <div>DUCKJUMP_S3_ENDPOINT="https://s3.eu-central-1.amazonaws.com"</div>
+        <div>DUCKJUMP_S3_BUCKET="my-duckjump-recordings"</div>
+        <div>DUCKJUMP_S3_REGION="eu-central-1"</div>
+        <div>DUCKJUMP_S3_ACCESS_KEY="AKIA..."</div>
+        <div>DUCKJUMP_S3_SECRET_KEY="secret-key"</div>
+        <div class="text-slate-500 pt-1"># For MinIO or self-hosted Ceph S3:</div>
+        <div class="text-amber-400">DUCKJUMP_S3_PATH_STYLE=1</div>
+        <div class="text-slate-500 pt-1"># Storage prefix:</div>
+        <div>DUCKJUMP_S3_PREFIX="recordings/"</div>
+      </div>
+    </div>
+
+    <!-- Resilience -->
+    <div class="space-y-4 pt-4 border-t border-slate-800">
+      <h2 class="text-2xl font-bold text-white tracking-tight">3. Network Outage Resilience</h2>
+      <p class="text-slate-300 text-sm leading-relaxed">
+        If object storage is temporarily unreachable when a session closes, <code class="text-amber-300">duckjumpd</code> retains the recording file on local disk and retries the upload every 60 seconds until confirmed. Once uploaded, the gateway handles sizing, download, and retention purges directly from the bucket.
+      </p>
+    </div>
+
+  </div>
+</DocsLayout>
