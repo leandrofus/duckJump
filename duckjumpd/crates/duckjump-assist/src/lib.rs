@@ -1,0 +1,12 @@
+//! duckJump Assist: on-demand, attended remote support. The library runs a
+//! session ([`session::run_session`]); the `duckjump-assist` binary and the
+//! desktop app are front ends to it.
+
+pub mod capture;
+pub mod input;
+pub mod session;
+pub mod totp;
+pub mod wayland;
+
+pub use session::{format_verification_code, run_session, EndReason, Event, SessionConfig};
+pub use tokio_util::sync::CancellationToken;
