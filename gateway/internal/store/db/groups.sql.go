@@ -11,7 +11,7 @@ import (
 )
 
 const addGroupMember = `-- name: AddGroupMember :exec
-INSERT INTO config_group_members (group_id, user_id) VALUES (?1, ?2)
+INSERT INTO config_group_members (group_id, user_id) VALUES ($1, $2)
 ON CONFLICT DO NOTHING
 `
 
@@ -27,7 +27,7 @@ func (q *Queries) AddGroupMember(ctx context.Context, arg AddGroupMemberParams) 
 
 const createGroup = `-- name: CreateGroup :exec
 INSERT INTO config_groups (id, name, description, source, created_at)
-VALUES (?1, ?2, ?3, ?4, ?5)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type CreateGroupParams struct {
@@ -50,7 +50,7 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error 
 }
 
 const deleteGroup = `-- name: DeleteGroup :execrows
-DELETE FROM config_groups WHERE id = ?1
+DELETE FROM config_groups WHERE id = $1
 `
 
 func (q *Queries) DeleteGroup(ctx context.Context, id string) (int64, error) {
@@ -62,7 +62,7 @@ func (q *Queries) DeleteGroup(ctx context.Context, id string) (int64, error) {
 }
 
 const getGroup = `-- name: GetGroup :one
-SELECT id, name, description, source, created_at FROM config_groups WHERE id = ?1
+SELECT id, name, description, source, created_at FROM config_groups WHERE id = $1
 `
 
 func (q *Queries) GetGroup(ctx context.Context, id string) (ConfigGroup, error) {
@@ -78,10 +78,27 @@ func (q *Queries) GetGroup(ctx context.Context, id string) (ConfigGroup, error) 
 	return i, err
 }
 
+const getGroupByName = `-- name: GetGroupByName :one
+SELECT id, name, description, source, created_at FROM config_groups WHERE name = $1
+`
+
+func (q *Queries) GetGroupByName(ctx context.Context, name string) (ConfigGroup, error) {
+	row := q.db.QueryRowContext(ctx, getGroupByName, name)
+	var i ConfigGroup
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.Source,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listGroupMembers = `-- name: ListGroupMembers :many
-SELECT u.id, u.username, u.display_name, u.email, u.password_hash, u.totp_sealed, u.totp_enabled, u.source, u.role, u.disabled, u.created_at, u.updated_at, u.last_login_at FROM config_users u
+SELECT u.id, u.username, u.display_name, u.email, u.password_hash, u.totp_sealed, u.totp_enabled, u.source, u.role, u.disabled, u.created_at, u.updated_at, u.last_login_at, u.oidc_subject FROM config_users u
 JOIN config_group_members m ON m.user_id = u.id
-WHERE m.group_id = ?1 ORDER BY u.username
+WHERE m.group_id = $1 ORDER BY u.username
 `
 
 func (q *Queries) ListGroupMembers(ctx context.Context, groupID string) ([]ConfigUser, error) {
@@ -107,6 +124,7 @@ func (q *Queries) ListGroupMembers(ctx context.Context, groupID string) ([]Confi
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastLoginAt,
+			&i.OidcSubject,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +186,7 @@ func (q *Queries) ListGroups(ctx context.Context) ([]ListGroupsRow, error) {
 const listUserGroups = `-- name: ListUserGroups :many
 SELECT g.id, g.name, g.description, g.source, g.created_at FROM config_groups g
 JOIN config_group_members m ON m.group_id = g.id
-WHERE m.user_id = ?1 ORDER BY g.name
+WHERE m.user_id = $1 ORDER BY g.name
 `
 
 func (q *Queries) ListUserGroups(ctx context.Context, userID string) ([]ConfigGroup, error) {
@@ -201,7 +219,7 @@ func (q *Queries) ListUserGroups(ctx context.Context, userID string) ([]ConfigGr
 }
 
 const removeGroupMember = `-- name: RemoveGroupMember :execrows
-DELETE FROM config_group_members WHERE group_id = ?1 AND user_id = ?2
+DELETE FROM config_group_members WHERE group_id = $1 AND user_id = $2
 `
 
 type RemoveGroupMemberParams struct {
@@ -218,7 +236,7 @@ func (q *Queries) RemoveGroupMember(ctx context.Context, arg RemoveGroupMemberPa
 }
 
 const updateGroup = `-- name: UpdateGroup :exec
-UPDATE config_groups SET name = ?1, description = ?2 WHERE id = ?3
+UPDATE config_groups SET name = $1, description = $2 WHERE id = $3
 `
 
 type UpdateGroupParams struct {

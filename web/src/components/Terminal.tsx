@@ -7,6 +7,7 @@ import { RotateCw, Maximize2, Minimize2, Circle } from 'lucide-react'
 import { enc, wsURL } from '../lib/api'
 import { useMenu } from '../ui/ContextMenu'
 import type { PromptedCredentials } from './CredentialsDialog'
+import { sessionErrorText } from '../lib/session'
 
 const theme = {
   background: '#0e1726',
@@ -21,12 +22,14 @@ export type SessionState = 'connecting' | 'open' | 'closed' | 'error'
 
 /** A terminal session to a connection over the gateway's WebSocket tunnel:
  *  binary frames carry terminal bytes, text frames JSON control messages. */
-export function TerminalSession({ connectionId, title, recorded, credentials, onNeedCredentials }: {
+export function TerminalSession({ connectionId, title, recorded, credentials, onNeedCredentials, onUnverifiedKey }: {
   connectionId: string
   title: string
   recorded?: boolean
   credentials?: PromptedCredentials
   onNeedCredentials?: (code: string, reason: string) => void
+  /** The server shows a key nobody approved yet (its fingerprint). */
+  onUnverifiedKey?: (fingerprint: string) => void
 }) {
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<XTerm | null>(null)
@@ -76,9 +79,10 @@ export function TerminalSession({ connectionId, title, recorded, credentials, on
       } else if (m.type === 'error') {
         ended = true
         setState('error')
-        setMessage(m.message)
-        x.write(`\r\n\x1b[31m${m.message}\x1b[0m\r\n`)
+        setMessage(sessionErrorText(m))
+        x.write(`\r\n\x1b[31m${sessionErrorText(m)}\x1b[0m\r\n`)
         if (onNeedCredentials && (m.code === 'credentials_required' || (credentials && m.code === 'auth_failed'))) onNeedCredentials(m.code, m.message)
+        if (onUnverifiedKey && m.code === 'host_key_unverified' && m.fingerprint) onUnverifiedKey(m.fingerprint)
       }
     }
     ws.onclose = (ev) => {

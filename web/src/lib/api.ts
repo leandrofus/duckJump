@@ -1,7 +1,7 @@
 import { getLang } from '../i18n'
 import type { components } from './api-types'
 
-// Thin client for palta-gw's /api/v1. Types come from the OpenAPI contract
+// Thin client for duckjump-gw's /api/v1. Types come from the OpenAPI contract
 // (bun run gen-api, generated from the gateway's inline comments).
 
 export type Schemas = components['schemas']
@@ -19,6 +19,8 @@ export type Session = Schemas['Session']
 export type PortalConnection = Schemas['PortalConnection']
 export type AccessEntry = Schemas['AccessEntry']
 export type Me = Schemas['Me']
+export type TrayFile = Schemas['TrayFile']
+export type HostListing = Schemas['HostListing']
 
 export class ApiError extends Error {
   status: number
@@ -40,8 +42,8 @@ const noRedirect = ['/auth/login', '/auth/totp', '/auth/me']
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch('/api/v1' + path, {
     method,
-    // X-Palta-Request: required on every state-changing request (CSRF).
-    headers: { 'X-Palta-Request': '1', 'Accept-Language': getLang(), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+    // X-DuckJump-Request: required on every state-changing request (CSRF).
+    headers: { 'X-DuckJump-Request': '1', 'Accept-Language': getLang(), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
   })
@@ -66,6 +68,19 @@ export const api = {
 }
 
 export const enc = encodeURIComponent
+
+/** Uploads a file from this computer into my file tray. */
+export async function uploadToTray(file: File): Promise<TrayFile> {
+  const res = await fetch(`/api/v1/files?name=${enc(file.name)}`, {
+    method: 'POST',
+    headers: { 'X-DuckJump-Request': '1', 'Content-Type': 'application/octet-stream' },
+    body: file,
+    credentials: 'same-origin',
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new ApiError(res.status, data?.error || 'error', data?.message || res.statusText)
+  return data as TrayFile
+}
 
 export function wsURL(path: string) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'

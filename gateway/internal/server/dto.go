@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // JSON shapes returned by the API. Secrets, hashes and sealed values never
@@ -166,7 +166,7 @@ func toSecret(s db.ConfigSecret) secretDTO {
 
 // openapi:schema Connection
 // type: object
-// required: [id, name, protocol, host, port, folder_id, site_id, environment, description, tags, backend, credential_mode, secret_id, params, record, record_input, host_key, created_at, updated_at]
+// required: [id, name, protocol, host, port, folder_id, site_id, environment, description, tags, backend, credential_mode, secret_id, params, record, record_input, host_key, host_key_pending, created_at, updated_at]
 // properties:
 //   id: { type: string, format: uuid }
 //   name: { type: string }
@@ -185,6 +185,7 @@ func toSecret(s db.ConfigSecret) secretDTO {
 //   record: { type: boolean }
 //   record_input: { type: boolean }
 //   host_key: { type: [string, 'null'], description: Pinned SHA256 fingerprint. }
+//   host_key_pending: { type: [string, 'null'], description: 'Key the server presented with none pinned, waiting for an admin to approve it (PUT /connections/{id}/host-key).' }
 //   created_at: { type: string, format: date-time }
 //   updated_at: { type: string, format: date-time }
 
@@ -206,6 +207,7 @@ type connectionDTO struct {
 	Record         bool            `json:"record"`
 	RecordInput    bool            `json:"record_input"`
 	HostKey        *string         `json:"host_key"`
+	HostKeyPending *string         `json:"host_key_pending"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
@@ -216,12 +218,12 @@ func toConnection(c db.ConfigConnection, tags []string) connectionDTO {
 	}
 	return connectionDTO{c.ID, c.Name, c.Protocol, c.Host, c.Port, strPtr(c.FolderID), strPtr(c.SiteID),
 		c.Environment, c.Description, tags, c.Backend, c.CredentialMode, strPtr(c.SecretID),
-		json.RawMessage(c.Params), c.Record, c.RecordInput, strPtr(c.HostKey), c.CreatedAt.UTC(), c.UpdatedAt.UTC()}
+		json.RawMessage(c.Params), c.Record, c.RecordInput, strPtr(c.HostKey), strPtr(c.HostKeyPending), c.CreatedAt.UTC(), c.UpdatedAt.UTC()}
 }
 
 // openapi:schema Policy
 // type: object
-// required: [id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, expires_at, description, created_by, created_at]
+// required: [id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, can_upload, can_download, expires_at, description, created_by, created_at]
 // properties:
 //   id: { type: string, format: uuid }
 //   subject_type: { type: string, enum: [user, group] }
@@ -230,6 +232,8 @@ func toConnection(c db.ConfigConnection, tags []string) connectionDTO {
 //   object_ref: { type: string }
 //   can_connect: { type: boolean }
 //   can_view_recordings: { type: boolean }
+//   can_upload: { type: boolean }
+//   can_download: { type: boolean }
 //   expires_at: { type: [string, 'null'], format: date-time }
 //   description: { type: string }
 //   created_by: { type: [string, 'null'], format: uuid }
@@ -243,6 +247,8 @@ type policyDTO struct {
 	ObjectRef         string     `json:"object_ref"`
 	CanConnect        bool       `json:"can_connect"`
 	CanViewRecordings bool       `json:"can_view_recordings"`
+	CanUpload         bool       `json:"can_upload"`
+	CanDownload       bool       `json:"can_download"`
 	ExpiresAt         *time.Time `json:"expires_at"`
 	Description       string     `json:"description"`
 	CreatedBy         *string    `json:"created_by"`
@@ -251,7 +257,7 @@ type policyDTO struct {
 
 func toPolicy(p db.ConfigPolicy) policyDTO {
 	return policyDTO{p.ID, p.SubjectType, p.SubjectID, p.ObjectType, p.ObjectRef, p.CanConnect, p.CanViewRecordings,
-		timePtr(p.ExpiresAt), p.Description, strPtr(p.CreatedBy), p.CreatedAt.UTC()}
+		p.CanUpload, p.CanDownload, timePtr(p.ExpiresAt), p.Description, strPtr(p.CreatedBy), p.CreatedAt.UTC()}
 }
 
 // openapi:schema AuditEvent

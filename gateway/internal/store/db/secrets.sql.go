@@ -12,7 +12,7 @@ import (
 
 const createSecret = `-- name: CreateSecret :exec
 INSERT INTO config_secrets (id, name, kind, username, sealed, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+VALUES ($1, $2, $3, $4, $5, $6, $6)
 `
 
 type CreateSecretParams struct {
@@ -37,7 +37,7 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) erro
 }
 
 const deleteSecret = `-- name: DeleteSecret :execrows
-DELETE FROM config_secrets WHERE id = ?1
+DELETE FROM config_secrets WHERE id = $1
 `
 
 func (q *Queries) DeleteSecret(ctx context.Context, id string) (int64, error) {
@@ -49,7 +49,7 @@ func (q *Queries) DeleteSecret(ctx context.Context, id string) (int64, error) {
 }
 
 const getSecret = `-- name: GetSecret :one
-SELECT id, name, kind, username, sealed, created_at, updated_at FROM config_secrets WHERE id = ?1
+SELECT id, name, kind, username, sealed, created_at, updated_at FROM config_secrets WHERE id = $1
 `
 
 func (q *Queries) GetSecret(ctx context.Context, id string) (ConfigSecret, error) {
@@ -68,7 +68,7 @@ func (q *Queries) GetSecret(ctx context.Context, id string) (ConfigSecret, error
 }
 
 const getSecretByName = `-- name: GetSecretByName :one
-SELECT id, name, kind, username, sealed, created_at, updated_at FROM config_secrets WHERE name = ?1
+SELECT id, name, kind, username, sealed, created_at, updated_at FROM config_secrets WHERE name = $1
 `
 
 func (q *Queries) GetSecretByName(ctx context.Context, name string) (ConfigSecret, error) {
@@ -135,7 +135,7 @@ func (q *Queries) ListSecrets(ctx context.Context) ([]ListSecretsRow, error) {
 }
 
 const updateSecretMeta = `-- name: UpdateSecretMeta :exec
-UPDATE config_secrets SET name = ?1, username = ?2, updated_at = ?3 WHERE id = ?4
+UPDATE config_secrets SET name = $1, username = $2, updated_at = $3 WHERE id = $4
 `
 
 type UpdateSecretMetaParams struct {
@@ -156,7 +156,7 @@ func (q *Queries) UpdateSecretMeta(ctx context.Context, arg UpdateSecretMetaPara
 }
 
 const updateSecretValue = `-- name: UpdateSecretValue :exec
-UPDATE config_secrets SET kind = ?1, sealed = ?2, updated_at = ?3 WHERE id = ?4
+UPDATE config_secrets SET kind = $1, sealed = $2, updated_at = $3 WHERE id = $4
 `
 
 type UpdateSecretValueParams struct {

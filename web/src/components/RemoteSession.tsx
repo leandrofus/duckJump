@@ -6,9 +6,10 @@ import { KIND_DISPLAY, KEYSYM, SCANCODE, Painter, ackEvent, buttonMask, keyEvent
 import { toast } from '../ui/overlays'
 import type { SessionState } from './Terminal'
 import type { PromptedCredentials } from './CredentialsDialog'
+import { sessionErrorText } from '../lib/session'
 
 /** A graphical session (VNC or RDP) drawn on a canvas. */
-export function RemoteSession({ connectionId, title, recorded, protocol, credentials, onNeedCredentials }: {
+export function RemoteSession({ connectionId, title, recorded, protocol, credentials, onNeedCredentials, onUnverifiedKey }: {
   connectionId: string
   title: string
   recorded?: boolean
@@ -16,6 +17,8 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
   credentials?: PromptedCredentials
   /** The server wants (other) credentials: the parent asks the user. */
   onNeedCredentials?: (code: string, reason: string) => void
+  /** The server shows a key nobody approved yet (its fingerprint). */
+  onUnverifiedKey?: (fingerprint: string) => void
 }) {
   const host = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -82,8 +85,9 @@ export function RemoteSession({ connectionId, title, recorded, protocol, credent
       } else if (m.type === 'error') {
         ended = true
         setState('error')
-        setMessage(m.message)
+        setMessage(sessionErrorText(m))
         if (onNeedCredentials && (m.code === 'credentials_required' || (credentials && m.code === 'auth_failed'))) onNeedCredentials(m.code, m.message)
+        if (onUnverifiedKey && m.code === 'host_key_unverified' && m.fingerprint) onUnverifiedKey(m.fingerprint)
       }
     }
     ws.onclose = (ev) => {

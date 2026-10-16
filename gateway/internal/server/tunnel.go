@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,9 +17,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/leandrofus/palta/gateway/internal/ptp"
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/djtp"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // Browser <-> gateway WebSocket:
@@ -62,7 +63,7 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) err
 			return errForbidden
 		}
 	}
-	if conn.Backend != "paltad" {
+	if conn.Backend != store.BackendNative {
 		return &apiError{http.StatusNotImplemented, "not_implemented", "the guacd backend is not implemented yet"}
 	}
 	cols, rows := atoiDefault(r.URL.Query().Get("cols"), 80), atoiDefault(r.URL.Query().Get("rows"), 24)
@@ -76,18 +77,39 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) err
 		return nil // Accept already answered
 	}
 	defer ws.CloseNow()
-	ws.SetReadLimit(ptp.MaxFrameLen)
+	ws.SetReadLimit(djtp.MaxFrameLen)
 
 	sessionID := randomID(16)
 	log := slog.With("session", sessionID, "user", p.User.Username, "conn", conn.Name)
 	prompted := r.URL.Query().Get("credentials") == "1"
+
+	// Live until it ends: re-checked while it runs, and can be terminated.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	s.live.add(&liveSession{id: sessionID, userID: p.User.ID, connID: connID, cancel: cancel,
+		notify: func(code, message string) {
+			nctx, done := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer done()
+			sendJSON(nctx, ws, map[string]string{"type": "error", "code": code, "message": message})
+		}})
+	defer s.live.remove(sessionID)
+
 	reason, err := s.runSession(ctx, ws, conn, p, sessionID, cols, rows, prompted, log)
+	var term *terminated
+	if errors.As(context.Cause(ctx), &term) {
+		log.Info("session terminated", "reason", term.reason)
+		ws.Close(websocket.StatusPolicyViolation, "terminated")
+		return nil
+	}
 	if err != nil {
 		log.Warn("session ended with error", "err", err)
 		msg := map[string]string{"type": "error", "message": err.Error()}
 		var se *sessionError
 		if errors.As(err, &se) {
 			msg["code"], msg["message"] = se.Code, se.Message
+			if se.Fingerprint != "" {
+				msg["fingerprint"] = se.Fingerprint
+			}
 		}
 		sendJSON(ctx, ws, msg)
 		ws.Close(websocket.StatusInternalError, "session error")
@@ -104,7 +126,10 @@ func graphical(protocol string) bool { return protocol == "vnc" || protocol == "
 
 // sessionError carries a code the client acts on: credentials_required
 // (ask the user and retry), auth_failed, host_key_mismatch…
-type sessionError struct{ Code, Message string }
+type sessionError struct {
+	Code, Message string
+	Fingerprint   string // host_key_unverified: the key to verify and approve
+}
 
 func (e *sessionError) Error() string { return e.Code + ": " + e.Message }
 
@@ -122,7 +147,7 @@ type sessionCreds struct {
 func (s *Server) resolveCreds(ctx context.Context, ws *websocket.Conn, c db.ConfigConnection, prompted bool) (sessionCreds, error) {
 	if prompted {
 		if c.SecretID.Valid {
-			return sessionCreds{}, &sessionError{"bad_request", "this connection uses a vaulted credential"}
+			return sessionCreds{}, &sessionError{Code: "bad_request", Message: "this connection uses a vaulted credential"}
 		}
 		rctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
@@ -132,36 +157,41 @@ func (s *Server) resolveCreds(ctx context.Context, ws *websocket.Conn, c db.Conf
 		}
 		var m struct{ Type, Username, Password, Domain string }
 		if json.Unmarshal(data, &m) != nil || m.Type != "credentials" || len(m.Username) > 256 || len(m.Password) > 1024 || len(m.Domain) > 256 {
-			return sessionCreds{}, &sessionError{"bad_request", "invalid credentials message"}
+			return sessionCreds{}, &sessionError{Code: "bad_request", Message: "invalid credentials message"}
 		}
 		return sessionCreds{Username: strings.TrimSpace(m.Username), Password: m.Password, Domain: strings.TrimSpace(m.Domain), Source: "prompt"}, nil
 	}
 	if c.SecretID.Valid {
-		sec, err := s.Store.Q.GetSecret(ctx, c.SecretID.String)
-		if err != nil {
-			return sessionCreds{}, fmt.Errorf("loading secret: %w", err)
-		}
-		plain, err := s.Vault.Open(sec.Sealed, []byte(sec.ID))
-		if err != nil {
-			return sessionCreds{}, fmt.Errorf("unsealing secret %q: %w", sec.Name, err)
-		}
-		cr := sessionCreds{Username: sec.Username, Source: "vault", SecretName: sec.Name}
-		if sec.Kind == "private_key" {
-			if c.Protocol != "ssh" {
-				return sessionCreds{}, fmt.Errorf("%s needs a password credential, not a private key", c.Protocol)
-			}
-			cr.PrivateKey = string(plain)
-		} else {
-			cr.Password = string(plain)
-		}
-		return cr, nil
+		return s.vaultCreds(ctx, c)
 	}
 	// No credential at all: SSH can't go further, and "prompt" connections
 	// always ask. RDP and VNC try without (login screen / no-password server).
 	if c.CredentialMode == "prompt" || c.Protocol == "ssh" {
-		return sessionCreds{}, &sessionError{"credentials_required", "this connection needs your credentials"}
+		return sessionCreds{}, &sessionError{Code: "credentials_required", Message: "this connection needs your credentials"}
 	}
 	return sessionCreds{Source: "none"}, nil
+}
+
+// vaultCreds unseals the connection's vaulted credential.
+func (s *Server) vaultCreds(ctx context.Context, c db.ConfigConnection) (sessionCreds, error) {
+	sec, err := s.Store.Q.GetSecret(ctx, c.SecretID.String)
+	if err != nil {
+		return sessionCreds{}, fmt.Errorf("loading secret: %w", err)
+	}
+	plain, err := s.Vault.Open(sec.Sealed, []byte(sec.ID))
+	if err != nil {
+		return sessionCreds{}, fmt.Errorf("unsealing secret %q: %w", sec.Name, err)
+	}
+	cr := sessionCreds{Username: sec.Username, Source: "vault", SecretName: sec.Name}
+	if sec.Kind == "private_key" {
+		if c.Protocol != "ssh" {
+			return sessionCreds{}, fmt.Errorf("%s needs a password credential, not a private key", c.Protocol)
+		}
+		cr.PrivateKey = string(plain)
+	} else {
+		cr.Password = string(plain)
+	}
+	return cr, nil
 }
 
 func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.ConfigConnection, p principal,
@@ -174,23 +204,22 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 	var params any
 	switch c.Protocol {
 	case "ssh":
-		authp := ptp.SSHAuth{Method: "password", Password: cr.Password}
-		if cr.PrivateKey != "" {
-			authp = ptp.SSHAuth{Method: "private_key", Key: cr.PrivateKey}
-		}
-		sp := ptp.SSHParams{
-			Host: c.Host, Port: int(c.Port), Username: cr.Username, Auth: authp,
-			Term: "xterm-256color", Cols: cols, Rows: rows,
-		}
-		if c.HostKey.Valid {
-			sp.HostKey = &c.HostKey.String
-		}
-		params = sp
+		params = s.sshParams(c, cr, cols, rows)
 	case "vnc":
-		vp := ptp.VNCParams{Host: c.Host, Port: int(c.Port)}
+		var extra struct {
+			Security string `json:"security"`
+		}
+		json.Unmarshal([]byte(c.Params), &extra)
+		vp := djtp.VNCParams{Host: c.Host, Port: int(c.Port), Username: cr.Username, Security: extra.Security, TrustUnknown: s.TrustOnFirstUse}
+		if vp.Security == "" {
+			vp.Security = "any"
+		}
 		if cr.Password != "" {
 			pw := cr.Password
 			vp.Password = &pw
+		}
+		if c.HostKey.Valid {
+			vp.CertFingerprint = &c.HostKey.String
 		}
 		params = vp
 	case "rdp":
@@ -205,80 +234,27 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 		if cr.Domain != "" {
 			extra.Domain = cr.Domain
 		}
-		rp := ptp.RDPParams{Host: c.Host, Port: int(c.Port), Username: cr.Username, Password: cr.Password,
+		rp := djtp.RDPParams{Host: c.Host, Port: int(c.Port), Username: cr.Username, Password: cr.Password,
 			Domain: extra.Domain, Security: extra.Security, Width: cols, Height: rows}
 		if c.HostKey.Valid {
 			rp.CertFingerprint = &c.HostKey.String
 		}
+		rp.TrustUnknown = s.TrustOnFirstUse
 		params = rp
 	}
-	var relay *ptp.Relay
-	siteName := ""
-	if c.SiteID.Valid {
-		site, err := s.Store.Q.GetSite(ctx, c.SiteID.String)
-		if err != nil {
-			return "", fmt.Errorf("loading site: %w", err)
-		}
-		siteName = site.Name
-		if site.Kind == "agent" {
-			tk, err := s.Hub.Ticket(site.ID, c.Host, int(c.Port), sessionID)
-			if err != nil {
-				return "", fmt.Errorf("site %s: %w", site.Name, err)
-			}
-			relay = &ptp.Relay{Addr: s.RelayAddr, Ticket: tk}
-			log = log.With("site", site.Name)
-		}
-	}
-	var rec *ptp.Recording
+	var rec *djtp.Recording
 	recName := ""
 	if c.Record {
 		recName = sessionID
-		rec = &ptp.Recording{Name: recName, IncludeInput: c.RecordInput}
+		rec = &djtp.Recording{Name: recName, IncludeInput: c.RecordInput}
 	}
-
-	d := net.Dialer{Timeout: 5 * time.Second}
-	pd, err := d.DialContext(ctx, "tcp", s.PaltadAddr)
+	pd, siteName, err := s.openDaemon(ctx, c, p, sessionID, c.Protocol, params, rec, log)
 	if err != nil {
-		return "", fmt.Errorf("paltad unreachable: %w", err)
-	}
-	defer pd.Close()
-
-	if err := ptp.WriteControl(pd, ptp.Control{
-		Type: "hello", Version: ptp.Version, Token: s.PaltadToken, SessionID: sessionID,
-		Protocol: c.Protocol, Params: params, Recording: rec, Relay: relay,
-	}); err != nil {
 		return "", err
 	}
-
-	// The daemon answers ready or error once the remote side is up. RDP gets
-	// longer: after authenticating, Windows logs the user on before the
-	// session starts, and a fresh logon can take a minute.
-	wait := 30 * time.Second
-	if c.Protocol == "rdp" {
-		wait = 100 * time.Second
-	}
-	pd.SetReadDeadline(time.Now().Add(wait))
-	f, err := ptp.ReadFrame(pd)
-	if err != nil {
-		return "", fmt.Errorf("waiting for paltad: %w", err)
-	}
-	pd.SetReadDeadline(time.Time{})
-	first, err := ptp.DecodeControl(f)
-	if err != nil || f.Kind != ptp.KindControl {
-		return "", errors.New("protocol error from paltad")
-	}
-	if first.Type == "error" {
-		return "", &sessionError{first.Code, first.Message}
-	}
-	if first.Type != "ready" {
-		return "", fmt.Errorf("unexpected %q from paltad", first.Type)
-	}
-	if first.HostKeyFingerprint != nil && !c.HostKey.Valid {
-		log.Info("pinning host key (trust on first use)", "fingerprint", *first.HostKeyFingerprint)
-		if err := s.Store.Q.PinHostKey(ctx, db.PinHostKeyParams{ID: c.ID, HostKey: store.NullString(*first.HostKeyFingerprint)}); err != nil {
-			log.Error("pinning host key", "err", err)
-		}
-	}
+	defer pd.Close()
+	// A terminated session unblocks whatever waits on the daemon.
+	defer context.AfterFunc(ctx, func() { pd.Close() })()
 
 	// The snapshot keeps the audit faithful if the connection is edited or
 	// deleted later. Never includes credentials.
@@ -297,9 +273,13 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 	if err != nil {
 		return "", fmt.Errorf("audit: %w", err)
 	}
+	if err := s.Store.Q.BeatSession(ctx, db.BeatSessionParams{SessionID: sessionID, Node: s.node(), Now: store.Now()}); err != nil {
+		log.Error("session heartbeat", "err", err)
+	}
 	reason := "closed"
 	defer func() {
 		ctx := context.WithoutCancel(ctx)
+		s.Store.Q.ForgetSession(ctx, sessionID)
 		s.Store.Q.EndSessionRecord(ctx, db.EndSessionRecordParams{ID: sessionID, EndReason: reason, Now: store.NullTime(store.Now())})
 		s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "session.end", ObjectType: "session", ObjectID: sessionID,
 			Details: map[string]any{"reason": reason}})
@@ -307,7 +287,7 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 	log.Info("session started")
 	sendJSON(ctx, ws, map[string]any{"type": "ready", "session_id": sessionID})
 
-	// paltad -> browser. When the daemon side ends, closing the WebSocket
+	// duckjumpd -> browser. When the daemon side ends, closing the WebSocket
 	// unblocks the read loop below with a proper close frame.
 	down := make(chan string, 1)
 	go func() {
@@ -317,26 +297,26 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 			ws.Close(websocket.StatusNormalClosure, why)
 		}()
 		for {
-			f, err := ptp.ReadFrame(pd)
+			f, err := djtp.ReadFrame(pd)
 			if err != nil {
 				why = "daemon closed"
 				return
 			}
 			switch f.Kind {
-			case ptp.KindOutput:
+			case djtp.KindOutput:
 				if ws.Write(ctx, websocket.MessageBinary, f.Payload) != nil {
 					why = "client gone"
 					return
 				}
-			case ptp.KindDisplay:
+			case djtp.KindDisplay:
 				// Graphical sessions: binary messages carry the frame kind first.
-				if ws.Write(ctx, websocket.MessageBinary, append([]byte{ptp.KindDisplay}, f.Payload...)) != nil {
+				if ws.Write(ctx, websocket.MessageBinary, append([]byte{djtp.KindDisplay}, f.Payload...)) != nil {
 					why = "client gone"
 					return
 				}
-			case ptp.KindControl:
+			case djtp.KindControl:
 				ws.Write(ctx, websocket.MessageText, f.Payload)
-				if c, _ := ptp.DecodeControl(f); c.Type == "exit" || c.Type == "error" {
+				if c, _ := djtp.DecodeControl(f); c.Type == "exit" || c.Type == "error" {
 					why = c.Type
 					return
 				}
@@ -344,24 +324,30 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 		}
 	}()
 
-	// browser -> paltad
+	// browser -> duckjumpd
 	for {
 		typ, data, err := ws.Read(ctx)
 		if err != nil {
+			var term *terminated
+			if errors.As(context.Cause(ctx), &term) {
+				reason = "terminated: " + term.reason
+				djtp.WriteControl(pd, djtp.Control{Type: "close"})
+				return reason, nil
+			}
 			select {
 			case reason = <-down:
 			default:
 				reason = "client disconnected"
-				ptp.WriteControl(pd, ptp.Control{Type: "close"})
+				djtp.WriteControl(pd, djtp.Control{Type: "close"})
 			}
 			return reason, nil
 		}
 		switch typ {
 		case websocket.MessageBinary:
 			if !graphical(c.Protocol) {
-				err = ptp.WriteFrame(pd, ptp.KindInput, data)
-			} else if len(data) > 1 && data[0] == ptp.KindInputEvent {
-				err = ptp.WriteFrame(pd, ptp.KindInputEvent, data[1:])
+				err = djtp.WriteFrame(pd, djtp.KindInput, data)
+			} else if len(data) > 1 && data[0] == djtp.KindInputEvent {
+				err = djtp.WriteFrame(pd, djtp.KindInputEvent, data[1:])
 			} // anything else from the browser is dropped
 		case websocket.MessageText:
 			var m struct {
@@ -374,15 +360,135 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, c db.Config
 			}
 			switch {
 			case m.Type == "resize" && m.Cols > 0 && m.Rows > 0:
-				err = ptp.WriteControl(pd, ptp.Control{Type: "resize", Cols: m.Cols, Rows: m.Rows})
+				err = djtp.WriteControl(pd, djtp.Control{Type: "resize", Cols: m.Cols, Rows: m.Rows})
 			case m.Type == "clipboard" && graphical(c.Protocol) && len(m.Text) <= 1<<20:
-				err = ptp.WriteControl(pd, ptp.Control{Type: "clipboard", Text: m.Text})
+				err = djtp.WriteControl(pd, djtp.Control{Type: "clipboard", Text: m.Text})
 			}
 		}
 		if err != nil {
 			return "daemon write failed", nil
 		}
 	}
+}
+
+// unverifiedHostKey handles a server whose key nobody approved yet: duckjumpd
+// stopped before sending any credential. The key waits on the connection
+// for an admin to compare it with the real one and approve it.
+func (s *Server) unverifiedHostKey(ctx context.Context, c db.ConfigConnection, p principal, fp string, log *slog.Logger) error {
+	ctx = context.WithoutCancel(ctx)
+	if !strings.HasPrefix(fp, "SHA256:") || len(fp) > 200 {
+		return &sessionError{Code: "connect_failed", Message: "the daemon reported an invalid host key"}
+	}
+	log.Warn("host key not approved", "fingerprint", fp)
+	if !c.HostKeyPending.Valid || c.HostKeyPending.String != fp {
+		err := s.tx(ctx, func(q *db.Queries) error {
+			if err := q.SetPendingHostKey(ctx, db.SetPendingHostKeyParams{ID: c.ID, HostKeyPending: store.NullString(fp)}); err != nil {
+				return err
+			}
+			return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.host_key_pending", ObjectType: "connection", ObjectID: c.ID,
+				Details: map[string]any{"name": c.Name, "fingerprint": fp}})
+		})
+		if err != nil {
+			log.Error("recording the pending host key", "err", err)
+		}
+	}
+	return &sessionError{Code: "host_key_unverified", Fingerprint: fp,
+		Message: "the server's key " + fp + " has not been approved yet: an admin must check it against the server and approve it"}
+}
+
+// openDaemon starts a session on duckjumpd (through the site's edge relay
+// when it has one) and waits until the remote side is up. It handles
+// unknown host keys (pending approval, or pinned on first use). The caller
+// closes the returned connection.
+func (s *Server) openDaemon(ctx context.Context, c db.ConfigConnection, p principal, sessionID, protocol string, params any,
+	rec *djtp.Recording, log *slog.Logger) (net.Conn, string, error) {
+	var relay *djtp.Relay
+	siteName := ""
+	if c.SiteID.Valid {
+		site, err := s.Store.Q.GetSite(ctx, c.SiteID.String)
+		if err != nil {
+			return nil, "", fmt.Errorf("loading site: %w", err)
+		}
+		siteName = site.Name
+		if site.Kind == "agent" {
+			tk, err := s.Hub.Ticket(site.ID, c.Host, int(c.Port), sessionID)
+			if err != nil {
+				return nil, "", fmt.Errorf("site %s: %w", site.Name, err)
+			}
+			relay = &djtp.Relay{Addr: s.RelayAddr, Ticket: tk, TLSFingerprint: s.RelayFingerprint}
+			log = log.With("site", site.Name)
+		}
+	}
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	var pd net.Conn
+	var err error
+	if s.DaemonTLS != nil {
+		pd, err = (&tls.Dialer{NetDialer: d, Config: s.DaemonTLS}).DialContext(ctx, "tcp", s.DaemonAddr)
+	} else {
+		pd, err = d.DialContext(ctx, "tcp", s.DaemonAddr)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("duckjumpd unreachable: %w", err)
+	}
+	fail := func(err error) (net.Conn, string, error) {
+		pd.Close()
+		return nil, "", err
+	}
+	if err := djtp.WriteControl(pd, djtp.Control{
+		Type: "hello", Version: djtp.Version, Token: s.DaemonToken, SessionID: sessionID,
+		Protocol: protocol, Params: params, Recording: rec, Relay: relay,
+	}); err != nil {
+		return fail(err)
+	}
+	// The daemon answers ready or error once the remote side is up. RDP gets
+	// longer: after authenticating, Windows logs the user on before the
+	// session starts, and a fresh logon can take a minute.
+	wait := 30 * time.Second
+	if protocol == "rdp" {
+		wait = 100 * time.Second
+	}
+	pd.SetReadDeadline(time.Now().Add(wait))
+	f, err := djtp.ReadFrame(pd)
+	if err != nil {
+		return fail(fmt.Errorf("waiting for duckjumpd: %w", err))
+	}
+	pd.SetReadDeadline(time.Time{})
+	first, err := djtp.DecodeControl(f)
+	if err != nil || f.Kind != djtp.KindControl {
+		return fail(errors.New("protocol error from duckjumpd"))
+	}
+	if first.Type == "error" && first.Code == "host_key_unknown" {
+		return fail(s.unverifiedHostKey(ctx, c, p, first.Message, log))
+	}
+	if first.Type == "error" {
+		return fail(&sessionError{Code: first.Code, Message: first.Message})
+	}
+	if first.Type != "ready" {
+		return fail(fmt.Errorf("unexpected %q from duckjumpd", first.Type))
+	}
+	if first.HostKeyFingerprint != nil && !c.HostKey.Valid && s.TrustOnFirstUse {
+		log.Info("pinning host key (trust on first use)", "fingerprint", *first.HostKeyFingerprint)
+		if err := s.Store.Q.PinHostKey(ctx, db.PinHostKeyParams{ID: c.ID, HostKey: store.NullString(*first.HostKeyFingerprint)}); err != nil {
+			log.Error("pinning host key", "err", err)
+		}
+	}
+	return pd, siteName, nil
+}
+
+// sshParams are the DJTP parameters of an SSH (or SFTP) session.
+func (s *Server) sshParams(c db.ConfigConnection, cr sessionCreds, cols, rows int) djtp.SSHParams {
+	authp := djtp.SSHAuth{Method: "password", Password: cr.Password}
+	if cr.PrivateKey != "" {
+		authp = djtp.SSHAuth{Method: "private_key", Key: cr.PrivateKey}
+	}
+	sp := djtp.SSHParams{
+		Host: c.Host, Port: int(c.Port), Username: cr.Username, Auth: authp,
+		Term: "xterm-256color", Cols: cols, Rows: rows, TrustUnknown: s.TrustOnFirstUse,
+	}
+	if c.HostKey.Valid {
+		sp.HostKey = &c.HostKey.String
+	}
+	return sp
 }
 
 func sendJSON(ctx context.Context, ws *websocket.Conn, v any) {

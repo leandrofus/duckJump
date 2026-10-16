@@ -14,21 +14,21 @@ import (
 const connectionsGrantedToUser = `-- name: ConnectionsGrantedToUser :many
 WITH RECURSIVE
     subj(type, id) AS (
-        SELECT 'user', CAST(?1 AS TEXT)
+        SELECT 'user', CAST($1 AS TEXT)
         UNION ALL
-        SELECT 'group', m.group_id FROM config_group_members m WHERE m.user_id = ?1
+        SELECT 'group', m.group_id FROM config_group_members m WHERE m.user_id = $1
     ),
     grants AS (
         SELECT p.object_type, p.object_ref FROM config_policies p
         JOIN subj ON p.subject_type = subj.type AND p.subject_id = subj.id
-        WHERE p.can_connect AND (p.expires_at IS NULL OR julianday(p.expires_at) > julianday(CAST(?2 AS TEXT)))
+        WHERE p.can_connect AND (p.expires_at IS NULL OR julianday(p.expires_at) > julianday(CAST($2 AS TEXT)))
     ),
     granted_folders(id) AS (
         SELECT object_ref FROM grants WHERE object_type = 'folder'
         UNION
         SELECT f.id FROM config_folders f JOIN granted_folders g ON f.parent_id = g.id
     )
-SELECT c.id, c.name, c.protocol, c.host, c.port, c.folder_id, c.site_id, c.environment, c.description, c.backend, c.credential_mode, c.secret_id, c.params, c.record, c.record_input, c.host_key, c.created_at, c.updated_at FROM config_connections c
+SELECT c.id, c.name, c.protocol, c.host, c.port, c.folder_id, c.site_id, c.environment, c.description, c.backend, c.credential_mode, c.secret_id, c.params, c.record, c.record_input, c.host_key, c.created_at, c.updated_at, c.host_key_pending FROM config_connections c
 WHERE c.id IN (SELECT object_ref FROM grants WHERE object_type = 'connection')
    OR c.folder_id IN (SELECT id FROM granted_folders)
    OR c.id IN (SELECT t.connection_id FROM config_connection_tags t
@@ -71,6 +71,7 @@ func (q *Queries) ConnectionsGrantedToUser(ctx context.Context, arg ConnectionsG
 			&i.HostKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.HostKeyPending,
 		); err != nil {
 			return nil, err
 		}
@@ -88,10 +89,10 @@ func (q *Queries) ConnectionsGrantedToUser(ctx context.Context, arg ConnectionsG
 const createPolicy = `-- name: CreatePolicy :exec
 INSERT INTO config_policies (
     id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings,
-    expires_at, description, created_by, created_at
+    can_upload, can_download, expires_at, description, created_by, created_at
 ) VALUES (
-    ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-    ?8, ?9, ?10, ?11
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10, $11, $12, $13
 )
 `
 
@@ -103,6 +104,8 @@ type CreatePolicyParams struct {
 	ObjectRef         string
 	CanConnect        bool
 	CanViewRecordings bool
+	CanUpload         bool
+	CanDownload       bool
 	ExpiresAt         sql.NullTime
 	Description       string
 	CreatedBy         sql.NullString
@@ -118,6 +121,8 @@ func (q *Queries) CreatePolicy(ctx context.Context, arg CreatePolicyParams) erro
 		arg.ObjectRef,
 		arg.CanConnect,
 		arg.CanViewRecordings,
+		arg.CanUpload,
+		arg.CanDownload,
 		arg.ExpiresAt,
 		arg.Description,
 		arg.CreatedBy,
@@ -127,7 +132,7 @@ func (q *Queries) CreatePolicy(ctx context.Context, arg CreatePolicyParams) erro
 }
 
 const deletePoliciesForObject = `-- name: DeletePoliciesForObject :exec
-DELETE FROM config_policies WHERE object_type = ?1 AND object_ref = ?2
+DELETE FROM config_policies WHERE object_type = $1 AND object_ref = $2
 `
 
 type DeletePoliciesForObjectParams struct {
@@ -141,7 +146,7 @@ func (q *Queries) DeletePoliciesForObject(ctx context.Context, arg DeletePolicie
 }
 
 const deletePoliciesForSubject = `-- name: DeletePoliciesForSubject :exec
-DELETE FROM config_policies WHERE subject_type = ?1 AND subject_id = ?2
+DELETE FROM config_policies WHERE subject_type = $1 AND subject_id = $2
 `
 
 type DeletePoliciesForSubjectParams struct {
@@ -155,7 +160,7 @@ func (q *Queries) DeletePoliciesForSubject(ctx context.Context, arg DeletePolici
 }
 
 const deletePolicy = `-- name: DeletePolicy :execrows
-DELETE FROM config_policies WHERE id = ?1
+DELETE FROM config_policies WHERE id = $1
 `
 
 func (q *Queries) DeletePolicy(ctx context.Context, id string) (int64, error) {
@@ -167,7 +172,7 @@ func (q *Queries) DeletePolicy(ctx context.Context, id string) (int64, error) {
 }
 
 const getPolicy = `-- name: GetPolicy :one
-SELECT id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, expires_at, description, created_by, created_at FROM config_policies WHERE id = ?1
+SELECT id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, expires_at, description, created_by, created_at, can_upload, can_download FROM config_policies WHERE id = $1
 `
 
 func (q *Queries) GetPolicy(ctx context.Context, id string) (ConfigPolicy, error) {
@@ -185,14 +190,16 @@ func (q *Queries) GetPolicy(ctx context.Context, id string) (ConfigPolicy, error
 		&i.Description,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.CanUpload,
+		&i.CanDownload,
 	)
 	return i, err
 }
 
 const listPolicies = `-- name: ListPolicies :many
-SELECT id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, expires_at, description, created_by, created_at FROM config_policies
-WHERE (CAST(?1 AS TEXT) = '' OR subject_id = ?1)
-  AND (CAST(?2 AS TEXT) = '' OR object_ref = ?2)
+SELECT id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, expires_at, description, created_by, created_at, can_upload, can_download FROM config_policies
+WHERE (CAST($1 AS TEXT) = '' OR subject_id = $1)
+  AND (CAST($2 AS TEXT) = '' OR object_ref = $2)
 ORDER BY created_at
 `
 
@@ -222,6 +229,8 @@ func (q *Queries) ListPolicies(ctx context.Context, arg ListPoliciesParams) ([]C
 			&i.Description,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.CanUpload,
+			&i.CanDownload,
 		); err != nil {
 			return nil, err
 		}
@@ -239,22 +248,22 @@ func (q *Queries) ListPolicies(ctx context.Context, arg ListPoliciesParams) ([]C
 const policiesGrantingConnection = `-- name: PoliciesGrantingConnection :many
 WITH RECURSIVE
     subj(type, id) AS (
-        SELECT 'user', CAST(?3 AS TEXT)
+        SELECT 'user', CAST($3 AS TEXT)
         UNION ALL
-        SELECT 'group', m.group_id FROM config_group_members m WHERE m.user_id = ?3
+        SELECT 'group', m.group_id FROM config_group_members m WHERE m.user_id = $3
     ),
     ancestors(id) AS (
-        SELECT folder_id FROM config_connections WHERE id = ?2 AND folder_id IS NOT NULL
+        SELECT folder_id FROM config_connections WHERE id = $2 AND folder_id IS NOT NULL
         UNION
         SELECT f.parent_id FROM config_folders f JOIN ancestors a ON f.id = a.id WHERE f.parent_id IS NOT NULL
     )
-SELECT p.id, p.subject_type, p.subject_id, p.object_type, p.object_ref, p.can_connect, p.can_view_recordings, p.expires_at, p.description, p.created_by, p.created_at FROM config_policies p
+SELECT p.id, p.subject_type, p.subject_id, p.object_type, p.object_ref, p.can_connect, p.can_view_recordings, p.expires_at, p.description, p.created_by, p.created_at, p.can_upload, p.can_download FROM config_policies p
 JOIN subj ON p.subject_type = subj.type AND p.subject_id = subj.id
-WHERE (p.expires_at IS NULL OR julianday(p.expires_at) > julianday(CAST(?1 AS TEXT)))
-  AND (   (p.object_type = 'connection' AND p.object_ref = ?2)
+WHERE (p.expires_at IS NULL OR julianday(p.expires_at) > julianday(CAST($1 AS TEXT)))
+  AND (   (p.object_type = 'connection' AND p.object_ref = $2)
        OR (p.object_type = 'folder' AND p.object_ref IN (SELECT id FROM ancestors))
        OR (p.object_type = 'tag' AND p.object_ref IN
-              (SELECT tag FROM config_connection_tags WHERE connection_id = ?2)))
+              (SELECT tag FROM config_connection_tags WHERE connection_id = $2)))
 ORDER BY p.created_at
 `
 
@@ -286,6 +295,8 @@ func (q *Queries) PoliciesGrantingConnection(ctx context.Context, arg PoliciesGr
 			&i.Description,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.CanUpload,
+			&i.CanDownload,
 		); err != nil {
 			return nil, err
 		}
@@ -302,14 +313,17 @@ func (q *Queries) PoliciesGrantingConnection(ctx context.Context, arg PoliciesGr
 
 const updatePolicy = `-- name: UpdatePolicy :exec
 UPDATE config_policies
-SET can_connect = ?1, can_view_recordings = ?2,
-    expires_at = ?3, description = ?4
-WHERE id = ?5
+SET can_connect = $1, can_view_recordings = $2,
+    can_upload = $3, can_download = $4,
+    expires_at = $5, description = $6
+WHERE id = $7
 `
 
 type UpdatePolicyParams struct {
 	CanConnect        bool
 	CanViewRecordings bool
+	CanUpload         bool
+	CanDownload       bool
 	ExpiresAt         sql.NullTime
 	Description       string
 	ID                string
@@ -319,6 +333,8 @@ func (q *Queries) UpdatePolicy(ctx context.Context, arg UpdatePolicyParams) erro
 	_, err := q.db.ExecContext(ctx, updatePolicy,
 		arg.CanConnect,
 		arg.CanViewRecordings,
+		arg.CanUpload,
+		arg.CanDownload,
 		arg.ExpiresAt,
 		arg.Description,
 		arg.ID,

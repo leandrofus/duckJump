@@ -23,10 +23,10 @@ const ticketTTL = 30 * time.Second
 
 var ErrNoAgent = errors.New("no edge agent connected for this site")
 
-// Hub tracks connected agents and relays paltad connections through them.
+// Hub tracks connected agents and relays duckjumpd connections through them.
 //
-// paltad never talks to agents directly: the gateway hands it a one-time
-// ticket in Hello, paltad presents it on the relay listener, and the hub
+// duckjumpd never talks to agents directly: the gateway hands it a one-time
+// ticket in Hello, duckjumpd presents it on the relay listener, and the hub
 // opens a stream to an agent of the ticket's site for exactly the host and
 // port the ticket names.
 type Hub struct {
@@ -126,7 +126,7 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		ws.Close(websocket.StatusInternalError, "yamux")
 		return
 	}
-	ac := &agentConn{name: r.Header.Get("X-Palta-Agent"), remote: r.RemoteAddr, connected: time.Now(), sess: sess}
+	ac := &agentConn{name: r.Header.Get("X-DuckJump-Agent"), remote: r.RemoteAddr, connected: time.Now(), sess: sess}
 	log := slog.With("site", siteName, "agent", ac.name, "remote", ac.remote)
 	h.add(siteID, ac)
 	log.Info("agent connected")
@@ -219,7 +219,7 @@ func (h *Hub) dial(t ticket) (net.Conn, error) {
 	return st, nil
 }
 
-// ServeRelay accepts paltad connections: "<ticket>\n", answered with
+// ServeRelay accepts duckjumpd connections: "<ticket>\n", answered with
 // "ok\n" or "err <reason>\n", then raw bytes to the target.
 func (h *Hub) ServeRelay(l net.Listener) error {
 	for {

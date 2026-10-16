@@ -9,20 +9,25 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
-	"github.com/leandrofus/palta/gateway/internal/auth"
-	"github.com/leandrofus/palta/gateway/internal/edge"
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
-	"github.com/leandrofus/palta/gateway/internal/totp"
-	"github.com/leandrofus/palta/gateway/internal/vault"
+	"github.com/leandrofus/duckjump/gateway/internal/auth"
+	"github.com/leandrofus/duckjump/gateway/internal/edge"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/totp"
+	"github.com/leandrofus/duckjump/gateway/internal/vault"
 )
+
+func TestMain(m *testing.M) {
+	store.SetAuditKey([]byte("server tests audit key.........."))
+	os.Exit(m.Run())
+}
 
 type env struct {
 	t      *testing.T
@@ -33,15 +38,15 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	st, closeDB, err := store.OpenTemp(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	v, _ := vault.New(vault.GenerateKey())
 	s := &Server{Store: st, Vault: v, Auth: &auth.Service{Store: st, Vault: v}, Hub: edge.NewHub(st.AgentSiteLookup),
-		PaltadAddr: "127.0.0.1:1", PaltadToken: "x"}
+		DaemonAddr: "127.0.0.1:1", DaemonToken: "x"}
 	srv := httptest.NewServer(s.Handler())
-	t.Cleanup(func() { srv.Close(); st.Close() })
+	t.Cleanup(func() { srv.Close(); closeDB() })
 	e := &env{t: t, srv: srv, st: st, server: s}
 	e.mkUser("root", "superadmin")
 	return e
@@ -276,7 +281,7 @@ func TestTOTPFlow(t *testing.T) {
 	ana := e.as("ana")
 	var enr totpEnrollment
 	ana.do("POST", "/auth/me/totp/enroll", nil, 200, &enr)
-	if !strings.HasPrefix(enr.OTPAuthURL, "otpauth://totp/Palta:ana?") {
+	if !strings.HasPrefix(enr.OTPAuthURL, "otpauth://totp/DuckJump:ana?") {
 		t.Fatalf("url: %s", enr.OTPAuthURL)
 	}
 	ana.do("POST", "/auth/me/totp/confirm", codeRequest{Code: "000000"}, 401, nil)

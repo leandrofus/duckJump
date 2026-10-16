@@ -1,6 +1,6 @@
 // Package guac implements the Apache Guacamole instruction format and the
 // client side of the guacd handshake. It is the compatibility layer that lets
-// the gateway route protocols paltad does not implement yet (RDP, VNC) to a
+// the gateway route protocols duckjumpd does not implement yet (RDP, VNC) to a
 // legacy guacd.
 package guac
 

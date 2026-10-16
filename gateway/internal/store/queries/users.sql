@@ -30,3 +30,14 @@ UPDATE config_users SET last_login_at = @now WHERE id = @id;
 
 -- name: DeleteUser :execrows
 DELETE FROM config_users WHERE id = @id;
+
+-- name: GetUserByOIDCSubject :one
+SELECT * FROM config_users WHERE oidc_subject = @oidc_subject;
+
+-- name: CreateOIDCUser :exec
+INSERT INTO config_users (id, username, display_name, email, source, role, oidc_subject, created_at, updated_at)
+VALUES (@id, @username, @display_name, @email, 'oidc', @role, @oidc_subject, @now, @now);
+
+-- name: SyncOIDCUser :exec
+-- What the identity provider says about a user, on every login.
+UPDATE config_users SET display_name = @display_name, email = @email, role = @role, updated_at = @now WHERE id = @id;

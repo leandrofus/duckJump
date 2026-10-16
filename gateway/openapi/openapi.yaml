@@ -4,7 +4,7 @@ components:
     CSRF:
       description: Any value. Required on every state-changing request.
       in: header
-      name: X-Palta-Request
+      name: X-DuckJump-Request
       required: true
       schema:
         type: string
@@ -36,6 +36,16 @@ components:
         - name
         - remote_addr
         - connected_at
+      type: object
+    ApproveHostKeyRequest:
+      additionalProperties: false
+      properties:
+        fingerprint:
+          description: The key to pin, as checked on the server itself (ssh-keygen -lf, or the certificate key for RDP and VNC). Usually the host_key_pending value.
+          pattern: '^SHA256:'
+          type: string
+      required:
+        - fingerprint
       type: object
     AuditEvent:
       properties:
@@ -82,6 +92,9 @@ components:
       type: object
     AuditVerification:
       properties:
+        authenticated:
+          description: Events the MAC chain vouches for (keyed outside the database, so a rewrite with database access alone shows).
+          type: integer
         broken_at:
           description: Id of the first event that does not verify.
           type: integer
@@ -92,9 +105,27 @@ components:
           type: boolean
         reason:
           type: string
+        sealed:
+          description: The chain carries MACs. A chain with events and none does not verify.
+          type: boolean
       required:
         - events
         - ok
+        - authenticated
+        - sealed
+      type: object
+    AuthProviders:
+      properties:
+        local:
+          description: Username and password login is available.
+          type: boolean
+        oidc:
+          oneOf:
+            - $ref: '#/components/schemas/OIDCProvider'
+            - type: "null"
+      required:
+        - local
+        - oidc
       type: object
     ChangePasswordRequest:
       additionalProperties: false
@@ -148,6 +179,11 @@ components:
           type: string
         host_key:
           description: Pinned SHA256 fingerprint.
+          type:
+            - string
+            - "null"
+        host_key_pending:
+          description: Key the server presented with none pinned, waiting for an admin to approve it (PUT /connections/{id}/host-key).
           type:
             - string
             - "null"
@@ -205,6 +241,7 @@ components:
         - record
         - record_input
         - host_key
+        - host_key_pending
         - created_at
         - updated_at
       type: object
@@ -268,7 +305,7 @@ components:
             - string
             - "null"
         site_id:
-          description: null means reachable directly from paltad.
+          description: null means reachable directly from duckjumpd.
           format: uuid
           type:
             - string
@@ -314,6 +351,18 @@ components:
       required:
         - error
         - message
+      type: object
+    FileCredentials:
+      additionalProperties: false
+      properties:
+        password:
+          format: password
+          type: string
+        username:
+          type: string
+      required:
+        - username
+        - password
       type: object
     Folder:
       properties:
@@ -389,6 +438,83 @@ components:
       required:
         - name
       type: object
+    HostListRequest:
+      additionalProperties: false
+      properties:
+        credentials:
+          $ref: '#/components/schemas/FileCredentials'
+          description: For connections without a vaulted credential.
+        path:
+          description: Directory; empty for the login directory.
+          type: string
+      type: object
+    HostListing:
+      properties:
+        entries:
+          items:
+            properties:
+              dir:
+                type: boolean
+              link:
+                type: boolean
+              mode:
+                type:
+                  - integer
+                  - "null"
+              mtime:
+                description: Unix seconds.
+                type:
+                  - integer
+                  - "null"
+              name:
+                type: string
+              size:
+                type: integer
+            required:
+              - name
+              - dir
+              - link
+              - size
+              - mtime
+              - mode
+            type: object
+          type: array
+        path:
+          description: The directory, as the host resolved it.
+          type: string
+      required:
+        - path
+        - entries
+      type: object
+    HostPullRequest:
+      additionalProperties: false
+      properties:
+        credentials:
+          $ref: '#/components/schemas/FileCredentials'
+        path:
+          description: File on the host.
+          type: string
+      required:
+        - path
+      type: object
+    HostPushRequest:
+      additionalProperties: false
+      properties:
+        credentials:
+          $ref: '#/components/schemas/FileCredentials'
+        file_id:
+          description: A file of my tray.
+          type: string
+        overwrite:
+          default: false
+          type: boolean
+        path:
+          description: Where to write it; ending in / puts it in that directory with its own name.
+          type: string
+      required:
+        - file_id
+        - path
+      type: object
     LoginRequest:
       additionalProperties: false
       properties:
@@ -430,6 +556,18 @@ components:
         - mfa_pending
         - dev
       type: object
+    OIDCProvider:
+      properties:
+        login_url:
+          description: Navigate the browser here to sign in.
+          type: string
+        name:
+          description: Label for the sign-in button.
+          type: string
+      required:
+        - name
+        - login_url
+      type: object
     PasswordRequest:
       additionalProperties: false
       properties:
@@ -443,6 +581,10 @@ components:
     Policy:
       properties:
         can_connect:
+          type: boolean
+        can_download:
+          type: boolean
+        can_upload:
           type: boolean
         can_view_recordings:
           type: boolean
@@ -488,6 +630,8 @@ components:
         - object_ref
         - can_connect
         - can_view_recordings
+        - can_upload
+        - can_download
         - expires_at
         - description
         - created_by
@@ -498,6 +642,14 @@ components:
       properties:
         can_connect:
           default: true
+          type: boolean
+        can_download:
+          default: false
+          description: Take files from the host into the user's file tray (and on to their computer).
+          type: boolean
+        can_upload:
+          default: false
+          description: Send files from the user's file tray to the host.
           type: boolean
         can_view_recordings:
           default: false
@@ -540,6 +692,12 @@ components:
       type: object
     PortalConnection:
       properties:
+        can_download:
+          description: May take files from this host into the tray.
+          type: boolean
+        can_upload:
+          description: May send files from the tray to this host.
+          type: boolean
         credentials:
           description: 'vault: injected, nothing to ask. prompt: ask the user before connecting. none: try without; the server may answer credentials_required.'
           enum:
@@ -582,6 +740,8 @@ components:
         - tags
         - record
         - credentials
+        - can_upload
+        - can_download
       type: object
     RecordingSettings:
       properties:
@@ -834,6 +994,68 @@ components:
         - secret
         - otpauth_url
       type: object
+    TerminateSessionRequest:
+      additionalProperties: false
+      properties:
+        reason:
+          description: Shown to the user and kept in the audit log.
+          maxLength: 500
+          type: string
+      type: object
+    TrayFile:
+      properties:
+        connection_id:
+          description: The host it came from (origin host).
+          type:
+            - string
+            - "null"
+        created_at:
+          format: date-time
+          type: string
+        deleted_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        expires_at:
+          description: When its content is deleted (the record stays).
+          format: date-time
+          type: string
+        id:
+          format: uuid
+          type: string
+        name:
+          type: string
+        origin:
+          description: 'upload: from a computer; host: pulled out of a connection.'
+          enum:
+            - upload
+            - host
+          type: string
+        owner_id:
+          type: string
+        owner_name:
+          type: string
+        remote_path:
+          type: string
+        sha256:
+          type: string
+        size:
+          type: integer
+      required:
+        - id
+        - owner_id
+        - owner_name
+        - name
+        - size
+        - sha256
+        - origin
+        - connection_id
+        - remote_path
+        - created_at
+        - expires_at
+        - deleted_at
+      type: object
     UpdateConnectionRequest:
       additionalProperties: false
       description: Only the fields present change. tags replaces the whole set.
@@ -920,6 +1142,10 @@ components:
       additionalProperties: false
       properties:
         can_connect:
+          type: boolean
+        can_download:
+          type: boolean
+        can_upload:
           type: boolean
         can_view_recordings:
           type: boolean
@@ -1022,14 +1248,14 @@ components:
   securitySchemes:
     session:
       in: cookie
-      name: palta_session
+      name: duckjump_session
       type: apiKey
 info:
-  description: 'Administration and portal API of the Palta access bastion. Authenticate with POST /auth/login, which sets the palta_session cookie. Every request that changes state must also send the X-Palta-Request header (any value): together with the SameSite=Strict cookie it blocks cross-site requests.'
+  description: 'Administration and portal API of the DuckJump access bastion. Authenticate with POST /auth/login, which sets the duckjump_session cookie. Every request that changes state must also send the X-DuckJump-Request header (any value): together with the SameSite=Strict cookie it blocks cross-site requests.'
   license:
     identifier: Apache-2.0
     name: Apache-2.0
-  title: Palta API
+  title: DuckJump API
   version: 0.1.0
 openapi: 3.1.0
 paths:
@@ -1089,7 +1315,106 @@ paths:
       summary: Audit log
       tags:
         - audit
-      x-palta-roles:
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+  /audit/files:
+    get:
+      description: |-
+        Every file that went through the gateway, newest first.
+
+        Roles: admin, auditor, superadmin.
+      operationId: listFilesAudit
+      parameters:
+        - in: query
+          name: owner_id
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            default: 100
+            maximum: 500
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TrayFile'
+                type: array
+          description: Files
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+      summary: File transfers
+      tags:
+        - audit
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+  /audit/files/{id}/content:
+    get:
+      description: |-
+        For auditors, while its content is kept. Audited (file.view).
+
+        Roles: admin, auditor, superadmin.
+      operationId: downloadFileAudit
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                format: binary
+                type: string
+          description: The content
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "410":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error 410
+      summary: Download a transferred file (evidence)
+      tags:
+        - audit
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
@@ -1150,7 +1475,7 @@ paths:
       summary: Session history
       tags:
         - audit
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
@@ -1192,14 +1517,14 @@ paths:
       summary: Get a session
       tags:
         - audit
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
   /audit/sessions/{id}/recording:
     get:
       description: |-
-        asciicast v2 for terminal sessions (playable with asciinema); for VNC and RDP the DuckJump graphical format (DJGFX1, see paltad recording.rs). Served gzip-compressed when the client accepts it. For a session still open it returns what has been recorded so far. 410 when the retention policy already deleted it. Allowed to auditors and admins, and to users holding view_recordings on the session's connection. Every download is audited.
+        asciicast v2 for terminal sessions (playable with asciinema); for VNC and RDP the DuckJump graphical format (DJGFX1, see duckjumpd recording.rs). Served gzip-compressed when the client accepts it. For a session still open it returns what has been recorded so far. 410 when the retention policy already deleted it. Allowed to auditors and admins, and to users holding view_recordings on the session's connection. Every download is audited.
 
         Roles: admin, auditor, superadmin, user.
       operationId: getRecording
@@ -1237,11 +1562,70 @@ paths:
       summary: Download a session recording
       tags:
         - audit
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
         - user
+  /audit/sessions/{id}/terminate:
+    post:
+      description: |-
+        Ends an open session now: the user's tunnel closes with the reason. The request is recorded (append-only) and audited; a gateway process holding the session picks it up within seconds even when it is not the one that received the request.
+
+        Roles: admin, superadmin.
+      operationId: terminateSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateSessionRequest'
+        required: false
+      responses:
+        "202":
+          description: Termination requested
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflicts with the current state
+      summary: Terminate a live session
+      tags:
+        - audit
+      x-duckjump-roles:
+        - admin
+        - superadmin
   /audit/verify:
     get:
       description: |-
@@ -1271,13 +1655,13 @@ paths:
       summary: Verify the audit hash chain
       tags:
         - audit
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
   /auth/login:
     post:
-      description: Sets the palta_session cookie. When the user has TOTP enabled the session is only half open (mfa_required) until POST /auth/totp. Five failures per username and address within 15 minutes lock that pair out for the rest of the window.
+      description: Sets the duckjump_session cookie. When the user has TOTP enabled the session is only half open (mfa_required) until POST /auth/totp. Five failures per username and address within 15 minutes lock that pair out for the rest of the window.
       operationId: login
       parameters:
         - $ref: '#/components/parameters/CSRF'
@@ -1351,7 +1735,7 @@ paths:
       summary: Log out
       tags:
         - auth
-      x-palta-mfa-pending-allowed: true
+      x-duckjump-mfa-pending-allowed: true
   /auth/me:
     get:
       operationId: me
@@ -1371,7 +1755,7 @@ paths:
       summary: Who am I
       tags:
         - auth
-      x-palta-mfa-pending-allowed: true
+      x-duckjump-mfa-pending-allowed: true
   /auth/me/password:
     put:
       description: |-
@@ -1411,7 +1795,7 @@ paths:
       summary: Change my password
       tags:
         - auth
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
@@ -1452,7 +1836,7 @@ paths:
       summary: Disable my TOTP
       tags:
         - auth
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
@@ -1499,7 +1883,7 @@ paths:
       summary: Confirm TOTP enrollment
       tags:
         - auth
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
@@ -1547,11 +1931,54 @@ paths:
       summary: Start TOTP enrollment
       tags:
         - auth
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
         - user
+  /auth/oidc/callback:
+    get:
+      description: Where the identity provider returns the browser. Verifies the state, redeems the code, checks the ID token, provisions the user and opens a session; then redirects to the UI (with login_error on failure). Audited.
+      operationId: oidcCallback
+      responses:
+        "303":
+          description: To the UI
+      security: []
+      summary: Single sign-on callback
+      tags:
+        - auth
+  /auth/oidc/login:
+    get:
+      description: Redirects the browser to the identity provider (authorization code flow with PKCE).
+      operationId: oidcLogin
+      responses:
+        "302":
+          description: To the identity provider
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      security: []
+      summary: Start single sign-on
+      tags:
+        - auth
+  /auth/providers:
+    get:
+      description: For the login page. No authentication needed.
+      operationId: authProviders
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthProviders'
+          description: Sign-in methods
+      security: []
+      summary: How users can sign in
+      tags:
+        - auth
   /auth/totp:
     post:
       operationId: loginTOTP
@@ -1597,7 +2024,7 @@ paths:
       summary: Second login step (TOTP)
       tags:
         - auth
-      x-palta-mfa-pending-allowed: true
+      x-duckjump-mfa-pending-allowed: true
   /connections:
     get:
       description: 'Roles: admin, superadmin.'
@@ -1626,7 +2053,7 @@ paths:
       summary: List connections
       tags:
         - connections
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     post:
@@ -1674,7 +2101,7 @@ paths:
       summary: Create a connection
       tags:
         - connections
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /connections/{id}:
@@ -1721,7 +2148,7 @@ paths:
       summary: Delete a connection
       tags:
         - connections
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     get:
@@ -1761,7 +2188,7 @@ paths:
       summary: Get a connection
       tags:
         - connections
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     patch:
@@ -1820,13 +2247,198 @@ paths:
       summary: Update a connection
       tags:
         - connections
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
+  /connections/{id}/files/list:
+    post:
+      description: |-
+        Needs can_upload or can_download on the connection (SSH, over SFTP).
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: hostList
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostListRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostListing'
+          description: The directory
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflicts with the current state
+      summary: Browse a host's files
+      tags:
+        - files
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /connections/{id}/files/pull:
+    post:
+      description: |-
+        Needs can_download. The file is kept with its SHA-256 and audited (file.pull).
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: hostPull
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostPullRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrayFile'
+          description: In the tray
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Take a file out of a host into my tray
+      tags:
+        - files
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /connections/{id}/files/push:
+    post:
+      description: |-
+        Needs can_upload. Refuses to replace an existing file unless overwrite. Audited (file.push).
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: hostPush
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostPushRequest'
+        required: true
+      responses:
+        "204":
+          description: Written
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error 422
+      summary: Send a file from my tray into a host
+      tags:
+        - files
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
   /connections/{id}/host-key:
     delete:
       description: |-
-        The next session pins whatever key the host presents (trust on first use).
+        The next session reports the key the host presents, to be approved (or, with trust on first use, pins it).
 
         Roles: admin, superadmin.
       operationId: clearHostKey
@@ -1867,7 +2479,59 @@ paths:
       summary: Forget the pinned host key
       tags:
         - connections
-      x-palta-roles:
+      x-duckjump-roles:
+        - admin
+        - superadmin
+    put:
+      description: |-
+        Pins the fingerprint as the key sessions must find on the server. Use it after comparing host_key_pending with the key shown on the server itself, or to pin a known key up front. Replaces a pinned key.
+
+        Roles: admin, superadmin.
+      operationId: approveHostKey
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveHostKeyRequest'
+        required: true
+      responses:
+        "204":
+          description: Host key pinned
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Approve (pin) a host key
+      tags:
+        - connections
+      x-duckjump-roles:
         - admin
         - superadmin
   /connections/{id}/session:
@@ -1936,7 +2600,192 @@ paths:
       summary: Open a session (WebSocket)
       tags:
         - portal
-      x-palta-roles:
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /files:
+    get:
+      description: |-
+        Files I uploaded or pulled out of hosts, whose content is still kept.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: listTray
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TrayFile'
+                type: array
+          description: Files
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+      summary: My file tray
+      tags:
+        - files
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+    post:
+      description: |-
+        The request body is the file's content. Audited with its SHA-256.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: uploadToTray
+      parameters:
+        - in: query
+          name: name
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              format: binary
+              type: string
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrayFile'
+          description: Stored
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error 413
+      summary: Upload a file to my tray
+      tags:
+        - files
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /files/{id}:
+    delete:
+      description: |-
+        Its content goes; the record of it stays.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: deleteFromTray
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Delete a file from my tray
+      tags:
+        - files
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /files/{id}/content:
+    get:
+      description: |-
+        A file pulled out of a host needs can_download on that host still; one I uploaded myself is always mine to take back. Audited.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: downloadFromTray
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                format: binary
+                type: string
+          description: The content
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+        "410":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error 410
+      summary: Download a file from my tray
+      tags:
+        - files
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
@@ -1972,7 +2821,7 @@ paths:
       summary: List folders
       tags:
         - folders
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     post:
@@ -2020,7 +2869,7 @@ paths:
       summary: Create a folder
       tags:
         - folders
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /folders/{id}:
@@ -2073,7 +2922,7 @@ paths:
       summary: Delete an empty folder
       tags:
         - folders
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     patch:
@@ -2132,7 +2981,7 @@ paths:
       summary: Rename or move a folder
       tags:
         - folders
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /groups:
@@ -2163,7 +3012,7 @@ paths:
       summary: List groups
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     post:
@@ -2211,7 +3060,7 @@ paths:
       summary: Create a group
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /groups/{id}:
@@ -2258,7 +3107,7 @@ paths:
       summary: Delete a group
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     get:
@@ -2298,7 +3147,7 @@ paths:
       summary: Get a group
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     patch:
@@ -2357,7 +3206,7 @@ paths:
       summary: Update a group
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /groups/{id}/members:
@@ -2400,7 +3249,7 @@ paths:
       summary: List group members
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /groups/{id}/members/{user}:
@@ -2449,7 +3298,7 @@ paths:
       summary: Remove a user from a group
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     put:
@@ -2500,7 +3349,7 @@ paths:
       summary: Add a user to a group
       tags:
         - groups
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /policies:
@@ -2542,7 +3391,7 @@ paths:
       summary: List policies
       tags:
         - policies
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     post:
@@ -2590,7 +3439,7 @@ paths:
       summary: Grant access
       tags:
         - policies
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /policies/{id}:
@@ -2637,7 +3486,7 @@ paths:
       summary: Revoke a policy
       tags:
         - policies
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     get:
@@ -2677,7 +3526,7 @@ paths:
       summary: Get a policy
       tags:
         - policies
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     patch:
@@ -2733,7 +3582,7 @@ paths:
       summary: Update a policy
       tags:
         - policies
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /portal/connections:
@@ -2761,7 +3610,7 @@ paths:
       summary: Connections I can open
       tags:
         - portal
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - auditor
         - superadmin
@@ -2797,7 +3646,7 @@ paths:
       summary: List vaulted credentials
       tags:
         - secrets
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     post:
@@ -2845,7 +3694,7 @@ paths:
       summary: Vault a credential
       tags:
         - secrets
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /secrets/{id}:
@@ -2892,7 +3741,7 @@ paths:
       summary: Delete a credential
       tags:
         - secrets
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     get:
@@ -2932,7 +3781,7 @@ paths:
       summary: Get a credential's metadata
       tags:
         - secrets
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     patch:
@@ -2991,7 +3840,7 @@ paths:
       summary: Update or replace a credential
       tags:
         - secrets
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /settings/recordings:
@@ -3026,7 +3875,7 @@ paths:
       summary: Recording retention and storage
       tags:
         - settings
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     put:
@@ -3077,7 +3926,7 @@ paths:
       summary: Set the recording retention
       tags:
         - settings
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /sites:
@@ -3108,7 +3957,7 @@ paths:
       summary: List sites
       tags:
         - sites
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     post:
@@ -3159,7 +4008,7 @@ paths:
       summary: Create a site
       tags:
         - sites
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /sites/{id}:
@@ -3212,7 +4061,7 @@ paths:
       summary: Delete a site
       tags:
         - sites
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     get:
@@ -3252,7 +4101,7 @@ paths:
       summary: Get a site
       tags:
         - sites
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     patch:
@@ -3311,7 +4160,7 @@ paths:
       summary: Update a site
       tags:
         - sites
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /sites/{id}/agents:
@@ -3354,7 +4203,7 @@ paths:
       summary: Agents connected for a site
       tags:
         - sites
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /sites/{id}/token:
@@ -3411,7 +4260,7 @@ paths:
       summary: Rotate a site's agent token
       tags:
         - sites
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /users:
@@ -3442,7 +4291,7 @@ paths:
       summary: List users
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     post:
@@ -3490,7 +4339,7 @@ paths:
       summary: Create a local user
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /users/{id}:
@@ -3543,7 +4392,7 @@ paths:
       summary: Delete a user
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     get:
@@ -3583,7 +4432,7 @@ paths:
       summary: Get a user
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
     patch:
@@ -3645,7 +4494,7 @@ paths:
       summary: Update a user
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /users/{id}/access:
@@ -3688,7 +4537,7 @@ paths:
       summary: Connections a user can access, and why
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /users/{id}/groups:
@@ -3731,7 +4580,7 @@ paths:
       summary: Groups a user belongs to
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /users/{id}/password:
@@ -3784,7 +4633,7 @@ paths:
       summary: Reset a user's password
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
   /users/{id}/totp:
@@ -3831,7 +4680,7 @@ paths:
       summary: Reset a user's TOTP
       tags:
         - users
-      x-palta-roles:
+      x-duckjump-roles:
         - admin
         - superadmin
 security:

@@ -2,7 +2,7 @@ import { t, LANGUAGES, getLang, setLang } from './i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MonitorSmartphone, Server, Users as UsersIcon, UsersRound, ShieldCheck, KeyRound, Network, ScrollText, History,
-  Search, Plus, Languages, LogOut, Moon, Sun, Check, PanelLeftClose, PanelLeft, Star, Clock, UserCog, TerminalSquare, Settings as SettingsIcon,
+  Search, Plus, Languages, LogOut, Moon, Sun, Check, PanelLeftClose, PanelLeft, Star, Clock, UserCog, TerminalSquare, Settings as SettingsIcon, FolderInput,
 } from 'lucide-react'
 import { api, setUnauthorizedHandler } from './lib/api'
 import type { Me, PortalConnection } from './lib/api'
@@ -26,6 +26,7 @@ import { Sites, SiteFormDialog } from './pages/Sites'
 import { AuditLog } from './pages/AuditLog'
 import { Sessions } from './pages/Sessions'
 import { Account } from './pages/Account'
+import { Files } from './pages/Files'
 import { Settings } from './pages/Settings'
 
 export type Recent = { id: string; name: string; protocol: string }
@@ -37,7 +38,10 @@ interface NavItem {
   show?: () => boolean
 }
 
-const NAV_PORTAL: NavItem[] = [{ id: 'portal', label: t('My connections'), icon: MonitorSmartphone }]
+const NAV_PORTAL: NavItem[] = [
+  { id: 'portal', label: t('My connections'), icon: MonitorSmartphone },
+  { id: 'files', label: t('My files'), icon: FolderInput },
+]
 const NAV_ADMIN: NavItem[] = [
   { id: 'connections', label: t('Connections'), icon: Server },
   { id: 'users', label: t('Users'), icon: UsersIcon },
@@ -324,6 +328,7 @@ function Shell() {
     case 'sessions': page = auditor(<Sessions id={id} />); break
     case 'settings': page = admin(<Settings />); break
     case 'account': page = <Account />; break
+    case 'files': page = <Files />; break
     default: page = <Portal />
   }
   return (

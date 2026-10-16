@@ -8,12 +8,11 @@ package db
 import (
 	"context"
 	"database/sql"
-	"strings"
 	"time"
 )
 
 const auditEventsFrom = `-- name: AuditEventsFrom :many
-SELECT id, ts, actor_id, actor_name, actor_ip, "action", object_type, object_id, details, prev_hash, hash FROM audit_events WHERE id > ?1 ORDER BY id LIMIT ?2
+SELECT id, ts, actor_id, actor_name, actor_ip, action, object_type, object_id, details, prev_hash, hash, mac, ts_exact FROM audit_events WHERE id > $1 ORDER BY id LIMIT CAST($2 AS BIGINT)
 `
 
 type AuditEventsFromParams struct {
@@ -43,6 +42,8 @@ func (q *Queries) AuditEventsFrom(ctx context.Context, arg AuditEventsFromParams
 			&i.Details,
 			&i.PrevHash,
 			&i.Hash,
+			&i.Mac,
+			&i.TsExact,
 		); err != nil {
 			return nil, err
 		}
@@ -57,8 +58,125 @@ func (q *Queries) AuditEventsFrom(ctx context.Context, arg AuditEventsFromParams
 	return items, nil
 }
 
+const beatSession = `-- name: BeatSession :exec
+INSERT INTO runtime_sessions (session_id, node, heartbeat_at) VALUES ($1, $2, $3)
+ON CONFLICT (session_id) DO UPDATE SET heartbeat_at = excluded.heartbeat_at, node = excluded.node
+`
+
+type BeatSessionParams struct {
+	SessionID string
+	Node      string
+	Now       time.Time
+}
+
+func (q *Queries) BeatSession(ctx context.Context, arg BeatSessionParams) error {
+	_, err := q.db.ExecContext(ctx, beatSession, arg.SessionID, arg.Node, arg.Now)
+	return err
+}
+
+const closeStaleSessions = `-- name: CloseStaleSessions :many
+UPDATE audit_sessions SET ended_at = $1, end_reason = 'lost: the gateway holding it stopped'
+WHERE ended_at IS NULL
+  AND julianday(started_at) < julianday(CAST($2 AS TEXT))
+  AND NOT EXISTS (SELECT 1 FROM runtime_sessions r WHERE r.session_id = audit_sessions.id
+                  AND julianday(r.heartbeat_at) >= julianday(CAST($2 AS TEXT)))
+RETURNING id
+`
+
+type CloseStaleSessionsParams struct {
+	Now    sql.NullTime
+	Cutoff string
+}
+
+// Open sessions no gateway is holding: their heartbeat stopped, or never
+// came and they started before the cutoff.
+func (q *Queries) CloseStaleSessions(ctx context.Context, arg CloseStaleSessionsParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, closeStaleSessions, arg.Now, arg.Cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const copyAuditEvent = `-- name: CopyAuditEvent :exec
+INSERT INTO audit_events (id, ts, actor_id, actor_name, actor_ip, action, object_type, object_id, details, prev_hash, hash, mac, ts_exact)
+OVERRIDING SYSTEM VALUE
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+`
+
+type CopyAuditEventParams struct {
+	ID         int64
+	Ts         time.Time
+	ActorID    sql.NullString
+	ActorName  string
+	ActorIP    string
+	Action     string
+	ObjectType string
+	ObjectID   string
+	Details    string
+	PrevHash   string
+	Hash       string
+	Mac        sql.NullString
+	TsExact    sql.NullString
+}
+
+// migrate-to-postgres: the event exactly as it was, id included.
+func (q *Queries) CopyAuditEvent(ctx context.Context, arg CopyAuditEventParams) error {
+	_, err := q.db.ExecContext(ctx, copyAuditEvent,
+		arg.ID,
+		arg.Ts,
+		arg.ActorID,
+		arg.ActorName,
+		arg.ActorIP,
+		arg.Action,
+		arg.ObjectType,
+		arg.ObjectID,
+		arg.Details,
+		arg.PrevHash,
+		arg.Hash,
+		arg.Mac,
+		arg.TsExact,
+	)
+	return err
+}
+
+const countAuditEvents = `-- name: CountAuditEvents :one
+SELECT count(*) FROM audit_events
+`
+
+func (q *Queries) CountAuditEvents(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAuditEvents)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteStaleHeartbeats = `-- name: DeleteStaleHeartbeats :exec
+DELETE FROM runtime_sessions WHERE julianday(heartbeat_at) < julianday(CAST($1 AS TEXT))
+`
+
+func (q *Queries) DeleteStaleHeartbeats(ctx context.Context, cutoff string) error {
+	_, err := q.db.ExecContext(ctx, deleteStaleHeartbeats, cutoff)
+	return err
+}
+
 const endSessionRecord = `-- name: EndSessionRecord :exec
-UPDATE audit_sessions SET ended_at = ?1, end_reason = CAST(?2 AS TEXT) WHERE id = ?3 AND ended_at IS NULL
+UPDATE audit_sessions SET ended_at = $1, end_reason = CAST($2 AS TEXT) WHERE id = $3 AND ended_at IS NULL
 `
 
 type EndSessionRecordParams struct {
@@ -72,8 +190,17 @@ func (q *Queries) EndSessionRecord(ctx context.Context, arg EndSessionRecordPara
 	return err
 }
 
+const forgetSession = `-- name: ForgetSession :exec
+DELETE FROM runtime_sessions WHERE session_id = $1
+`
+
+func (q *Queries) ForgetSession(ctx context.Context, sessionID string) error {
+	_, err := q.db.ExecContext(ctx, forgetSession, sessionID)
+	return err
+}
+
 const getRecordingPurge = `-- name: GetRecordingPurge :one
-SELECT session_id, purged_at, reason, bytes FROM audit_recording_purges WHERE session_id = ?1
+SELECT session_id, purged_at, reason, bytes FROM audit_recording_purges WHERE session_id = $1
 `
 
 func (q *Queries) GetRecordingPurge(ctx context.Context, sessionID string) (AuditRecordingPurge, error) {
@@ -89,7 +216,7 @@ func (q *Queries) GetRecordingPurge(ctx context.Context, sessionID string) (Audi
 }
 
 const getSessionRecord = `-- name: GetSessionRecord :one
-SELECT id, user_id, username, connection_id, connection_snapshot, site, client_ip, reason, recording, started_at, ended_at, end_reason FROM audit_sessions WHERE id = ?1
+SELECT id, user_id, username, connection_id, connection_snapshot, site, client_ip, reason, recording, started_at, ended_at, end_reason FROM audit_sessions WHERE id = $1
 `
 
 func (q *Queries) GetSessionRecord(ctx context.Context, id string) (AuditSession, error) {
@@ -113,8 +240,8 @@ func (q *Queries) GetSessionRecord(ctx context.Context, id string) (AuditSession
 }
 
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
-INSERT INTO audit_events (ts, actor_id, actor_name, actor_ip, action, object_type, object_id, details, prev_hash, hash)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+INSERT INTO audit_events (ts, actor_id, actor_name, actor_ip, action, object_type, object_id, details, prev_hash, hash, mac)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
 
 type InsertAuditEventParams struct {
@@ -128,6 +255,7 @@ type InsertAuditEventParams struct {
 	Details    string
 	PrevHash   string
 	Hash       string
+	Mac        sql.NullString
 }
 
 func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error {
@@ -142,12 +270,14 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 		arg.Details,
 		arg.PrevHash,
 		arg.Hash,
+		arg.Mac,
 	)
 	return err
 }
 
 const insertRecordingPurge = `-- name: InsertRecordingPurge :exec
-INSERT INTO audit_recording_purges (session_id, purged_at, reason, bytes) VALUES (?1, ?2, ?3, ?4)
+INSERT INTO audit_recording_purges (session_id, purged_at, reason, bytes) VALUES ($1, $2, $3, $4)
+ON CONFLICT (session_id) DO NOTHING
 `
 
 type InsertRecordingPurgeParams struct {
@@ -167,25 +297,30 @@ func (q *Queries) InsertRecordingPurge(ctx context.Context, arg InsertRecordingP
 	return err
 }
 
-const lastAuditHash = `-- name: LastAuditHash :one
-SELECT hash FROM audit_events ORDER BY id DESC LIMIT 1
+const lastAuditEvent = `-- name: LastAuditEvent :one
+SELECT hash, mac FROM audit_events ORDER BY id DESC LIMIT 1
 `
 
-func (q *Queries) LastAuditHash(ctx context.Context) (string, error) {
-	row := q.db.QueryRowContext(ctx, lastAuditHash)
-	var hash string
-	err := row.Scan(&hash)
-	return hash, err
+type LastAuditEventRow struct {
+	Hash string
+	Mac  sql.NullString
+}
+
+func (q *Queries) LastAuditEvent(ctx context.Context) (LastAuditEventRow, error) {
+	row := q.db.QueryRowContext(ctx, lastAuditEvent)
+	var i LastAuditEventRow
+	err := row.Scan(&i.Hash, &i.Mac)
+	return i, err
 }
 
 const listAuditEvents = `-- name: ListAuditEvents :many
-SELECT id, ts, actor_id, actor_name, actor_ip, "action", object_type, object_id, details, prev_hash, hash FROM audit_events
-WHERE (CAST(?1 AS INTEGER) = 0 OR id < ?1)
-  AND (CAST(?2 AS TEXT) = '' OR actor_id = ?2)
-  AND (CAST(?3 AS TEXT) = '' OR action = ?3)
-  AND (CAST(?4 AS TEXT) = '' OR object_id = ?4)
+SELECT id, ts, actor_id, actor_name, actor_ip, action, object_type, object_id, details, prev_hash, hash, mac, ts_exact FROM audit_events
+WHERE (CAST($1 AS BIGINT) = 0 OR id < $1)
+  AND (CAST($2 AS TEXT) = '' OR actor_id = $2)
+  AND (CAST($3 AS TEXT) = '' OR action = $3)
+  AND (CAST($4 AS TEXT) = '' OR object_id = $4)
 ORDER BY id DESC
-LIMIT ?5
+LIMIT CAST($5 AS BIGINT)
 `
 
 type ListAuditEventsParams struct {
@@ -224,6 +359,8 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 			&i.Details,
 			&i.PrevHash,
 			&i.Hash,
+			&i.Mac,
+			&i.TsExact,
 		); err != nil {
 			return nil, err
 		}
@@ -238,35 +375,29 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 	return items, nil
 }
 
-const listPurgedSessionIDs = `-- name: ListPurgedSessionIDs :many
-SELECT session_id FROM audit_recording_purges
-WHERE session_id IN (/*SLICE:ids*/?)
+const listSessionKills = `-- name: ListSessionKills :many
+SELECT k.session_id, k.requested_at, k.requested_by, k.reason FROM audit_session_kills k JOIN audit_sessions s ON s.id = k.session_id WHERE s.ended_at IS NULL
 `
 
-// Which of the given sessions had their recording purged (for list views).
-func (q *Queries) ListPurgedSessionIDs(ctx context.Context, ids []string) ([]string, error) {
-	query := listPurgedSessionIDs
-	var queryParams []interface{}
-	if len(ids) > 0 {
-		for _, v := range ids {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
-	}
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+// Kill requests for sessions still open (what live gateways act on).
+func (q *Queries) ListSessionKills(ctx context.Context) ([]AuditSessionKill, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionKills)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []string{}
+	items := []AuditSessionKill{}
 	for rows.Next() {
-		var session_id string
-		if err := rows.Scan(&session_id); err != nil {
+		var i AuditSessionKill
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.RequestedAt,
+			&i.RequestedBy,
+			&i.Reason,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, session_id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -279,12 +410,12 @@ func (q *Queries) ListPurgedSessionIDs(ctx context.Context, ids []string) ([]str
 
 const listSessionRecords = `-- name: ListSessionRecords :many
 SELECT id, user_id, username, connection_id, connection_snapshot, site, client_ip, reason, recording, started_at, ended_at, end_reason FROM audit_sessions
-WHERE (CAST(?1 AS TEXT) = '' OR user_id = ?1)
-  AND (CAST(?2 AS TEXT) = '' OR connection_id = ?2)
-  AND (CAST(?3 AS BOOLEAN) = 0 OR ended_at IS NULL)
-  AND (CAST(?4 AS BOOLEAN) = 0 OR julianday(started_at) < julianday(CAST(?5 AS TEXT)))
+WHERE (CAST($1 AS TEXT) = '' OR user_id = $1)
+  AND (CAST($2 AS TEXT) = '' OR connection_id = $2)
+  AND (NOT CAST($3 AS BOOLEAN) OR ended_at IS NULL)
+  AND (NOT CAST($4 AS BOOLEAN) OR julianday(started_at) < julianday(CAST($5 AS TEXT)))
 ORDER BY started_at DESC
-LIMIT ?6
+LIMIT CAST($6 AS BIGINT)
 `
 
 type ListSessionRecordsParams struct {
@@ -340,6 +471,8 @@ func (q *Queries) ListSessionRecords(ctx context.Context, arg ListSessionRecords
 }
 
 const liveRecordings = `-- name: LiveRecordings :many
+
+
 SELECT s.id, s.recording, s.started_at, s.ended_at FROM audit_sessions s
 WHERE s.recording IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM audit_recording_purges p WHERE p.session_id = s.id)
@@ -353,6 +486,7 @@ type LiveRecordingsRow struct {
 	EndedAt   sql.NullTime
 }
 
+// another gateway purged it first
 // Sessions with a recording that has not been purged, oldest first.
 func (q *Queries) LiveRecordings(ctx context.Context) ([]LiveRecordingsRow, error) {
 	rows, err := q.db.QueryContext(ctx, liveRecordings)
@@ -386,10 +520,10 @@ const recordingsEndedBefore = `-- name: RecordingsEndedBefore :many
 SELECT s.id, s.recording, s.ended_at FROM audit_sessions s
 WHERE s.recording IS NOT NULL
   AND s.ended_at IS NOT NULL
-  AND julianday(s.ended_at) < julianday(CAST(?1 AS TEXT))
+  AND julianday(s.ended_at) < julianday(CAST($1 AS TEXT))
   AND NOT EXISTS (SELECT 1 FROM audit_recording_purges p WHERE p.session_id = s.id)
 ORDER BY s.ended_at
-LIMIT ?2
+LIMIT CAST($2 AS BIGINT)
 `
 
 type RecordingsEndedBeforeParams struct {
@@ -427,9 +561,31 @@ func (q *Queries) RecordingsEndedBefore(ctx context.Context, arg RecordingsEnded
 	return items, nil
 }
 
+const requestSessionKill = `-- name: RequestSessionKill :exec
+INSERT INTO audit_session_kills (session_id, requested_at, requested_by, reason) VALUES ($1, $2, $3, $4)
+ON CONFLICT (session_id) DO NOTHING
+`
+
+type RequestSessionKillParams struct {
+	SessionID   string
+	Now         time.Time
+	RequestedBy string
+	Reason      string
+}
+
+func (q *Queries) RequestSessionKill(ctx context.Context, arg RequestSessionKillParams) error {
+	_, err := q.db.ExecContext(ctx, requestSessionKill,
+		arg.SessionID,
+		arg.Now,
+		arg.RequestedBy,
+		arg.Reason,
+	)
+	return err
+}
+
 const startSessionRecord = `-- name: StartSessionRecord :exec
 INSERT INTO audit_sessions (id, user_id, username, connection_id, connection_snapshot, site, client_ip, reason, recording, started_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type StartSessionRecordParams struct {

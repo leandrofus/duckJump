@@ -4,44 +4,77 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"strings"
+	"sync"
+	"time"
 
-	"github.com/leandrofus/palta/gateway/internal/auth"
-	"github.com/leandrofus/palta/gateway/internal/edge"
-	"github.com/leandrofus/palta/gateway/internal/store"
-	"github.com/leandrofus/palta/gateway/internal/store/db"
-	"github.com/leandrofus/palta/gateway/internal/vault"
+	"github.com/leandrofus/duckjump/gateway/internal/auth"
+	"github.com/leandrofus/duckjump/gateway/internal/edge"
+	"github.com/leandrofus/duckjump/gateway/internal/objstore"
+	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/vault"
 )
 
 const (
-	sessionCookie = "palta_session"
+	sessionCookie = "duckjump_session"
 	// Mutating requests must carry this header. Browsers cannot add custom
 	// headers to cross-site requests without a CORS preflight we never
 	// answer, so together with SameSite=Strict it stops CSRF.
-	csrfHeader = "X-Palta-Request"
+	csrfHeader = "X-DuckJump-Request"
 )
 
 type Server struct {
-	Store         *store.Store
-	Vault         *vault.Vault
-	Auth          *auth.Service
-	Hub           *edge.Hub
-	PaltadAddr    string
-	PaltadToken   string
-	RelayAddr     string
-	RecordingsDir string
+	Store       *store.Store
+	Vault       *vault.Vault
+	Auth        *auth.Service
+	Hub         *edge.Hub
+	DaemonAddr  string
+	DaemonToken string
+	// DaemonTLS, when set, is how the link to duckjumpd is secured (it carries
+	// live credentials): needed when duckjumpd runs on another host.
+	DaemonTLS *tls.Config
+	RelayAddr string
+	// RelayFingerprint: the relay listener speaks TLS with the certificate
+	// of this fingerprint, which duckjumpd pins.
+	RelayFingerprint string
+	RecordingsDir    string
+	// Files keeps the file tray (nil: file transfer off).
+	Files       FileStore
+	FileMaxSize int64         // bytes per file (0: DefaultFileMaxSize)
+	FileTTL     time.Duration // how long tray content is kept (0: DefaultFileTTL)
+	// Objects: the bucket duckjumpd moves finished recordings to (nil: disk only).
+	Objects *objstore.S3
+	// TrustedProxies are the reverse proxies in front of the gateway. Requests
+	// from them are attributed to the address in X-Forwarded-For (the last
+	// one not itself a trusted proxy), and their X-Forwarded-Proto counts.
+	TrustedProxies []netip.Prefix
+	// SecureCookies forces the Secure flag on the session cookie, for TLS
+	// terminated before the gateway (by a proxy not listed as trusted).
+	SecureCookies bool
+	// OIDC enables single sign-on (nil: local accounts only).
+	OIDC *auth.OIDC
+	// TrustOnFirstUse pins the key a server presents on its first session
+	// (the old behaviour). Off, sessions to a server with no approved key are
+	// refused before any credential is sent, until an admin approves it.
+	TrustOnFirstUse bool
 	// Dev disables user authentication: every request acts as a superadmin
 	// that may open any connection. PoC only; never expose it.
 	Dev bool
 
-	limiter *auth.Limiter
+	limiter  *auth.Limiter
+	live     liveSessions
+	checkMu  sync.Mutex
+	nodeOnce sync.Once
+	nodeName string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -52,6 +85,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Authentication and the caller's own account.
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	mux.HandleFunc("GET /api/v1/auth/providers", s.authProviders)
+	mux.HandleFunc("GET /api/v1/auth/oidc/login", s.oidcLogin)
+	mux.HandleFunc("GET /api/v1/auth/oidc/callback", s.oidcCallback)
 	mux.Handle("POST /api/v1/auth/totp", s.pending(s.loginTOTP))
 	mux.Handle("POST /api/v1/auth/logout", s.pending(s.logout))
 	mux.Handle("GET /api/v1/auth/me", s.pending(s.me))
@@ -59,6 +95,17 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/auth/me/totp/enroll", s.authed(anyRole, s.totpEnroll))
 	mux.Handle("POST /api/v1/auth/me/totp/confirm", s.authed(anyRole, s.totpConfirm))
 	mux.Handle("DELETE /api/v1/auth/me/totp", s.authed(anyRole, s.totpDisable))
+
+	// File tray and transfers.
+	mux.Handle("GET /api/v1/files", s.authed(anyRole, s.listTray))
+	mux.Handle("POST /api/v1/files", s.authed(anyRole, s.uploadToTray))
+	mux.Handle("GET /api/v1/files/{id}/content", s.authed(anyRole, s.downloadFromTray))
+	mux.Handle("DELETE /api/v1/files/{id}", s.authed(anyRole, s.deleteFromTray))
+	mux.Handle("POST /api/v1/connections/{id}/files/list", s.authed(anyRole, s.hostList))
+	mux.Handle("POST /api/v1/connections/{id}/files/pull", s.authed(anyRole, s.hostPull))
+	mux.Handle("POST /api/v1/connections/{id}/files/push", s.authed(anyRole, s.hostPush))
+	mux.Handle("GET /api/v1/audit/files", s.authed(auditors, s.listFilesAudit))
+	mux.Handle("GET /api/v1/audit/files/{id}/content", s.authed(auditors, s.downloadFileAudit))
 
 	// Portal: what the caller may open.
 	mux.Handle("GET /api/v1/portal/connections", s.authed(anyRole, s.portalConnections))
@@ -109,6 +156,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /api/v1/connections/{id}", s.authed(admins, s.updateConnection))
 	mux.Handle("DELETE /api/v1/connections/{id}", s.authed(admins, s.deleteConnection))
 	mux.Handle("DELETE /api/v1/connections/{id}/host-key", s.authed(admins, s.clearHostKey))
+	mux.Handle("PUT /api/v1/connections/{id}/host-key", s.authed(admins, s.approveHostKey))
 
 	mux.Handle("GET /api/v1/policies", s.authed(admins, s.listPolicies))
 	mux.Handle("POST /api/v1/policies", s.authed(admins, s.createPolicy))
@@ -121,6 +169,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/audit/verify", s.authed(auditors, s.verifyAudit))
 	mux.Handle("GET /api/v1/audit/sessions", s.authed(auditors, s.listSessions))
 	mux.Handle("GET /api/v1/audit/sessions/{id}", s.authed(auditors, s.getSessionRecord))
+	mux.Handle("POST /api/v1/audit/sessions/{id}/terminate", s.authed(admins, s.terminateSession))
 	// Auditors, or users with view_recordings on the session's connection.
 	mux.Handle("GET /api/v1/audit/sessions/{id}/recording", s.authed(anyRole, s.getRecording))
 
@@ -131,7 +180,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, &apiError{http.StatusNotFound, "not_found", "no such endpoint"})
 	})
-	return securityHeaders(mux)
+	return securityHeaders(s.revalidating(mux))
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -167,16 +216,82 @@ var (
 
 type handlerFunc func(w http.ResponseWriter, r *http.Request, p principal) error
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+func (s *Server) trusted(a netip.Addr) bool {
+	for _, p := range s.TrustedProxies {
+		if p.Contains(a.Unmap()) {
+			return true
+		}
+	}
+	return false
+}
+
+func remoteAddr(r *http.Request) netip.Addr {
+	ap, err := netip.ParseAddrPort(r.RemoteAddr)
 	if err != nil {
+		return netip.Addr{}
+	}
+	return ap.Addr().Unmap()
+}
+
+// clientIP is the address the request came from. Behind trusted proxies it
+// is the right-most X-Forwarded-For entry that is not one of them: entries
+// further left were written by the client and prove nothing.
+func (s *Server) clientIP(r *http.Request) string {
+	addr := remoteAddr(r)
+	if !addr.IsValid() {
 		return r.RemoteAddr
 	}
-	return host
+	if !s.trusted(addr) {
+		return addr.String()
+	}
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			break // garbage: stop at the last address we could trust
+		}
+		addr = a.Unmap()
+		if !s.trusted(addr) {
+			break
+		}
+	}
+	return addr.String()
+}
+
+// secureRequest reports whether the browser reached us over HTTPS.
+func (s *Server) secureRequest(r *http.Request) bool {
+	if r.TLS != nil || s.SecureCookies {
+		return true
+	}
+	return s.trusted(remoteAddr(r)) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// ParseProxies parses a comma-separated list of addresses and CIDRs.
+func ParseProxies(list string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range strings.Split(list, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		if !strings.Contains(f, "/") {
+			a, err := netip.ParseAddr(f)
+			if err != nil {
+				return nil, fmt.Errorf("trusted proxy %q: %w", f, err)
+			}
+			out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+			continue
+		}
+		p, err := netip.ParsePrefix(f)
+		if err != nil {
+			return nil, fmt.Errorf("trusted proxy %q: %w", f, err)
+		}
+		out = append(out, p.Masked())
+	}
+	return out, nil
 }
 
 func (s *Server) resolve(r *http.Request) (principal, bool, error) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.Dev {
 		return principal{User: db.ConfigUser{Username: "dev", Role: "superadmin"}, IP: ip, Dev: true}, false, nil
 	}
@@ -196,7 +311,8 @@ func checkCSRF(r *http.Request) error {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return nil
 	}
-	if r.Header.Get(csrfHeader) == "" {
+	// X-Palta-Request: its name before the rename, for existing API clients.
+	if r.Header.Get(csrfHeader) == "" && r.Header.Get("X-Palta-Request") == "" {
 		return &apiError{http.StatusForbidden, "csrf", "missing " + csrfHeader + " header"}
 	}
 	return nil

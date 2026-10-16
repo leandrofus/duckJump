@@ -13,7 +13,7 @@ import (
 
 const createSite = `-- name: CreateSite :exec
 INSERT INTO config_sites (id, name, kind, description, agent_token_hash, created_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type CreateSiteParams struct {
@@ -38,7 +38,7 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) error {
 }
 
 const deleteSite = `-- name: DeleteSite :execrows
-DELETE FROM config_sites WHERE id = ?1
+DELETE FROM config_sites WHERE id = $1
 `
 
 func (q *Queries) DeleteSite(ctx context.Context, id string) (int64, error) {
@@ -50,7 +50,7 @@ func (q *Queries) DeleteSite(ctx context.Context, id string) (int64, error) {
 }
 
 const getAgentSiteByToken = `-- name: GetAgentSiteByToken :one
-SELECT id, name, kind, description, agent_token_hash, created_at FROM config_sites WHERE kind = 'agent' AND agent_token_hash = ?1
+SELECT id, name, kind, description, agent_token_hash, created_at FROM config_sites WHERE kind = 'agent' AND agent_token_hash = $1
 `
 
 func (q *Queries) GetAgentSiteByToken(ctx context.Context, agentTokenHash sql.NullString) (ConfigSite, error) {
@@ -68,7 +68,7 @@ func (q *Queries) GetAgentSiteByToken(ctx context.Context, agentTokenHash sql.Nu
 }
 
 const getSite = `-- name: GetSite :one
-SELECT id, name, kind, description, agent_token_hash, created_at FROM config_sites WHERE id = ?1
+SELECT id, name, kind, description, agent_token_hash, created_at FROM config_sites WHERE id = $1
 `
 
 func (q *Queries) GetSite(ctx context.Context, id string) (ConfigSite, error) {
@@ -86,7 +86,7 @@ func (q *Queries) GetSite(ctx context.Context, id string) (ConfigSite, error) {
 }
 
 const getSiteByName = `-- name: GetSiteByName :one
-SELECT id, name, kind, description, agent_token_hash, created_at FROM config_sites WHERE name = ?1
+SELECT id, name, kind, description, agent_token_hash, created_at FROM config_sites WHERE name = $1
 `
 
 func (q *Queries) GetSiteByName(ctx context.Context, name string) (ConfigSite, error) {
@@ -150,7 +150,7 @@ func (q *Queries) ListSites(ctx context.Context) ([]ListSitesRow, error) {
 }
 
 const setSiteToken = `-- name: SetSiteToken :exec
-UPDATE config_sites SET agent_token_hash = ?1 WHERE id = ?2 AND kind = 'agent'
+UPDATE config_sites SET agent_token_hash = $1 WHERE id = $2 AND kind = 'agent'
 `
 
 type SetSiteTokenParams struct {
@@ -164,7 +164,7 @@ func (q *Queries) SetSiteToken(ctx context.Context, arg SetSiteTokenParams) erro
 }
 
 const updateSite = `-- name: UpdateSite :exec
-UPDATE config_sites SET name = ?1, description = ?2 WHERE id = ?3
+UPDATE config_sites SET name = $1, description = $2 WHERE id = $3
 `
 
 type UpdateSiteParams struct {

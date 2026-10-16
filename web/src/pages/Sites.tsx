@@ -60,7 +60,7 @@ export function Sites({ id }: { id?: string }) {
         </div>
       </div>
       <div className="page-body">
-        <p className="help">{t('A site groups hosts by how they are reached: directly from paltad, or through edge agents that connect outbound from closed networks (behind NAT or a firewall).')}</p>
+        <p className="help">{t('A site groups hosts by how they are reached: directly from duckjumpd, or through edge agents that connect outbound from closed networks (behind NAT or a firewall).')}</p>
         <DataTable
           rows={sites.rows}
           rowKey={(s) => s.id}
@@ -129,7 +129,7 @@ function SiteDrawer({ id, onClose }: { id: string; onClose: () => void }) {
 
 function agentCommand(token: string) {
   const server = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:18443/agent/connect`
-  return `PALTA_AGENT_TOKEN=${token} palta-agent \\\n  -server ${server} \\\n  -allow 192.168.1.0/24:22,3389,5900`
+  return `DUCKJUMP_AGENT_TOKEN=${token} duckjump-agent \\\n  -server ${server} \\\n  -allow 192.168.1.0/24:22,3389,5900`
 }
 
 function AgentInstructions({ token }: { token: string }) {

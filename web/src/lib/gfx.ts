@@ -1,5 +1,5 @@
-// Graphical sessions (VNC, RDP): the display operations of PTP kind 0x04
-// and the input events of kind 0x05. Formats: paltad/crates/palta-proto/src/gfx.rs.
+// Graphical sessions (VNC, RDP): the display operations of DJTP kind 0x04
+// and the input events of kind 0x05. Formats: duckjumpd/crates/duckjump-proto/src/gfx.rs.
 
 export const KIND_DISPLAY = 0x04
 export const KIND_INPUT = 0x05

@@ -101,7 +101,7 @@ func runOnce(ctx context.Context, cfg AgentConfig) error {
 	dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	opts := &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + cfg.Token}, "X-Palta-Agent": {cfg.Name}},
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + cfg.Token}, "X-DuckJump-Agent": {cfg.Name}},
 	}
 	if cfg.RootCAs != nil {
 		opts.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: cfg.RootCAs, MinVersion: tls.VersionTLS12}}}

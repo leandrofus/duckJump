@@ -12,7 +12,7 @@ import (
 )
 
 const getSetting = `-- name: GetSetting :one
-SELECT value FROM config_settings WHERE key = ?1
+SELECT value FROM config_settings WHERE key = $1
 `
 
 func (q *Queries) GetSetting(ctx context.Context, key string) (string, error) {
@@ -23,7 +23,7 @@ func (q *Queries) GetSetting(ctx context.Context, key string) (string, error) {
 }
 
 const setSetting = `-- name: SetSetting :exec
-INSERT INTO config_settings (key, value, updated_at, updated_by) VALUES (?1, ?2, ?3, ?4)
+INSERT INTO config_settings (key, value, updated_at, updated_by) VALUES ($1, $2, $3, $4)
 ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by
 `
 
