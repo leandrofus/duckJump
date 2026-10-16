@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/duckjump-proto", "crates/duckjump-gfx", "crates/duckjump-net", "crates/duckjumpd"]
+members = ["crates/duckjump-proto", "crates/duckjump-gfx", "crates/duckjump-net", "crates/duckjumpd", "crates/duckjump-assist"]
 # The RDP worker is its own workspace: IronRDP and russh pin incompatible
 # versions of curve25519-dalek, and a separate process isolates RDP anyway.
 exclude = ["rdp"]
@@ -23,7 +23,5 @@ tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
 flate2 = "1"
 des = "0.8"
-png = "0.18"
-jpeg-encoder = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

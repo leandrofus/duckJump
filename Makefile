@@ -30,7 +30,7 @@ help: ## Show this help
 build: web gateway duckjumpd rdp ## Compile everything (PROFILE=release) into dist/bin
 	@mkdir -p $(BIN)
 	cp gateway/bin/duckjump-gw gateway/bin/duckjump-agent $(BIN)/
-	cp duckjumpd/target/$(PROFILE)/duckjumpd duckjumpd/rdp/target/$(PROFILE)/duckjumpd-rdp $(BIN)/
+	cp duckjumpd/target/$(PROFILE)/duckjumpd duckjumpd/target/$(PROFILE)/duckjump-assist duckjumpd/rdp/target/$(PROFILE)/duckjumpd-rdp $(BIN)/
 	@echo "binaries in $(BIN)/ ($(PROFILE)):" && ls -lh $(BIN) | tail -n +2
 
 debug: ## Same as build, without optimizations

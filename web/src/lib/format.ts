@@ -79,13 +79,26 @@ export function hue(s: string) {
   return h % 360
 }
 
-export function copy(text: string) {
-  navigator.clipboard?.writeText(text).catch(() => {
+export function copy(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text))
+  }
+  return Promise.resolve(fallbackCopy(text))
+}
+
+function fallbackCopy(text: string): boolean {
+  try {
     const ta = document.createElement('textarea')
     ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
     document.body.appendChild(ta)
+    ta.focus()
     ta.select()
-    document.execCommand('copy')
+    const ok = document.execCommand('copy')
     ta.remove()
-  })
+    return ok
+  } catch {
+    return false
+  }
 }

@@ -1,0 +1,27 @@
+[package]
+name = "duckjump-assist"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "On-demand attended remote assistance agent for duckJump"
+
+[dependencies]
+duckjump-proto = { path = "../duckjump-proto" }
+duckjump-gfx = { path = "../duckjump-gfx" }
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+hmac = "0.13"
+sha1 = "0.11"
+tokio-tungstenite = "0.30.0"
+x11rb = "0.14.0"
+ashpd = "0.13.13"
+png = "0.18"
+enigo = "0.6.1"
