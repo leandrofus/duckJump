@@ -17,7 +17,6 @@ import (
 
 	"github.com/leandrofus/duckjump/gateway/internal/djtp"
 	"github.com/leandrofus/duckjump/gateway/internal/services"
-	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
@@ -37,10 +36,6 @@ const (
 
 func (s *Server) fileMaxSize() int64 {
 	return s.FileSvc.MaxSize()
-}
-
-func (s *Server) fileTTL() time.Duration {
-	return s.FileSvc.TTL()
 }
 
 var errNoFiles = &apiError{http.StatusNotImplemented, "not_configured", "file transfer is not configured on this gateway (-files)"}
@@ -91,20 +86,6 @@ func cleanName(n string) (string, error) {
 	return name, nil
 }
 
-// spool copies r (at most max bytes) into a temporary file, hashing it.
-func (s *Server) spool(r io.Reader, max int64) (tmp string, size int64, sum string, err error) {
-	return s.FileSvc.Spool(r, max)
-}
-
-// keep stores a spooled file in the tray and records it, audited.
-func (s *Server) keep(ctx context.Context, p principal, name, tmp string, size int64, sum, origin string, conn *db.ConfigConnection,
-	remotePath, action string) (db.AuditFile, error) {
-	var connID, connName string
-	if conn != nil {
-		connID, connName = conn.ID, conn.Name
-	}
-	return s.FileSvc.Keep(ctx, p.actor(), p.User.ID, p.User.Username, name, tmp, size, sum, origin, connID, connName, remotePath, action)
-}
 
 // ---- the tray ----
 
@@ -200,9 +181,6 @@ func (s *Server) deleteFromTray(w http.ResponseWriter, r *http.Request, p princi
 	return noContent(w)
 }
 
-func (s *Server) removeFile(ctx context.Context, f db.AuditFile, actor store.Actor, reason string) error {
-	return s.FileSvc.RemoveFile(ctx, f, actor, reason)
-}
 
 // PurgeFiles deletes the content of expired files (records stay).
 func (s *Server) PurgeFiles(ctx context.Context) (int, error) {
@@ -525,7 +503,7 @@ func (s *Server) hostPull(w http.ResponseWriter, r *http.Request, p principal) e
 		pw.CloseWithError(err)
 		readErr <- err
 	}()
-	tmp, size, sum, err := s.spool(pr, s.fileMaxSize())
+	tmp, size, sum, err := s.FileSvc.Spool(pr, s.fileMaxSize())
 	pr.Close()
 	if rerr := <-readErr; rerr != nil {
 		if tmp != "" {
@@ -536,7 +514,7 @@ func (s *Server) hostPull(w http.ResponseWriter, r *http.Request, p principal) e
 	if err != nil {
 		return err
 	}
-	f, err := s.keep(ctx, p, name, tmp, size, sum, "host", &c, req.Path, "file.pull")
+	f, err := s.FileSvc.Keep(ctx, p.actor(), p.User.ID, p.User.Username, name, tmp, size, sum, "host", c.ID, c.Name, req.Path, "file.pull")
 	if err != nil {
 		return err
 	}
