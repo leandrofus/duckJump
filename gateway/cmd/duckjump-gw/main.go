@@ -63,6 +63,7 @@ Usage:
   duckjump audit ls [--limit 50] [--action "..."] | verify | seal
   duckjump hostkey --conn <c> [--fingerprint SHA256:...]
   duckjump keygen
+  duckjump certgen [--force] [host...]
   duckjump migrate-to-postgres --to postgres://...
   duckjump version
 
@@ -103,6 +104,11 @@ func main() {
 		return
 	case "keygen":
 		fmt.Println(vault.GenerateKey())
+		return
+	case "certgen":
+		if err := certgenCmd(args); err != nil {
+			fatal(err)
+		}
 		return
 	case "agent":
 		if err := agentCmd(args); err != nil {
@@ -770,4 +776,32 @@ func firstEnv(def string, names ...string) string {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
+}
+
+func certgenCmd(args []string) error {
+	certFile := env("DUCKJUMP_TLS_CERT", "/etc/duckjump/cert.pem")
+	keyFile := env("DUCKJUMP_TLS_KEY", "/etc/duckjump/key.pem")
+	if _, err := os.Stat(filepath.Dir(certFile)); err != nil {
+		certFile = "./cert.pem"
+		keyFile = "./key.pem"
+	}
+	force := false
+	var extraHosts []string
+	for _, a := range args {
+		if a == "--force" || a == "-f" {
+			force = true
+		} else if !strings.HasPrefix(a, "-") {
+			extraHosts = append(extraHosts, a)
+		}
+	}
+	if !force {
+		if _, err := os.Stat(certFile); err == nil {
+			return fmt.Errorf("certificate %s already exists (use --force to overwrite)", certFile)
+		}
+	}
+	if err := selfSigned(certFile, keyFile, extraHosts...); err != nil {
+		return err
+	}
+	fmt.Printf("Generated self-signed TLS certificate in %s and %s\n", certFile, keyFile)
+	return nil
 }

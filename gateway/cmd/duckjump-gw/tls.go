@@ -15,8 +15,10 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -28,7 +30,8 @@ import (
 func loadTLS(certFile, keyFile string) (*tls.Config, error) {
 	_, errC := os.Stat(certFile)
 	_, errK := os.Stat(keyFile)
-	if errors.Is(errC, os.ErrNotExist) && errors.Is(errK, os.ErrNotExist) {
+	regen := os.Getenv("DUCKJUMP_REGEN_CERT") == "1"
+	if (errors.Is(errC, os.ErrNotExist) && errors.Is(errK, os.ErrNotExist)) || regen {
 		if err := selfSigned(certFile, keyFile); err != nil {
 			return nil, fmt.Errorf("creating a self-signed certificate: %w", err)
 		}
@@ -41,32 +44,105 @@ func loadTLS(certFile, keyFile string) (*tls.Config, error) {
 	return &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}, nil
 }
 
-func selfSigned(certFile, keyFile string) error {
+func selfSigned(certFile, keyFile string, extraHosts ...string) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
 	}
 	host, _ := os.Hostname()
-	tpl := &x509.Certificate{
-		SerialNumber: new(big.Int).SetBytes(randomBytes(16)),
-		Subject:      pkix.Name{CommonName: host, Organization: []string{"DuckJump (self-signed)"}},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().AddDate(10, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+	dnsMap := map[string]bool{"localhost": true, "localhost.localdomain": true}
+	ipMap := map[string]net.IP{
+		"127.0.0.1": net.IPv4(127, 0, 0, 1),
+		"::1":       net.IPv6loopback,
 	}
-	if host != "" {
-		tpl.DNSNames = append(tpl.DNSNames, host)
-	}
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		for _, a := range addrs {
-			if n, ok := a.(*net.IPNet); ok && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() {
-				tpl.IPAddresses = append(tpl.IPAddresses, n.IP)
+
+	addHost := func(h string) {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			return
+		}
+		if ip := net.ParseIP(h); ip != nil {
+			ipMap[ip.String()] = ip
+			return
+		}
+		dnsMap[h] = true
+		if strings.Contains(h, ".") {
+			parts := strings.Split(h, ".")
+			if parts[0] != "" {
+				dnsMap[parts[0]] = true
 			}
 		}
 	}
+
+	if host != "" {
+		addHost(host)
+	}
+	for _, eh := range extraHosts {
+		addHost(eh)
+	}
+
+	// Read environment variables that may define the gateway host/domain
+	for _, envVar := range []string{"DUCKJUMP_HOST", "DUCKJUMP_SERVER_NAME", "DUCKJUMP_FRONTEND_URL", "DUCKJUMP_BIND"} {
+		if val := os.Getenv(envVar); val != "" {
+			if strings.Contains(val, "://") {
+				if u, err := url.Parse(val); err == nil {
+					addHost(u.Hostname())
+				}
+			} else {
+				h, _, err := net.SplitHostPort(val)
+				if err == nil {
+					addHost(h)
+				} else {
+					addHost(val)
+				}
+			}
+		}
+	}
+
+	// Add all local network interface addresses (LAN, Wi-Fi, etc.)
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if addrs, err := iface.Addrs(); err == nil {
+				for _, a := range addrs {
+					if n, ok := a.(*net.IPNet); ok {
+						if !n.IP.IsLinkLocalUnicast() && !n.IP.IsMulticast() {
+							ipMap[n.IP.String()] = n.IP
+						}
+					}
+				}
+			}
+		}
+	}
+
+	var dnsNames []string
+	for name := range dnsMap {
+		dnsNames = append(dnsNames, name)
+	}
+	sort.Strings(dnsNames)
+
+	var ipAddresses []net.IP
+	for _, ip := range ipMap {
+		ipAddresses = append(ipAddresses, ip)
+	}
+
+	cn := host
+	if cn == "" {
+		cn = "localhost"
+	}
+
+	tpl := &x509.Certificate{
+		SerialNumber:          new(big.Int).SetBytes(randomBytes(16)),
+		Subject:               pkix.Name{CommonName: cn, Organization: []string{"DuckJump (self-signed)"}},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames:              dnsNames,
+		IPAddresses:           ipAddresses,
+	}
+
 	if err := os.MkdirAll(filepath.Dir(certFile), 0o750); err != nil {
 		return err
 	}
