@@ -557,19 +557,23 @@ func siteCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // grantCmd handles `grant [ls | add | rm]`.
 func grantCmd(ctx context.Context, st *store.Store, args []string) error {
+	polSvc := services.NewPolicyService(st)
+	userSvc := services.NewUserService(st)
+	connSvc := services.NewConnectionService(st)
+
 	if len(args) == 0 || args[0] == "ls" {
-		policies, err := st.Q.ListPolicies(ctx, db.ListPoliciesParams{})
+		policies, err := polSvc.List(ctx, "", "")
 		if err != nil {
 			return err
 		}
 		userMap := make(map[string]string)
-		if users, err := st.Q.ListUsers(ctx); err == nil {
+		if users, err := userSvc.List(ctx); err == nil {
 			for _, u := range users {
 				userMap[u.ID] = u.Username
 			}
 		}
 		connMap := make(map[string]string)
-		if conns, err := st.Q.ListConnections(ctx); err == nil {
+		if conns, err := connSvc.List(ctx); err == nil {
 			for _, c := range conns {
 				connMap[c.ID] = c.Name
 			}
@@ -631,55 +635,44 @@ func grantCmd(ctx context.Context, st *store.Store, args []string) error {
 		if *user == "" || *conn == "" {
 			return fmt.Errorf("need --user and --conn: duckjump grant add --user <u> --conn <c>")
 		}
-		id := store.NewID()
-		return st.Tx(ctx, func(q *db.Queries) error {
-			u, err := q.GetUserByUsername(ctx, *user)
-			if err != nil {
-				return fmt.Errorf("user %q: %w", *user, store.Classify(err))
-			}
-			c, err := q.GetConnectionByName(ctx, *conn)
-			if err != nil {
-				return fmt.Errorf("connection %q: %w", *conn, store.Classify(err))
-			}
-			var exp time.Time
-			if *ttl > 0 {
-				exp = store.Now().Add(*ttl)
-			}
-			if err := q.CreatePolicy(ctx, db.CreatePolicyParams{
-				ID: id, SubjectType: "user", SubjectID: u.ID, ObjectType: "connection",
-				ObjectRef: c.ID, CanConnect: true, CanUpload: *upload, CanDownload: *download, CanForward: *forward,
-				ExpiresAt: store.NullTime(exp), Now: store.Now(),
-			}); err != nil {
-				return err
-			}
-			fmt.Printf("granted %s -> %s\n", *user, *conn)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "policy.create", ObjectType: "policy", ObjectID: id,
-				Details: map[string]any{
-					"subject": "user:" + u.ID, "object": "connection:" + c.ID, "can_connect": true,
-					"can_upload": *upload, "can_download": *download, "can_forward": *forward,
-				},
-			})
-		})
+		u, err := userSvc.GetByUsername(ctx, *user)
+		if err != nil {
+			return fmt.Errorf("user %q: %w", *user, err)
+		}
+		c, err := connSvc.GetByName(ctx, *conn)
+		if err != nil {
+			return fmt.Errorf("connection %q: %w", *conn, err)
+		}
+		var ttlSecs int64
+		if *ttl > 0 {
+			ttlSecs = int64(ttl.Seconds())
+		}
+		if _, err := polSvc.Create(ctx, services.CreatePolicyParams{
+			SubjectType: "user",
+			SubjectID:   u.ID,
+			ObjectType:  "connection",
+			ObjectRef:   c.ID,
+			CanUpload:   *upload,
+			CanDownload: *download,
+			CanForward:  *forward,
+			TTLSeconds:  ttlSecs,
+			Actor:       cli,
+		}); err != nil {
+			return err
+		}
+		fmt.Printf("granted %s -> %s\n", *user, *conn)
+		return nil
 
 	case "rm":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: duckjump grant rm <policy-id>")
 		}
 		id := rest[0]
-		return st.Tx(ctx, func(q *db.Queries) error {
-			n, err := q.DeletePolicy(ctx, id)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return fmt.Errorf("grant %q not found", id)
-			}
-			fmt.Printf("grant %s deleted\n", id)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "policy.delete", ObjectType: "policy", ObjectID: id,
-			})
-		})
+		if err := polSvc.Delete(ctx, cli, id); err != nil {
+			return fmt.Errorf("grant %q: %w", id, err)
+		}
+		fmt.Printf("grant %s deleted\n", id)
+		return nil
 
 	default:
 		return fmt.Errorf("usage: duckjump grant [ls | add --user <u> --conn <c> | rm <id>]")

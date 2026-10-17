@@ -282,13 +282,8 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p p
 	ctx, id := r.Context(), store.NewID()
 	var createdReq db.ConfigAccessRequest
 	err := s.tx(ctx, func(q *db.Queries) error {
-		if err := checkPolicyRefs(ctx, q, policyRequest{
-			SubjectType: "user",
-			SubjectID:   p.User.ID,
-			ObjectType:  req.ObjectType,
-			ObjectRef:   req.ObjectRef,
-		}); err != nil {
-			return err
+		if err := s.Policies.CheckRefs(ctx, "user", p.User.ID, req.ObjectType, req.ObjectRef); err != nil {
+			return fromService(err, req.ObjectType)
 		}
 
 		pendings, err := q.ListPendingAccessRequestsForUserAndObject(ctx, db.ListPendingAccessRequestsForUserAndObjectParams{

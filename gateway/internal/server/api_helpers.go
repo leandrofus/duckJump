@@ -95,6 +95,20 @@ func fromService(err error, what string) error {
 		return badRequest("%s", err.Error())
 	case errors.Is(err, services.ErrInvalidFingerprint):
 		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrExpiresAndTTLBothSet):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrExpiresInPast):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrTTLNegative):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrPolicyNoPermissions):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrPolicyAlreadyExists):
+		return conflict("%s", err.Error())
+	case errors.Is(err, services.ErrInvalidSubjectType):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrInvalidObjectType):
+		return badRequest("%s", err.Error())
 	default:
 		return fromStore(err, what)
 	}

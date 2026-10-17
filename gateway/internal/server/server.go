@@ -39,6 +39,7 @@ type Server struct {
 	Auth        *auth.Service
 	Users       *services.UserService
 	Connections *services.ConnectionService
+	Policies    *services.PolicyService
 	Hub         *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -103,6 +104,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Connections == nil && s.Store != nil {
 		s.Connections = services.NewConnectionService(s.Store)
+	}
+	if s.Policies == nil && s.Store != nil {
+		s.Policies = services.NewPolicyService(s.Store)
 	}
 	if s.SupportHub == nil {
 		s.SupportHub = NewSupportHub()
