@@ -113,4 +113,51 @@ func TestSessionService_Lifecycle(t *testing.T) {
 	if !errors.Is(err, ErrSessionAlreadyEnded) {
 		t.Fatalf("expected ErrSessionAlreadyEnded, got %v", err)
 	}
+
+	// 6. Test Beat, EndSession, AuditShare, AuditUnshare on a new session
+	sessionID2 := store.NewID()
+	err = st.Tx(ctx, func(q *db.Queries) error {
+		return q.StartSessionRecord(ctx, db.StartSessionRecordParams{
+			ID:           sessionID2,
+			UserID:       sql.NullString{String: u.ID, Valid: true},
+			Username:     u.Username,
+			ConnectionID: c.Connection.ID,
+			Site:         "",
+			ClientIP:     "127.0.0.1",
+			Now:          store.Now(),
+		})
+	})
+	if err != nil {
+		t.Fatalf("StartSessionRecord 2 failed: %v", err)
+	}
+
+	if err := sessSvc.Beat(ctx, sessionID2, "node-1"); err != nil {
+		t.Fatalf("Beat failed: %v", err)
+	}
+	if err := sessSvc.AuditShare(ctx, adminActor, sessionID2); err != nil {
+		t.Fatalf("AuditShare failed: %v", err)
+	}
+	if err := sessSvc.AuditUnshare(ctx, adminActor, sessionID2); err != nil {
+		t.Fatalf("AuditUnshare failed: %v", err)
+	}
+	if err := sessSvc.EndSession(ctx, EndSessionParams{
+		SessionID: sessionID2,
+		Reason:    "closed_by_user",
+		BytesSent: 1024,
+		BytesRecv: 2048,
+		Actor:     adminActor,
+		ExtraDetails: map[string]any{
+			"connection": c.Connection.Name,
+		},
+	}); err != nil {
+		t.Fatalf("EndSession failed: %v", err)
+	}
+
+	endedSess, err := sessSvc.Get(ctx, sessionID2)
+	if err != nil {
+		t.Fatalf("Get ended session failed: %v", err)
+	}
+	if !endedSess.EndedAt.Valid || endedSess.EndReason.String != "closed_by_user" {
+		t.Fatalf("expected ended session with reason closed_by_user, got %+v", endedSess)
+	}
 }

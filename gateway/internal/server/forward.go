@@ -20,6 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
@@ -174,7 +175,7 @@ func (s *Server) forwardTunnel(w http.ResponseWriter, r *http.Request, p princip
 	var target net.Conn
 	var siteName string
 	if conn.SiteID.Valid {
-		st, _ := s.Store.Q.GetSite(ctx, conn.SiteID.String)
+		st, _ := s.Sites.Get(ctx, conn.SiteID.String)
 		siteName = st.Name
 		if s.Hub != nil {
 			target, err = s.Hub.Dial(conn.SiteID.String, targetHost, targetPort, sessionID)
@@ -241,7 +242,7 @@ func (s *Server) forwardTunnel(w http.ResponseWriter, r *http.Request, p princip
 			},
 		})
 	})
-	_ = s.Store.Q.BeatSession(ctx, db.BeatSessionParams{SessionID: sessionID, Node: s.node(), Now: store.Now()})
+	_ = s.Sessions.Beat(ctx, sessionID, s.node())
 
 	wsConn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	defer wsConn.Close()
@@ -281,30 +282,19 @@ func (s *Server) forwardTunnel(w http.ResponseWriter, r *http.Request, p princip
 	}
 
 	dur := time.Since(startTime).Seconds()
-	auditCtx := context.WithoutCancel(ctx)
-	_ = s.Store.Q.ForgetSession(auditCtx, sessionID)
-	_ = s.Store.Q.EndSessionRecord(auditCtx, db.EndSessionRecordParams{
-		ID:        sessionID,
-		EndReason: reason,
-		Now:       store.NullTime(store.Now()),
-	})
 	endDetails := map[string]any{
-		"connection":     conn.Name,
-		"protocol":       conn.Protocol,
-		"duration_s":     dur,
-		"bytes_sent":     sent.Load(),
-		"bytes_received": recv.Load(),
-		"reason":         reason,
+		"connection":   conn.Name,
+		"protocol":     conn.Protocol,
+		"duration_s":   dur,
+		"virtual_host": vhost,
 	}
-	if vhost != "" {
-		endDetails["virtual_host"] = vhost
-	}
-	s.Store.AuditTx(auditCtx, store.Event{
-		Actor:      p.actor(),
-		Action:     "session.end",
-		ObjectType: "session",
-		ObjectID:   sessionID,
-		Details:    endDetails,
+	_ = s.Sessions.EndSession(ctx, services.EndSessionParams{
+		SessionID:    sessionID,
+		Reason:       reason,
+		BytesSent:    sent.Load(),
+		BytesRecv:    recv.Load(),
+		Actor:        p.actor(),
+		ExtraDetails: endDetails,
 	})
 
 	ws.Close(websocket.StatusNormalClosure, reason)

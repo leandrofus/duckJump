@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/leandrofus/duckjump/gateway/internal/djtp"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
@@ -52,10 +53,11 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) err
 	}
 
 	ctx, connID := r.Context(), r.PathValue("id")
-	conn, err := s.Store.Q.GetConnection(ctx, connID)
+	connRes, err := s.Connections.Get(ctx, connID)
 	if err != nil {
-		return fromStore(err, "connection")
+		return fromService(err, "connection")
 	}
+	conn := connRes.Connection
 	if !p.Dev {
 		allowed, err := s.Store.CanConnect(ctx, p.User.ID, connID)
 		if err != nil {
@@ -292,16 +294,16 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, ls *liveSes
 	if err != nil {
 		return "", fmt.Errorf("audit: %w", err)
 	}
-	if err := s.Store.Q.BeatSession(ctx, db.BeatSessionParams{SessionID: sessionID, Node: s.node(), Now: store.Now()}); err != nil {
+	if err := s.Sessions.Beat(ctx, sessionID, s.node()); err != nil {
 		log.Error("session heartbeat", "err", err)
 	}
 	reason := "closed"
 	defer func() {
-		ctx := context.WithoutCancel(ctx)
-		s.Store.Q.ForgetSession(ctx, sessionID)
-		s.Store.Q.EndSessionRecord(ctx, db.EndSessionRecordParams{ID: sessionID, EndReason: reason, Now: store.NullTime(store.Now())})
-		s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "session.end", ObjectType: "session", ObjectID: sessionID,
-			Details: map[string]any{"reason": reason}})
+		_ = s.Sessions.EndSession(ctx, services.EndSessionParams{
+			SessionID: sessionID,
+			Reason:    reason,
+			Actor:     p.actor(),
+		})
 	}()
 	log.Info("session started")
 
@@ -577,12 +579,7 @@ func (s *Server) createSessionShare(w http.ResponseWriter, r *http.Request, p pr
 		return errForbidden
 	}
 	tok := ls.createShareToken(p.User.Username)
-	_ = store.Audit(ctx, s.Store.Q, store.Event{
-		Actor:      p.actor(),
-		Action:     "session.share",
-		ObjectType: "session",
-		ObjectID:   id,
-	})
+	_ = s.Sessions.AuditShare(ctx, p.actor(), id)
 	return writeJSON(w, http.StatusCreated, map[string]any{
 		"share_token":   tok,
 		"session_id":    id,
@@ -634,12 +631,7 @@ func (s *Server) revokeSessionShare(w http.ResponseWriter, r *http.Request, p pr
 		return errForbidden
 	}
 	ls.revokeShareTokens()
-	_ = store.Audit(ctx, s.Store.Q, store.Event{
-		Actor:      p.actor(),
-		Action:     "session.unshare",
-		ObjectType: "session",
-		ObjectID:   id,
-	})
+	_ = s.Sessions.AuditUnshare(ctx, p.actor(), id)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -721,7 +713,7 @@ func (s *Server) openDaemon(ctx context.Context, c db.ConfigConnection, p princi
 	var relay *djtp.Relay
 	siteName := ""
 	if c.SiteID.Valid {
-		site, err := s.Store.Q.GetSite(ctx, c.SiteID.String)
+		site, err := s.Sites.Get(ctx, c.SiteID.String)
 		if err != nil {
 			return nil, "", fmt.Errorf("loading site: %w", err)
 		}
@@ -784,7 +776,7 @@ func (s *Server) openDaemon(ctx context.Context, c db.ConfigConnection, p princi
 	}
 	if first.HostKeyFingerprint != nil && !c.HostKey.Valid && s.TrustOnFirstUse {
 		log.Info("pinning host key (trust on first use)", "fingerprint", *first.HostKeyFingerprint)
-		if err := s.Store.Q.PinHostKey(ctx, db.PinHostKeyParams{ID: c.ID, HostKey: store.NullString(*first.HostKeyFingerprint)}); err != nil {
+		if err := s.Connections.PinHostKey(ctx, c.ID, *first.HostKeyFingerprint); err != nil {
 			log.Error("pinning host key", "err", err)
 		}
 	}

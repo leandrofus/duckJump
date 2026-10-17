@@ -457,7 +457,7 @@ func (s *Server) Supervise(ctx context.Context) {
 // beat refreshes the heartbeat of every live session held here.
 func (s *Server) beat(ctx context.Context) {
 	for _, ls := range s.live.list() {
-		if err := s.Store.Q.BeatSession(ctx, db.BeatSessionParams{SessionID: ls.id, Node: s.node(), Now: store.Now()}); err != nil {
+		if err := s.Sessions.Beat(ctx, ls.id, s.node()); err != nil {
 			slog.Error("session heartbeat", "session", ls.id, "err", err)
 		}
 	}

@@ -615,3 +615,11 @@ func backendOrNative(b string) string {
 	}
 	return b
 }
+
+func (s *ConnectionService) PinHostKey(ctx context.Context, id, hostKey string) error {
+	return s.store.Q.PinHostKey(ctx, db.PinHostKeyParams{
+		ID:      id,
+		HostKey: store.NullString(hostKey),
+	})
+}
+

@@ -93,3 +93,66 @@ func (s *SessionService) RequestKill(ctx context.Context, actor store.Actor, ses
 	})
 	return x, err
 }
+
+type EndSessionParams struct {
+	SessionID    string
+	Reason       string
+	BytesSent    int64
+	BytesRecv    int64
+	Actor        store.Actor
+	ExtraDetails map[string]any
+}
+
+func (s *SessionService) EndSession(ctx context.Context, params EndSessionParams) error {
+	ctx = context.WithoutCancel(ctx)
+	now := store.Now()
+	_ = s.store.Q.ForgetSession(ctx, params.SessionID)
+	_ = s.store.Q.EndSessionRecord(ctx, db.EndSessionRecordParams{
+		ID:        params.SessionID,
+		EndReason: params.Reason,
+		Now:       store.NullTime(now),
+	})
+	details := map[string]any{"reason": params.Reason}
+	if params.BytesSent > 0 || params.BytesRecv > 0 {
+		details["bytes_sent"] = params.BytesSent
+		details["bytes_received"] = params.BytesRecv
+	}
+	for k, v := range params.ExtraDetails {
+		if v != "" {
+			details[k] = v
+		}
+	}
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      params.Actor,
+		Action:     "session.end",
+		ObjectType: "session",
+		ObjectID:   params.SessionID,
+		Details:    details,
+	})
+}
+
+func (s *SessionService) Beat(ctx context.Context, sessionID, node string) error {
+	return s.store.Q.BeatSession(ctx, db.BeatSessionParams{
+		SessionID: sessionID,
+		Node:      node,
+		Now:       store.Now(),
+	})
+}
+
+func (s *SessionService) AuditShare(ctx context.Context, actor store.Actor, sessionID string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "session.share",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+	})
+}
+
+func (s *SessionService) AuditUnshare(ctx context.Context, actor store.Actor, sessionID string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "session.unshare",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+	})
+}
