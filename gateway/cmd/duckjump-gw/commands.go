@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/leandrofus/duckjump/gateway/internal/edge"
 	"github.com/leandrofus/duckjump/gateway/internal/server"
 	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
@@ -432,8 +432,9 @@ func secretCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // siteCmd handles `site [ls | add | rm | token]`.
 func siteCmd(ctx context.Context, st *store.Store, args []string) error {
+	svc := services.NewSiteService(st, nil)
 	if len(args) == 0 || args[0] == "ls" {
-		sites, err := st.Q.ListSites(ctx)
+		sites, err := svc.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -465,80 +466,50 @@ func siteCmd(ctx context.Context, st *store.Store, args []string) error {
 		if *name == "" {
 			return fmt.Errorf("need site name: duckjump site add <name> [--direct]")
 		}
-		kind, tok, hash := "agent", edge.NewToken(), ""
+		kind := "agent"
 		if *direct {
-			kind, tok = "direct", ""
-		} else {
-			hash = edge.HashToken(tok)
+			kind = "direct"
 		}
-		id := store.NewID()
-		return st.Tx(ctx, func(q *db.Queries) error {
-			if err := q.CreateSite(ctx, db.CreateSiteParams{
-				ID: id, Name: *name, Kind: kind, AgentTokenHash: store.NullString(hash), Now: store.Now(),
-			}); err != nil {
-				return store.Classify(err)
-			}
-			if tok != "" {
-				fmt.Printf("site %s created (agent). Agent token, shown only once:\n%s\n", *name, tok)
-			} else {
-				fmt.Printf("site %s created (direct)\n", *name)
-			}
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "site.create", ObjectType: "site", ObjectID: id,
-				Details: map[string]any{"name": *name, "kind": kind},
-			})
+		res, err := svc.Create(ctx, services.CreateSiteParams{
+			Name:  *name,
+			Kind:  kind,
+			Actor: cli,
 		})
+		if err != nil {
+			return err
+		}
+		if res.Token != "" {
+			fmt.Printf("site %s created (agent). Agent token, shown only once:\n%s\n", res.Site.Name, res.Token)
+		} else {
+			fmt.Printf("site %s created (direct)\n", res.Site.Name)
+		}
+		return nil
 
 	case "rm":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: duckjump site rm <name>")
 		}
 		name := rest[0]
-		return st.Tx(ctx, func(q *db.Queries) error {
-			s, err := q.GetSiteByName(ctx, name)
-			if err != nil {
-				return fmt.Errorf("site %q: %w", name, store.Classify(err))
-			}
-			n, err := q.DeleteSite(ctx, s.ID)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return fmt.Errorf("site %q not found", name)
-			}
-			fmt.Printf("site %s deleted\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "site.delete", ObjectType: "site", ObjectID: s.ID,
-				Details: map[string]any{"name": name},
-			})
-		})
+		if err := svc.DeleteByName(ctx, cli, name); err != nil {
+			return fmt.Errorf("site %q: %w", name, err)
+		}
+		fmt.Printf("site %s deleted\n", name)
+		return nil
 
 	case "token":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: duckjump site token <name>")
 		}
 		name := rest[0]
-		return st.Tx(ctx, func(q *db.Queries) error {
-			s, err := q.GetSiteByName(ctx, name)
-			if err != nil {
-				return fmt.Errorf("site %q: %w", name, store.Classify(err))
-			}
-			if s.Kind != "agent" {
+		res, err := svc.RotateTokenByName(ctx, cli, name)
+		if err != nil {
+			if errors.Is(err, services.ErrSiteTokenNotAgent) {
 				return fmt.Errorf("site %s is a direct site (no agent token)", name)
 			}
-			tok := edge.NewToken()
-			hash := edge.HashToken(tok)
-			if err := q.SetSiteToken(ctx, db.SetSiteTokenParams{
-				ID: s.ID, AgentTokenHash: store.NullString(hash),
-			}); err != nil {
-				return err
-			}
-			fmt.Printf("new agent token for %s (shown only once):\n%s\n", name, tok)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "site.token_rotate", ObjectType: "site", ObjectID: s.ID,
-				Details: map[string]any{"name": name},
-			})
-		})
+			return fmt.Errorf("site %q: %w", name, err)
+		}
+		fmt.Printf("new agent token for %s (shown only once):\n%s\n", name, res.Token)
+		return nil
 
 	default:
 		return fmt.Errorf("usage: duckjump site [ls | add <name> | rm <name> | token <name>]")

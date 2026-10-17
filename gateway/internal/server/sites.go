@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/leandrofus/duckjump/gateway/internal/edge"
-	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
@@ -155,16 +154,18 @@ func (s *Server) siteDTO(r *http.Request, st db.ConfigSite, count *int64) siteDT
 //   '200': { description: Sites with connection counts and agents online, schema: '[]Site' }
 
 func (s *Server) listSites(w http.ResponseWriter, r *http.Request, p principal) error {
-	rows, err := s.Store.Q.ListSites(r.Context())
-	if err != nil {
-		return err
-	}
-	out := make([]siteDTO, 0, len(rows))
-	for _, x := range rows {
-		n := x.ConnectionCount
-		out = append(out, s.siteDTO(r, db.ConfigSite{ID: x.ID, Name: x.Name, Kind: x.Kind, Description: x.Description, CreatedAt: x.CreatedAt}, &n))
-	}
-	return ok(w, out)
+	return handleOK(w, func() ([]siteDTO, error) {
+		rows, err := s.Sites.List(r.Context())
+		if err != nil {
+			return nil, fromService(err, "site")
+		}
+		out := make([]siteDTO, 0, len(rows))
+		for _, x := range rows {
+			n := x.ConnectionCount
+			out = append(out, s.siteDTO(r, db.ConfigSite{ID: x.ID, Name: x.Name, Kind: x.Kind, Description: x.Description, CreatedAt: x.CreatedAt}, &n))
+		}
+		return out, nil
+	})
 }
 
 // openapi:operation
@@ -177,41 +178,20 @@ func (s *Server) listSites(w http.ResponseWriter, r *http.Request, p principal) 
 //   '409': Error
 
 func (s *Server) createSite(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req siteRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	if err := validName("name", req.Name); err != nil {
-		return err
-	}
-	if req.Kind != "direct" && req.Kind != "agent" {
-		return badRequest("kind must be direct or agent")
-	}
-	ctx, id := r.Context(), store.NewID()
-	var tok string
-	hash := ""
-	if req.Kind == "agent" {
-		tok = edge.NewToken()
-		hash = edge.HashToken(tok)
-	}
-	err := s.tx(ctx, func(q *db.Queries) error {
-		if err := q.CreateSite(ctx, db.CreateSiteParams{ID: id, Name: req.Name, Kind: req.Kind, Description: req.Description,
-			AgentTokenHash: store.NullString(hash), Now: store.Now()}); err != nil {
-			return fromStore(err, "site")
+	return handleCreated(w, r, func(req siteRequest) (siteDTO, error) {
+		res, err := s.Sites.Create(r.Context(), services.CreateSiteParams{
+			Name:        req.Name,
+			Kind:        req.Kind,
+			Description: req.Description,
+			Actor:       p.actor(),
+		})
+		if err != nil {
+			return siteDTO{}, fromService(err, "site")
 		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "site.create", ObjectType: "site", ObjectID: id,
-			Details: map[string]any{"name": req.Name, "kind": req.Kind}})
+		d := s.siteDTO(r, res.Site, nil)
+		d.AgentToken = res.Token
+		return d, nil
 	})
-	if err != nil {
-		return err
-	}
-	st, err := s.Store.Q.GetSite(ctx, id)
-	if err != nil {
-		return err
-	}
-	d := s.siteDTO(r, st, nil)
-	d.AgentToken = tok
-	return created(w, d)
 }
 
 // openapi:operation
@@ -221,11 +201,13 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, p principal)
 //   '200': { description: The site, schema: Site }
 
 func (s *Server) getSite(w http.ResponseWriter, r *http.Request, p principal) error {
-	st, err := s.Store.Q.GetSite(r.Context(), r.PathValue("id"))
-	if err != nil {
-		return fromStore(err, "site")
-	}
-	return ok(w, s.siteDTO(r, st, nil))
+	return handleOK(w, func() (siteDTO, error) {
+		st, err := s.Sites.Get(r.Context(), r.PathValue("id"))
+		if err != nil {
+			return siteDTO{}, fromService(err, "site")
+		}
+		return s.siteDTO(r, st, nil), nil
+	})
 }
 
 // openapi:operation
@@ -237,40 +219,18 @@ func (s *Server) getSite(w http.ResponseWriter, r *http.Request, p principal) er
 //   '409': Error
 
 func (s *Server) updateSite(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req updateSiteRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	ctx, id := r.Context(), r.PathValue("id")
-	var out db.ConfigSite
-	err := s.tx(ctx, func(q *db.Queries) error {
-		st, err := q.GetSite(ctx, id)
+	return handleAction(w, r, func(req updateSiteRequest) (siteDTO, error) {
+		st, err := s.Sites.Update(r.Context(), services.UpdateSiteParams{
+			ID:          r.PathValue("id"),
+			Name:        req.Name.Ptr(),
+			Description: req.Description.Ptr(),
+			Actor:       p.actor(),
+		})
 		if err != nil {
-			return fromStore(err, "site")
+			return siteDTO{}, fromService(err, "site")
 		}
-		if req.Name.Set {
-			if err := validName("name", req.Name.V); err != nil {
-				return err
-			}
-			st.Name = req.Name.V
-		}
-		if req.Description.Set {
-			st.Description = req.Description.V
-		}
-		if err := q.UpdateSite(ctx, db.UpdateSiteParams{ID: id, Name: st.Name, Description: st.Description}); err != nil {
-			return fromStore(err, "site")
-		}
-		if err := store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "site.update", ObjectType: "site", ObjectID: id,
-			Details: map[string]any{"name": st.Name}}); err != nil {
-			return err
-		}
-		out = st
-		return nil
+		return s.siteDTO(r, st, nil), nil
 	})
-	if err != nil {
-		return err
-	}
-	return ok(w, s.siteDTO(r, out, nil))
 }
 
 // openapi:operation
@@ -282,25 +242,9 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request, p principal)
 //   '409': Error
 
 func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx, id := r.Context(), r.PathValue("id")
-	err := s.tx(ctx, func(q *db.Queries) error {
-		st, err := q.GetSite(ctx, id)
-		if err != nil {
-			return fromStore(err, "site")
-		}
-		if _, err := q.DeleteSite(ctx, id); err != nil {
-			return fromStore(err, "site")
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "site.delete", ObjectType: "site", ObjectID: id,
-			Details: map[string]any{"name": st.Name}})
+	return handleCommand(w, func() error {
+		return fromService(s.Sites.Delete(r.Context(), p.actor(), r.PathValue("id")), "site")
 	})
-	if err != nil {
-		return err
-	}
-	if s.Hub != nil {
-		s.Hub.DisconnectSite(id)
-	}
-	return noContent(w)
 }
 
 // openapi:operation
@@ -312,33 +256,15 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request, p principal)
 //   '409': Error
 
 func (s *Server) rotateSiteToken(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx, id := r.Context(), r.PathValue("id")
-	tok := edge.NewToken()
-	var out db.ConfigSite
-	err := s.tx(ctx, func(q *db.Queries) error {
-		st, err := q.GetSite(ctx, id)
+	return handleOK(w, func() (siteDTO, error) {
+		res, err := s.Sites.RotateToken(r.Context(), p.actor(), r.PathValue("id"))
 		if err != nil {
-			return fromStore(err, "site")
+			return siteDTO{}, fromService(err, "site")
 		}
-		if st.Kind != "agent" {
-			return conflict("only agent sites have a token")
-		}
-		if err := q.SetSiteToken(ctx, db.SetSiteTokenParams{ID: id, AgentTokenHash: store.NullString(edge.HashToken(tok))}); err != nil {
-			return err
-		}
-		out = st
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "site.token_rotate", ObjectType: "site", ObjectID: id,
-			Details: map[string]any{"name": st.Name}})
+		d := s.siteDTO(r, res.Site, nil)
+		d.AgentToken = res.Token
+		return d, nil
 	})
-	if err != nil {
-		return err
-	}
-	if s.Hub != nil {
-		s.Hub.DisconnectSite(id)
-	}
-	d := s.siteDTO(r, out, nil)
-	d.AgentToken = tok
-	return ok(w, d)
 }
 
 // openapi:operation
@@ -349,8 +275,8 @@ func (s *Server) rotateSiteToken(w http.ResponseWriter, r *http.Request, p princ
 
 func (s *Server) siteAgents(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx, id := r.Context(), r.PathValue("id")
-	if _, err := s.Store.Q.GetSite(ctx, id); err != nil {
-		return fromStore(err, "site")
+	if _, err := s.Sites.Get(ctx, id); err != nil {
+		return fromService(err, "site")
 	}
 	out := []agentDTO{}
 	if s.Hub != nil {
