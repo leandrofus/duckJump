@@ -124,12 +124,27 @@ func fromService(err error, what string) error {
 		errors.Is(err, services.ErrSecretKindRequiresValue),
 		errors.Is(err, services.ErrSiteKindInvalid):
 		return badRequest("%s", err.Error())
-	case errors.Is(err, services.ErrSiteTokenNotAgent):
+	case errors.Is(err, services.ErrSiteTokenNotAgent),
+		errors.Is(err, services.ErrAccessRequestAlreadyPending):
 		return conflict("%s", err.Error())
+	case errors.Is(err, services.ErrForbidden):
+		return errForbidden
+	case errors.Is(err, services.ErrAccessRequestReasonRequired),
+		errors.Is(err, services.ErrAccessRequestStartsAtRequired),
+		errors.Is(err, services.ErrAccessRequestEndsAtRequired),
+		errors.Is(err, services.ErrAccessRequestEndsAtBeforeStartsAt),
+		errors.Is(err, services.ErrAccessRequestEndsAtInPast),
+		errors.Is(err, services.ErrAccessRequestNoPermissions),
+		errors.Is(err, services.ErrAccessRequestEndInPast):
+		return badRequest("%s", err.Error())
 	default:
 		var notEmptyErr *services.FolderNotEmptyError
 		if errors.As(err, &notEmptyErr) {
 			return conflict("%s", notEmptyErr.Error())
+		}
+		var notPendingErr *services.AccessRequestNotPendingError
+		if errors.As(err, &notPendingErr) {
+			return conflict("%s", notPendingErr.Error())
 		}
 		return fromStore(err, what)
 	}

@@ -2,13 +2,11 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
-	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
@@ -166,12 +164,9 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request, p pr
 		filterUser = qUser
 	}
 
-	reqs, err := s.Store.Q.ListAccessRequests(ctx, db.ListAccessRequestsParams{
-		UserID: filterUser,
-		Status: qStatus,
-	})
+	reqs, err := s.AccessRequests.List(ctx, filterUser, qStatus)
 	if err != nil {
-		return err
+		return fromService(err, "access request")
 	}
 
 	out, err := s.toAccessRequestDTOs(ctx, reqs)
@@ -250,123 +245,28 @@ func (s *Server) accessRequestTargets(w http.ResponseWriter, r *http.Request, p 
 //   '409': Error
 
 func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req createAccessRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	if req.ObjectType == "" {
-		req.ObjectType = "connection"
-	}
-	reason := strings.TrimSpace(req.Reason)
-	if reason == "" {
-		return badRequest("reason (motivo) is required")
-	}
-	ticket := strings.TrimSpace(req.Ticket)
-	if req.StartsAt.IsZero() {
-		return badRequest("starts_at (fecha inicio) is required")
-	}
-	if req.EndsAt.IsZero() {
-		return badRequest("ends_at (fecha fin) is required")
-	}
-	if !req.EndsAt.After(req.StartsAt) {
-		return badRequest("ends_at must be after starts_at")
-	}
-	if !req.EndsAt.After(time.Now()) {
-		return badRequest("ends_at cannot be in the past")
-	}
-	canConnect := req.CanConnect == nil || *req.CanConnect
-	if !canConnect && !req.CanViewRecordings && !req.CanUpload && !req.CanDownload && !req.CanForward {
-		return badRequest("an access request must ask for at least one permission")
-	}
-
-	ctx, id := r.Context(), store.NewID()
-	var createdReq db.ConfigAccessRequest
-	err := s.tx(ctx, func(q *db.Queries) error {
-		if err := s.Policies.CheckRefs(ctx, "user", p.User.ID, req.ObjectType, req.ObjectRef); err != nil {
-			return fromService(err, req.ObjectType)
-		}
-
-		pendings, err := q.ListPendingAccessRequestsForUserAndObject(ctx, db.ListPendingAccessRequestsForUserAndObjectParams{
-			UserID:     p.User.ID,
-			ObjectType: req.ObjectType,
-			ObjectRef:  req.ObjectRef,
-		})
-		if err != nil {
-			return err
-		}
-		if len(pendings) > 0 {
-			return conflict("you already have a pending access request for this target")
-		}
-
-		now := store.Now()
-		if err := q.CreateAccessRequest(ctx, db.CreateAccessRequestParams{
-			ID:                id,
+	return handleCreated(w, r, func(req createAccessRequest) (accessRequestDTO, error) {
+		canConnect := req.CanConnect == nil || *req.CanConnect
+		createdReq, err := s.AccessRequests.Create(r.Context(), services.CreateAccessRequestParams{
 			UserID:            p.User.ID,
 			ObjectType:        req.ObjectType,
 			ObjectRef:         req.ObjectRef,
-			Ticket:            ticket,
+			Ticket:            req.Ticket,
 			CanConnect:        canConnect,
 			CanViewRecordings: req.CanViewRecordings,
 			CanUpload:         req.CanUpload,
 			CanDownload:       req.CanDownload,
 			CanForward:        req.CanForward,
-			Reason:            reason,
-			StartsAt:          req.StartsAt.UTC(),
-			EndsAt:            req.EndsAt.UTC(),
-			Now:               now,
-		}); err != nil {
-			return err
+			Reason:            req.Reason,
+			StartsAt:          req.StartsAt,
+			EndsAt:            req.EndsAt,
+			Actor:             p.actor(),
+		})
+		if err != nil {
+			return accessRequestDTO{}, fromService(err, req.ObjectType)
 		}
-
-		d := map[string]any{
-			"object":              req.ObjectType + ":" + req.ObjectRef,
-			"ticket":              ticket,
-			"reason":              reason,
-			"starts_at":           req.StartsAt.UTC().Format(time.RFC3339),
-			"ends_at":             req.EndsAt.UTC().Format(time.RFC3339),
-			"can_connect":         canConnect,
-			"can_view_recordings": req.CanViewRecordings,
-			"can_upload":          req.CanUpload,
-			"can_download":        req.CanDownload,
-			"can_forward":         req.CanForward,
-		}
-		if err := store.Audit(ctx, q, store.Event{
-			Actor:      p.actor(),
-			Action:     "access_request.create",
-			ObjectType: "access_request",
-			ObjectID:   id,
-			Details:    d,
-		}); err != nil {
-			return err
-		}
-
-		createdReq = db.ConfigAccessRequest{
-			ID:                id,
-			UserID:            p.User.ID,
-			ObjectType:        req.ObjectType,
-			ObjectRef:         req.ObjectRef,
-			Ticket:            ticket,
-			CanConnect:        canConnect,
-			CanViewRecordings: req.CanViewRecordings,
-			CanUpload:         req.CanUpload,
-			CanDownload:       req.CanDownload,
-			Reason:            reason,
-			StartsAt:          req.StartsAt.UTC(),
-			EndsAt:            req.EndsAt.UTC(),
-			Status:            "pending",
-			CreatedAt:         now,
-		}
-		return nil
+		return s.toAccessRequestDTO(r.Context(), createdReq)
 	})
-	if err != nil {
-		return err
-	}
-
-	dto, err := s.toAccessRequestDTO(ctx, createdReq)
-	if err != nil {
-		return err
-	}
-	return created(w, dto)
 }
 
 // openapi:operation
@@ -376,19 +276,16 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p p
 //   '200': { description: The access request, schema: AccessRequest }
 
 func (s *Server) getAccessRequest(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx, id := r.Context(), r.PathValue("id")
-	req, err := s.Store.Q.GetAccessRequest(ctx, id)
-	if err != nil {
-		return fromStore(err, "access request")
-	}
-	if !admins[p.User.Role] && req.UserID != p.User.ID {
-		return errForbidden
-	}
-	dto, err := s.toAccessRequestDTO(ctx, req)
-	if err != nil {
-		return err
-	}
-	return ok(w, dto)
+	return handleOK(w, func() (accessRequestDTO, error) {
+		req, err := s.AccessRequests.Get(r.Context(), r.PathValue("id"))
+		if err != nil {
+			return accessRequestDTO{}, fromService(err, "access request")
+		}
+		if !admins[p.User.Role] && req.UserID != p.User.ID {
+			return accessRequestDTO{}, errForbidden
+		}
+		return s.toAccessRequestDTO(r.Context(), req)
+	})
 }
 
 // openapi:operation
@@ -403,127 +300,11 @@ func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request, p 
 	var body reviewAccessRequest
 	_ = decode(r, &body) // Optional body
 
-	ctx, id := r.Context(), r.PathValue("id")
-	var out db.ConfigAccessRequest
-	err := s.tx(ctx, func(q *db.Queries) error {
-		req, err := q.GetAccessRequest(ctx, id)
-		if err != nil {
-			return fromStore(err, "access request")
-		}
-		if req.Status != "pending" {
-			return conflict("access request is not pending (status: %s)", req.Status)
-		}
-		if !req.EndsAt.After(time.Now()) {
-			return badRequest("the requested end date is already in the past")
-		}
-
-		existing, err := q.ListPolicies(ctx, db.ListPoliciesParams{
-			SubjectID: req.UserID,
-			ObjectRef: req.ObjectRef,
-		})
-		if err != nil {
-			return err
-		}
-
-		var existingPolicy *db.ConfigPolicy
-		for _, e := range existing {
-			if e.SubjectType == "user" && e.ObjectType == req.ObjectType {
-				ep := e
-				existingPolicy = &ep
-				break
-			}
-		}
-
-		policyID := store.NewID()
-		desc := "Access request: " + req.Reason
-		if req.Ticket != "" {
-			desc = fmt.Sprintf("Access request [%s]: %s", req.Ticket, req.Reason)
-		}
-		now := store.Now()
-
-		if existingPolicy != nil {
-			policyID = existingPolicy.ID
-			if err := q.UpdatePolicy(ctx, db.UpdatePolicyParams{
-				ID:                policyID,
-				CanConnect:        req.CanConnect,
-				CanViewRecordings: req.CanViewRecordings,
-				CanUpload:         req.CanUpload,
-				CanDownload:       req.CanDownload,
-				CanForward:        req.CanForward,
-				StartsAt:          store.NullTime(req.StartsAt),
-				ExpiresAt:         store.NullTime(req.EndsAt),
-				Description:       desc,
-			}); err != nil {
-				return err
-			}
-		} else {
-			if err := q.CreatePolicy(ctx, db.CreatePolicyParams{
-				ID:                policyID,
-				SubjectType:       "user",
-				SubjectID:         req.UserID,
-				ObjectType:        req.ObjectType,
-				ObjectRef:         req.ObjectRef,
-				CanConnect:        req.CanConnect,
-				CanViewRecordings: req.CanViewRecordings,
-				CanUpload:         req.CanUpload,
-				CanDownload:       req.CanDownload,
-				CanForward:        req.CanForward,
-				StartsAt:          store.NullTime(req.StartsAt),
-				ExpiresAt:         store.NullTime(req.EndsAt),
-				Description:       desc,
-				CreatedBy:         store.NullString(p.User.ID),
-				Now:               now,
-			}); err != nil {
-				return err
-			}
-		}
-
-		if err := q.ApproveAccessRequest(ctx, db.ApproveAccessRequestParams{
-			ID:              id,
-			ReviewedBy:      store.NullString(p.User.ID),
-			ReviewedAt:      store.NullTime(now),
-			ReviewComment:   body.Comment,
-			CreatedPolicyID: store.NullString(policyID),
-		}); err != nil {
-			return err
-		}
-
-		d := map[string]any{
-			"user_id":   req.UserID,
-			"object":    req.ObjectType + ":" + req.ObjectRef,
-			"policy_id": policyID,
-			"starts_at": req.StartsAt.UTC().Format(time.RFC3339),
-			"ends_at":   req.EndsAt.UTC().Format(time.RFC3339),
-		}
-		if req.Ticket != "" {
-			d["ticket"] = req.Ticket
-		}
-		if body.Comment != "" {
-			d["comment"] = body.Comment
-		}
-		if err := store.Audit(ctx, q, store.Event{
-			Actor:      p.actor(),
-			Action:     "access_request.approve",
-			ObjectType: "access_request",
-			ObjectID:   id,
-			Details:    d,
-		}); err != nil {
-			return err
-		}
-
-		req.Status = "approved"
-		req.ReviewedBy = store.NullString(p.User.ID)
-		req.ReviewedAt = store.NullTime(now)
-		req.ReviewComment = body.Comment
-		req.CreatedPolicyID = store.NullString(policyID)
-		out = req
-		return nil
-	})
+	out, _, err := s.AccessRequests.Approve(r.Context(), p.actor(), r.PathValue("id"), p.User.ID, body.Comment)
 	if err != nil {
-		return err
+		return fromService(err, "access request")
 	}
-
-	dto, err := s.toAccessRequestDTO(ctx, out)
+	dto, err := s.toAccessRequestDTO(r.Context(), out)
 	if err != nil {
 		return err
 	}
@@ -542,56 +323,11 @@ func (s *Server) rejectAccessRequest(w http.ResponseWriter, r *http.Request, p p
 	var body reviewAccessRequest
 	_ = decode(r, &body) // Optional body
 
-	ctx, id := r.Context(), r.PathValue("id")
-	var out db.ConfigAccessRequest
-	err := s.tx(ctx, func(q *db.Queries) error {
-		req, err := q.GetAccessRequest(ctx, id)
-		if err != nil {
-			return fromStore(err, "access request")
-		}
-		if req.Status != "pending" {
-			return conflict("access request is not pending (status: %s)", req.Status)
-		}
-
-		now := store.Now()
-		if err := q.RejectAccessRequest(ctx, db.RejectAccessRequestParams{
-			ID:            id,
-			ReviewedBy:    store.NullString(p.User.ID),
-			ReviewedAt:    store.NullTime(now),
-			ReviewComment: body.Comment,
-		}); err != nil {
-			return err
-		}
-
-		d := map[string]any{
-			"user_id": req.UserID,
-			"object":  req.ObjectType + ":" + req.ObjectRef,
-		}
-		if body.Comment != "" {
-			d["comment"] = body.Comment
-		}
-		if err := store.Audit(ctx, q, store.Event{
-			Actor:      p.actor(),
-			Action:     "access_request.reject",
-			ObjectType: "access_request",
-			ObjectID:   id,
-			Details:    d,
-		}); err != nil {
-			return err
-		}
-
-		req.Status = "rejected"
-		req.ReviewedBy = store.NullString(p.User.ID)
-		req.ReviewedAt = store.NullTime(now)
-		req.ReviewComment = body.Comment
-		out = req
-		return nil
-	})
+	out, err := s.AccessRequests.Reject(r.Context(), p.actor(), r.PathValue("id"), p.User.ID, body.Comment)
 	if err != nil {
-		return err
+		return fromService(err, "access request")
 	}
-
-	dto, err := s.toAccessRequestDTO(ctx, out)
+	dto, err := s.toAccessRequestDTO(r.Context(), out)
 	if err != nil {
 		return err
 	}
@@ -606,46 +342,11 @@ func (s *Server) rejectAccessRequest(w http.ResponseWriter, r *http.Request, p p
 //   '409': Error
 
 func (s *Server) cancelAccessRequest(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx, id := r.Context(), r.PathValue("id")
-	var out db.ConfigAccessRequest
-	err := s.tx(ctx, func(q *db.Queries) error {
-		req, err := q.GetAccessRequest(ctx, id)
-		if err != nil {
-			return fromStore(err, "access request")
-		}
-		if !admins[p.User.Role] && req.UserID != p.User.ID {
-			return errForbidden
-		}
-		if req.Status != "pending" {
-			return conflict("access request is not pending (status: %s)", req.Status)
-		}
-
-		if err := q.CancelAccessRequest(ctx, id); err != nil {
-			return err
-		}
-
-		if err := store.Audit(ctx, q, store.Event{
-			Actor:      p.actor(),
-			Action:     "access_request.cancel",
-			ObjectType: "access_request",
-			ObjectID:   id,
-			Details: map[string]any{
-				"user_id": req.UserID,
-				"object":  req.ObjectType + ":" + req.ObjectRef,
-			},
-		}); err != nil {
-			return err
-		}
-
-		req.Status = "canceled"
-		out = req
-		return nil
-	})
+	out, err := s.AccessRequests.Cancel(r.Context(), p.actor(), r.PathValue("id"), p.User.ID, admins[p.User.Role])
 	if err != nil {
-		return err
+		return fromService(err, "access request")
 	}
-
-	dto, err := s.toAccessRequestDTO(ctx, out)
+	dto, err := s.toAccessRequestDTO(r.Context(), out)
 	if err != nil {
 		return err
 	}

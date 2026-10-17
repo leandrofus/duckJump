@@ -42,9 +42,10 @@ type Server struct {
 	Policies    *services.PolicyService
 	Groups      *services.GroupService
 	Folders     *services.FolderService
-	Secrets     *services.SecretService
-	Sites       *services.SiteService
-	Hub         *edge.Hub
+	Secrets        *services.SecretService
+	Sites          *services.SiteService
+	AccessRequests *services.AccessRequestService
+	Hub            *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
 	DaemonToken string
@@ -123,6 +124,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Sites == nil && s.Store != nil {
 		s.Sites = services.NewSiteService(s.Store, s.Hub)
+	}
+	if s.AccessRequests == nil && s.Store != nil {
+		s.AccessRequests = services.NewAccessRequestService(s.Store, s.Policies)
 	}
 	if s.SupportHub == nil {
 		s.SupportHub = NewSupportHub()

@@ -839,14 +839,13 @@ func folderCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // requestCmd handles `request [ls | approve | deny]`.
 func requestCmd(ctx context.Context, st *store.Store, args []string) error {
+	svc := services.NewAccessRequestService(st, services.NewPolicyService(st))
 	if len(args) == 0 || args[0] == "ls" {
 		status := ""
 		if len(args) > 1 {
 			status = args[1]
 		}
-		reqs, err := st.Q.ListAccessRequests(ctx, db.ListAccessRequestsParams{
-			Status: status,
-		})
+		reqs, err := svc.List(ctx, "", status)
 		if err != nil {
 			return err
 		}
@@ -883,36 +882,12 @@ func requestCmd(ctx context.Context, st *store.Store, args []string) error {
 		if id == "" {
 			return fmt.Errorf("usage: duckjump request approve <request-id> [--comment \"...\"]")
 		}
-		return st.Tx(ctx, func(q *db.Queries) error {
-			req, err := q.GetAccessRequest(ctx, id)
-			if err != nil {
-				return fmt.Errorf("request %q: %w", id, store.Classify(err))
-			}
-			if req.Status != "pending" {
-				return fmt.Errorf("request %s is already %s", id, req.Status)
-			}
-			policyID := store.NewID()
-			now := store.Now()
-			if err := q.CreatePolicy(ctx, db.CreatePolicyParams{
-				ID: policyID, SubjectType: "user", SubjectID: req.UserID, ObjectType: req.ObjectType, ObjectRef: req.ObjectRef,
-				CanConnect: req.CanConnect, CanViewRecordings: req.CanViewRecordings, CanUpload: req.CanUpload, CanDownload: req.CanDownload,
-				StartsAt: store.NullTime(req.StartsAt), ExpiresAt: store.NullTime(req.EndsAt), Description: "approved request: " + req.Reason,
-				CreatedBy: store.NullString("cli"), Now: now,
-			}); err != nil {
-				return err
-			}
-			if err := q.ApproveAccessRequest(ctx, db.ApproveAccessRequestParams{
-				ID: id, ReviewedBy: store.NullString("cli"), ReviewedAt: store.NullTime(now),
-				ReviewComment: *comment, CreatedPolicyID: store.NullString(policyID),
-			}); err != nil {
-				return err
-			}
-			fmt.Printf("access request %s approved (policy %s created)\n", id, policyID)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "access_request.approve", ObjectType: "access_request", ObjectID: id,
-				Details: map[string]any{"policy_id": policyID, "comment": *comment},
-			})
-		})
+		_, policyID, err := svc.Approve(ctx, cli, id, "cli", *comment)
+		if err != nil {
+			return fmt.Errorf("request %q: %w", id, err)
+		}
+		fmt.Printf("access request %s approved (policy %s created)\n", id, policyID)
+		return nil
 
 	case "deny", "reject":
 		fs := flag.NewFlagSet("request deny", flag.ExitOnError)
@@ -927,27 +902,11 @@ func requestCmd(ctx context.Context, st *store.Store, args []string) error {
 		if id == "" {
 			return fmt.Errorf("usage: duckjump request deny <request-id> [--comment \"...\"]")
 		}
-		return st.Tx(ctx, func(q *db.Queries) error {
-			req, err := q.GetAccessRequest(ctx, id)
-			if err != nil {
-				return fmt.Errorf("request %q: %w", id, store.Classify(err))
-			}
-			if req.Status != "pending" {
-				return fmt.Errorf("request %s is already %s", id, req.Status)
-			}
-			now := store.Now()
-			if err := q.RejectAccessRequest(ctx, db.RejectAccessRequestParams{
-				ID: id, ReviewedBy: store.NullString("cli"), ReviewedAt: store.NullTime(now),
-				ReviewComment: *comment,
-			}); err != nil {
-				return err
-			}
-			fmt.Printf("access request %s rejected\n", id)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "access_request.reject", ObjectType: "access_request", ObjectID: id,
-				Details: map[string]any{"comment": *comment},
-			})
-		})
+		if _, err := svc.Reject(ctx, cli, id, "cli", *comment); err != nil {
+			return fmt.Errorf("request %q: %w", id, err)
+		}
+		fmt.Printf("access request %s rejected\n", id)
+		return nil
 
 	default:
 		return fmt.Errorf("usage: duckjump request [ls | approve <id> | deny <id>]")
