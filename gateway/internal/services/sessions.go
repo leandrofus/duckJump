@@ -258,5 +258,49 @@ func (s *SessionService) CheckSessionAllowed(ctx context.Context, userID, connID
 	return "", nil
 }
 
+func (s *SessionService) SweepStale(ctx context.Context, staleAfter time.Duration) ([]string, error) {
+	cutoff := store.TS(store.Now().Add(-staleAfter))
+	var closedIDs []string
+	err := s.store.Tx(ctx, func(q *db.Queries) error {
+		ids, err := q.CloseStaleSessions(ctx, db.CloseStaleSessionsParams{Now: store.NullTime(store.Now()), Cutoff: cutoff})
+		if err != nil {
+			return err
+		}
+		closedIDs = ids
+		for _, id := range ids {
+			if err := store.Audit(ctx, q, store.Event{
+				Actor:      store.Actor{Name: "gateway"},
+				Action:     "session.end",
+				ObjectType: "session",
+				ObjectID:   id,
+				Details:    map[string]any{"reason": "lost: the gateway holding it stopped"},
+			}); err != nil {
+				return err
+			}
+		}
+		return q.DeleteStaleHeartbeats(ctx, cutoff)
+	})
+	return closedIDs, err
+}
+
+func (s *SessionService) AuditControlYield(ctx context.Context, actor store.Actor, sessionID string, toUsername, toUserID string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "session.control_yield",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+		Details:    map[string]any{"to": toUsername, "to_id": toUserID},
+	})
+}
+
+func (s *SessionService) AuditControlTake(ctx context.Context, actor store.Actor, sessionID string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "session.control_take",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+	})
+}
+
 
 

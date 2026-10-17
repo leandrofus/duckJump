@@ -191,9 +191,7 @@ func TestTerminateSession(t *testing.T) {
 	// A request recorded by another process (the CLI) is picked up too.
 	ws = ana.openSession(t, connID)
 	id = readMsg(t, ws)["session_id"]
-	if err := e.st.Tx(context.Background(), func(q *db.Queries) error {
-		return RequestKill(context.Background(), q, id, store.Actor{Name: "cli"}, "")
-	}); err != nil {
+	if _, err := e.server.Sessions.RequestKill(context.Background(), store.Actor{Name: "cli"}, id, ""); err != nil {
 		t.Fatal(err)
 	}
 	e.server.checkLive(context.Background())

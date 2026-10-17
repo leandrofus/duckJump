@@ -445,13 +445,13 @@ func (s *Server) runParticipant(ctx context.Context, ls *liveSession, lp *livePa
 					err = djtp.WriteControl(ls.pd, djtp.Control{Type: "clipboard", Text: m.Text})
 				}
 			case "yield_control":
-				_ = s.tx(ctx, func(q *db.Queries) error {
-					return ls.yieldControl(ctx, lp.id, m.To, princ.actor(), q)
-				})
+				if toUser, toID, err := ls.yieldControl(lp.id, m.To, princ.actor().Name); err == nil {
+					_ = s.Sessions.AuditControlYield(ctx, princ.actor(), ls.id, toUser, toID)
+				}
 			case "take_control":
-				_ = s.tx(ctx, func(q *db.Queries) error {
-					return ls.takeControl(ctx, lp.id, princ.actor(), q)
-				})
+				if err := ls.takeControl(lp.id, princ.actor().Name); err == nil {
+					_ = s.Sessions.AuditControlTake(ctx, princ.actor(), ls.id)
+				}
 			case "request_control":
 				ls.requestControl(lp.id)
 			}
@@ -663,14 +663,7 @@ func (s *Server) unverifiedHostKey(ctx context.Context, c db.ConfigConnection, p
 	}
 	log.Warn("host key not approved", "fingerprint", fp)
 	if !c.HostKeyPending.Valid || c.HostKeyPending.String != fp {
-		err := s.tx(ctx, func(q *db.Queries) error {
-			if err := q.SetPendingHostKey(ctx, db.SetPendingHostKeyParams{ID: c.ID, HostKeyPending: store.NullString(fp)}); err != nil {
-				return err
-			}
-			return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.host_key_pending", ObjectType: "connection", ObjectID: c.ID,
-				Details: map[string]any{"name": c.Name, "fingerprint": fp}})
-		})
-		if err != nil {
+		if err := s.Connections.SetPendingHostKey(ctx, p.actor(), c.ID, c.Name, fp); err != nil {
 			log.Error("recording the pending host key", "err", err)
 		}
 	}

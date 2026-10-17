@@ -15,7 +15,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
@@ -245,21 +244,23 @@ func (ls *liveSession) broadcastPresence() {
 	}
 }
 
-func (ls *liveSession) yieldControl(ctx context.Context, fromParticipantID, toParticipantID string, actor store.Actor, q *db.Queries) error {
+func (ls *liveSession) yieldControl(fromParticipantID, toParticipantID, actorName string) (toUsername, toUserID string, err error) {
 	ls.mu.Lock()
 	from, okFrom := ls.participants[fromParticipantID]
 	to, okTo := ls.participants[toParticipantID]
 	if !okFrom || !okTo {
 		ls.mu.Unlock()
-		return errors.New("participant not found")
+		return "", "", errors.New("participant not found")
 	}
 	// Current controller, session owner, or admin can yield control
-	if fromParticipantID != ls.controllerID && !from.isOwner && actor.Name != "root" {
+	if fromParticipantID != ls.controllerID && !from.isOwner && actorName != "root" {
 		ls.mu.Unlock()
-		return errors.New("not authorized to yield control")
+		return "", "", errors.New("not authorized to yield control")
 	}
 	ls.controllerID = to.id
 	ls.controllerName = to.username
+	toUsername = to.username
+	toUserID = to.userID
 	ls.mu.Unlock()
 
 	ls.broadcastPresence()
@@ -269,27 +270,17 @@ func (ls *liveSession) yieldControl(ctx context.Context, fromParticipantID, toPa
 		"controller_name": to.username,
 	})
 	ls.broadcastText(ctrlMsg)
-
-	if q != nil {
-		_ = store.Audit(ctx, q, store.Event{
-			Actor:      actor,
-			Action:     "session.control_yield",
-			ObjectType: "session",
-			ObjectID:   ls.id,
-			Details:    map[string]any{"to": to.username, "to_id": to.userID},
-		})
-	}
-	return nil
+	return toUsername, toUserID, nil
 }
 
-func (ls *liveSession) takeControl(ctx context.Context, participantID string, actor store.Actor, q *db.Queries) error {
+func (ls *liveSession) takeControl(participantID, actorName string) error {
 	ls.mu.Lock()
 	p, ok := ls.participants[participantID]
 	if !ok {
 		ls.mu.Unlock()
 		return errors.New("participant not found")
 	}
-	if !p.isOwner && actor.Name != "root" {
+	if !p.isOwner && actorName != "root" {
 		ls.mu.Unlock()
 		return errors.New("only the owner can reclaim control")
 	}
@@ -304,15 +295,6 @@ func (ls *liveSession) takeControl(ctx context.Context, participantID string, ac
 		"controller_name": p.username,
 	})
 	ls.broadcastText(ctrlMsg)
-
-	if q != nil {
-		_ = store.Audit(ctx, q, store.Event{
-			Actor:      actor,
-			Action:     "session.control_take",
-			ObjectType: "session",
-			ObjectID:   ls.id,
-		})
-	}
 	return nil
 }
 
@@ -466,21 +448,11 @@ func (s *Server) beat(ctx context.Context) {
 // SweepStale closes open sessions no gateway holds any more (crashed or
 // stopped without closing them), on this gateway's database.
 func (s *Server) SweepStale(ctx context.Context) error {
-	cutoff := store.TS(store.Now().Add(-staleAfter))
-	return s.tx(ctx, func(q *db.Queries) error {
-		ids, err := q.CloseStaleSessions(ctx, db.CloseStaleSessionsParams{Now: store.NullTime(store.Now()), Cutoff: cutoff})
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			slog.Warn("closed a session its gateway lost", "session", id)
-			if err := store.Audit(ctx, q, store.Event{Actor: store.Actor{Name: "gateway"}, Action: "session.end", ObjectType: "session",
-				ObjectID: id, Details: map[string]any{"reason": "lost: the gateway holding it stopped"}}); err != nil {
-				return err
-			}
-		}
-		return q.DeleteStaleHeartbeats(ctx, cutoff)
-	})
+	closed, err := s.Sessions.SweepStale(ctx, staleAfter)
+	for _, id := range closed {
+		slog.Warn("closed a session its gateway lost", "session", id)
+	}
+	return err
 }
 
 // node names this gateway process in heartbeats.
@@ -605,13 +577,3 @@ func (s *Server) terminateSession(w http.ResponseWriter, r *http.Request, p prin
 	return nil
 }
 
-// RequestKill records (and audits) a request to end a session. The gateway
-// holding it acts on it at its next check.
-func RequestKill(ctx context.Context, q *db.Queries, sessionID string, by store.Actor, reason string) error {
-	if err := q.RequestSessionKill(ctx, db.RequestSessionKillParams{SessionID: sessionID, Now: store.Now(),
-		RequestedBy: by.Name, Reason: reason}); err != nil {
-		return fmt.Errorf("recording the kill request: %w", err)
-	}
-	return store.Audit(ctx, q, store.Event{Actor: by, Action: "session.terminate", ObjectType: "session", ObjectID: sessionID,
-		Details: map[string]any{"reason": reason}})
-}

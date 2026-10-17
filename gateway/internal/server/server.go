@@ -3,7 +3,6 @@
 package server
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -511,7 +510,4 @@ func (s *Server) pending(h func(w http.ResponseWriter, r *http.Request, p princi
 }
 
 
-// tx runs fn in a store transaction.
-func (s *Server) tx(ctx context.Context, fn func(q *db.Queries) error) error {
-	return s.Store.Tx(ctx, fn)
-}
+

@@ -623,6 +623,24 @@ func (s *ConnectionService) PinHostKey(ctx context.Context, id, hostKey string) 
 	})
 }
 
+func (s *ConnectionService) SetPendingHostKey(ctx context.Context, actor store.Actor, id, name, fp string) error {
+	return s.store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.SetPendingHostKey(ctx, db.SetPendingHostKeyParams{
+			ID:              id,
+			HostKeyPending: store.NullString(fp),
+		}); err != nil {
+			return err
+		}
+		return store.Audit(ctx, q, store.Event{
+			Actor:      actor,
+			Action:     "connection.host_key_pending",
+			ObjectType: "connection",
+			ObjectID:   id,
+			Details:    map[string]any{"name": name, "fingerprint": fp},
+		})
+	})
+}
+
 func (s *ConnectionService) CheckForwardAccess(ctx context.Context, actor store.Actor, userID string, isDev bool, idOrName string) (db.ConfigConnection, error) {
 	conn, err := s.store.Q.GetConnection(ctx, idOrName)
 	if err != nil {

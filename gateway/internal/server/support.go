@@ -291,20 +291,18 @@ func (s *Server) toSupportSessionDTO(r db.ConfigSupportSession) supportSessionDT
 //   '201': { description: Created, schema: SupportSession }
 
 func (s *Server) createSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req createSupportSessionReq
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	sess, err := s.Support.CreateSession(r.Context(), p.actor(), p.User.ID, services.CreateSupportSessionParams{
-		TargetName: req.TargetName,
-		Reason:     req.Reason,
-		Ticket:     req.Ticket,
-		TTLMinutes: req.TTLMinutes,
+	return handleCreated(w, r, func(req createSupportSessionReq) (supportSessionDTO, error) {
+		sess, err := s.Support.CreateSession(r.Context(), p.actor(), p.User.ID, services.CreateSupportSessionParams{
+			TargetName: req.TargetName,
+			Reason:     req.Reason,
+			Ticket:     req.Ticket,
+			TTLMinutes: req.TTLMinutes,
+		})
+		if err != nil {
+			return supportSessionDTO{}, fromService(err, "support_session")
+		}
+		return s.toSupportSessionDTO(sess), nil
 	})
-	if err != nil {
-		return fromService(err, "support_session")
-	}
-	return created(w, s.toSupportSessionDTO(sess))
 }
 
 // openapi:operation
@@ -448,11 +446,13 @@ func (s *Server) listSupportSessions(w http.ResponseWriter, r *http.Request, p p
 //   '200': { description: OK, schema: SupportSession }
 
 func (s *Server) getSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
-	sess, err := s.Support.GetSession(r.Context(), r.PathValue("id"))
-	if err != nil {
-		return fromService(err, "support_session")
-	}
-	return ok(w, s.toSupportSessionDTO(sess))
+	return handleOK(w, func() (supportSessionDTO, error) {
+		sess, err := s.Support.GetSession(r.Context(), r.PathValue("id"))
+		if err != nil {
+			return supportSessionDTO{}, fromService(err, "support_session")
+		}
+		return s.toSupportSessionDTO(sess), nil
+	})
 }
 
 // openapi:operation
@@ -464,16 +464,13 @@ func (s *Server) getSupportSession(w http.ResponseWriter, r *http.Request, p pri
 //   '200': { description: OK, schema: SupportSession }
 
 func (s *Server) verifySupportTOTP(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req verifySupportTOTPReq
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-
-	updated, err := s.Support.VerifyTOTP(r.Context(), p.actor(), r.PathValue("id"), req.Code)
-	if err != nil {
-		return fromService(err, "support_session")
-	}
-	return ok(w, s.toSupportSessionDTO(updated))
+	return handleAction(w, r, func(req verifySupportTOTPReq) (supportSessionDTO, error) {
+		updated, err := s.Support.VerifyTOTP(r.Context(), p.actor(), r.PathValue("id"), req.Code)
+		if err != nil {
+			return supportSessionDTO{}, fromService(err, "support_session")
+		}
+		return s.toSupportSessionDTO(updated), nil
+	})
 }
 
 // openapi:operation
@@ -483,11 +480,13 @@ func (s *Server) verifySupportTOTP(w http.ResponseWriter, r *http.Request, p pri
 //   '200': { description: Session ended, schema: SupportSession }
 
 func (s *Server) endSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
-	updated, err := s.Support.EndSession(r.Context(), p.actor(), r.PathValue("id"))
-	if err != nil {
-		return fromService(err, "support_session")
-	}
-	return ok(w, s.toSupportSessionDTO(updated))
+	return handleOK(w, func() (supportSessionDTO, error) {
+		updated, err := s.Support.EndSession(r.Context(), p.actor(), r.PathValue("id"))
+		if err != nil {
+			return supportSessionDTO{}, fromService(err, "support_session")
+		}
+		return s.toSupportSessionDTO(updated), nil
+	})
 }
 
 // openapi:operation
