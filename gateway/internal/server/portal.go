@@ -1,10 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 
-	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 )
 
 // openapi:schema PortalConnection
@@ -41,6 +40,25 @@ type portalConnectionDTO struct {
 	VirtualHost string   `json:"virtual_host,omitempty"`
 }
 
+func toPortalConnectionDTO(item services.PortalConnectionItem) portalConnectionDTO {
+	c := item.Connection
+	return portalConnectionDTO{
+		ID:          c.ID,
+		Name:        c.Name,
+		Protocol:    c.Protocol,
+		Environment: c.Environment,
+		Description: c.Description,
+		FolderPath:  item.FolderPath,
+		Tags:        item.Tags,
+		Record:      c.Record,
+		Credentials: item.Credentials,
+		CanUpload:   item.CanUpload,
+		CanDownload: item.CanDownload,
+		CanForward:  item.CanForward,
+		VirtualHost: item.VirtualHost,
+	}
+}
+
 // openapi:operation
 // summary: Connections I can open
 // description: >-
@@ -52,85 +70,13 @@ type portalConnectionDTO struct {
 //   '200': { description: Connections, schema: '[]PortalConnection' }
 
 func (s *Server) portalConnections(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx := r.Context()
-	var conns []db.ConfigConnection
-	var err error
-	if p.Dev {
-		conns, err = s.Store.Q.ListConnections(ctx)
-	} else {
-		conns, err = s.Store.GrantedConnections(ctx, p.User.ID)
-	}
+	items, err := s.Portal.ListConnections(r.Context(), p.User.ID, p.Dev)
 	if err != nil {
-		return err
+		return fromService(err, "portal")
 	}
-	tags, err := s.tagIndex(ctx)
-	if err != nil {
-		return err
-	}
-	folders, err := s.Store.Q.ListFolders(ctx)
-	if err != nil {
-		return err
-	}
-	byID := map[string]db.ConfigFolder{}
-	for _, f := range folders {
-		byID[f.ID] = f
-	}
-	path := func(id string) string {
-		var parts []string
-		for depth := 0; id != "" && depth < 64; depth++ {
-			f, ok := byID[id]
-			if !ok {
-				break
-			}
-			parts = append([]string{f.Name}, parts...)
-			id = f.ParentID.String
-		}
-		out := ""
-		for i, n := range parts {
-			if i > 0 {
-				out += " / "
-			}
-			out += n
-		}
-		return out
-	}
-	out := make([]portalConnectionDTO, 0, len(conns))
-	for _, c := range conns {
-		t := tags[c.ID]
-		if t == nil {
-			t = []string{}
-		}
-		creds := "none"
-		switch {
-		case c.SecretID.Valid:
-			creds = "vault"
-		case c.CredentialMode == "prompt" || c.Protocol == "ssh":
-			creds = "prompt"
-		}
-		up, down := p.Dev, p.Dev
-		if !p.Dev && c.Protocol == "ssh" {
-			grants, err := s.Store.Grants(ctx, p.User.ID, c.ID)
-			if err != nil {
-				return err
-			}
-			for _, g := range grants {
-				up, down = up || g.CanUpload, down || g.CanDownload
-			}
-		}
-		canForward := p.Dev
-		if !p.Dev {
-			canForward, _ = s.Store.CanForward(ctx, p.User.ID, c.ID)
-		}
-		var extra struct {
-			VirtualHost string `json:"virtual_host"`
-			HTTPHost    string `json:"http_host"`
-		}
-		_ = json.Unmarshal([]byte(c.Params), &extra)
-		vhost := extra.VirtualHost
-		if vhost == "" {
-			vhost = extra.HTTPHost
-		}
-		out = append(out, portalConnectionDTO{c.ID, c.Name, c.Protocol, c.Environment, c.Description, path(c.FolderID.String), t, c.Record, creds, up, down, canForward, vhost})
+	out := make([]portalConnectionDTO, 0, len(items))
+	for _, item := range items {
+		out = append(out, toPortalConnectionDTO(item))
 	}
 	return ok(w, out)
 }
