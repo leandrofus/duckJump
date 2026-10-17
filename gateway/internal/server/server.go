@@ -52,6 +52,7 @@ type Server struct {
 	FileSvc        *services.FileService
 	Support        *services.SupportService
 	Portal         *services.PortalService
+	OIDCSvc        *services.OIDCService
 	Hub            *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -172,6 +173,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Portal == nil && s.Store != nil {
 		s.Portal = services.NewPortalService(s.Store)
+	}
+	if s.OIDCSvc == nil && s.Store != nil {
+		s.OIDCSvc = services.NewOIDCService(s.Store)
 	}
 	mux := http.NewServeMux()
 	// Methodless so it does not clash with the /api/ catch-all; static() allows only GET/HEAD.
