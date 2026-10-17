@@ -10,17 +10,19 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/leandrofus/duckjump/gateway/internal/auth"
 	"github.com/leandrofus/duckjump/gateway/internal/edge"
 	"github.com/leandrofus/duckjump/gateway/internal/server"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // userCmd handles `user [ls | add | rm | passwd | enable | disable]`.
 func userCmd(ctx context.Context, st *store.Store, args []string) error {
+	userSvc := services.NewUserService(st)
+
 	if len(args) == 0 || args[0] == "ls" {
-		users, err := st.Q.ListUsers(ctx)
+		users, err := userSvc.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -61,51 +63,33 @@ func userCmd(ctx context.Context, st *store.Store, args []string) error {
 		if *name == "" {
 			return fmt.Errorf("need username: duckjump user add <name> --password <pass>")
 		}
-		if err := auth.CheckPasswordPolicy(*password); err != nil {
-			return err
-		}
-		h, err := auth.HashPassword(*password)
+		u, err := userSvc.Create(ctx, services.CreateUserParams{
+			Username:   *name,
+			Password:   *password,
+			Role:       *role,
+			CallerRole: "superadmin",
+			Actor:      cli,
+		})
 		if err != nil {
 			return err
 		}
-		id := store.NewID()
-		return st.Tx(ctx, func(q *db.Queries) error {
-			if err := q.CreateUser(ctx, db.CreateUserParams{
-				ID: id, Username: strings.ToLower(*name), PasswordHash: store.NullString(h),
-				Source: "local", Role: *role, Now: store.Now(),
-			}); err != nil {
-				return store.Classify(err)
-			}
-			fmt.Printf("user %s created (%s)\n", *name, *role)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "user.create", ObjectType: "user", ObjectID: id,
-				Details: map[string]any{"username": *name, "role": *role},
-			})
-		})
+		fmt.Printf("user %s created (%s)\n", u.Username, u.Role)
+		return nil
 
 	case "rm":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: duckjump user rm <username>")
 		}
 		name := strings.ToLower(rest[0])
-		return st.Tx(ctx, func(q *db.Queries) error {
-			u, err := q.GetUserByUsername(ctx, name)
-			if err != nil {
-				return fmt.Errorf("user %q: %w", name, store.Classify(err))
-			}
-			n, err := q.DeleteUser(ctx, u.ID)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return fmt.Errorf("user %q not found", name)
-			}
-			fmt.Printf("user %s deleted\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "user.delete", ObjectType: "user", ObjectID: u.ID,
-				Details: map[string]any{"username": name},
-			})
-		})
+		u, err := userSvc.GetByUsername(ctx, name)
+		if err != nil {
+			return fmt.Errorf("user %q: %w", name, err)
+		}
+		if err := userSvc.Delete(ctx, cli, "", "superadmin", u.ID); err != nil {
+			return err
+		}
+		fmt.Printf("user %s deleted\n", name)
+		return nil
 
 	case "passwd":
 		fs := flag.NewFlagSet("user passwd", flag.ExitOnError)
@@ -119,29 +103,15 @@ func userCmd(ctx context.Context, st *store.Store, args []string) error {
 		if name == "" {
 			return fmt.Errorf("usage: duckjump user passwd <username> [--password <newpass>]")
 		}
-		if err := auth.CheckPasswordPolicy(*password); err != nil {
-			return err
-		}
-		h, err := auth.HashPassword(*password)
+		u, err := userSvc.GetByUsername(ctx, name)
 		if err != nil {
+			return fmt.Errorf("user %q: %w", name, err)
+		}
+		if err := userSvc.SetPassword(ctx, cli, "superadmin", u.ID, *password); err != nil {
 			return err
 		}
-		return st.Tx(ctx, func(q *db.Queries) error {
-			u, err := q.GetUserByUsername(ctx, name)
-			if err != nil {
-				return fmt.Errorf("user %q: %w", name, store.Classify(err))
-			}
-			if err := q.SetUserPassword(ctx, db.SetUserPasswordParams{
-				ID: u.ID, PasswordHash: store.NullString(h), Now: store.Now(),
-			}); err != nil {
-				return err
-			}
-			fmt.Printf("password updated for user %s\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "user.password_change", ObjectType: "user", ObjectID: u.ID,
-				Details: map[string]any{"username": name},
-			})
-		})
+		fmt.Printf("password updated for user %s\n", name)
+		return nil
 
 	case "disable", "enable":
 		if len(rest) < 1 {
@@ -149,27 +119,24 @@ func userCmd(ctx context.Context, st *store.Store, args []string) error {
 		}
 		name := strings.ToLower(rest[0])
 		disabled := (sub == "disable")
-		return st.Tx(ctx, func(q *db.Queries) error {
-			u, err := q.GetUserByUsername(ctx, name)
-			if err != nil {
-				return fmt.Errorf("user %q: %w", name, store.Classify(err))
-			}
-			if err := q.UpdateUser(ctx, db.UpdateUserParams{
-				ID: u.ID, DisplayName: u.DisplayName, Email: u.Email,
-				Role: u.Role, Disabled: disabled, Now: store.Now(),
-			}); err != nil {
-				return err
-			}
-			status := "enabled"
-			if disabled {
-				status = "disabled"
-			}
-			fmt.Printf("user %s %s\n", name, status)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "user.update", ObjectType: "user", ObjectID: u.ID,
-				Details: map[string]any{"username": name, "disabled": disabled},
-			})
-		})
+		u, err := userSvc.GetByUsername(ctx, name)
+		if err != nil {
+			return fmt.Errorf("user %q: %w", name, err)
+		}
+		if _, err := userSvc.Update(ctx, services.UpdateUserParams{
+			ID:         u.ID,
+			Disabled:   &disabled,
+			CallerRole: "superadmin",
+			Actor:      cli,
+		}); err != nil {
+			return err
+		}
+		status := "enabled"
+		if disabled {
+			status = "disabled"
+		}
+		fmt.Printf("user %s %s\n", name, status)
+		return nil
 
 	default:
 		return fmt.Errorf("usage: duckjump user [ls | add <name> --password <p> | rm <name> | passwd <name> | enable <name> | disable <name>]")

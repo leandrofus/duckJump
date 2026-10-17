@@ -19,6 +19,7 @@ import (
 	"github.com/leandrofus/duckjump/gateway/internal/auth"
 	"github.com/leandrofus/duckjump/gateway/internal/edge"
 	"github.com/leandrofus/duckjump/gateway/internal/objstore"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 	"github.com/leandrofus/duckjump/gateway/internal/vault"
@@ -36,6 +37,7 @@ type Server struct {
 	Store       *store.Store
 	Vault       *vault.Vault
 	Auth        *auth.Service
+	Users       *services.UserService
 	Hub         *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -95,6 +97,9 @@ type Server struct {
 
 func (s *Server) Handler() http.Handler {
 	s.limiter = auth.NewLimiter()
+	if s.Users == nil && s.Store != nil {
+		s.Users = services.NewUserService(s.Store)
+	}
 	if s.SupportHub == nil {
 		s.SupportHub = NewSupportHub()
 	}
@@ -532,6 +537,13 @@ func (o *opt[T]) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	return json.Unmarshal(b, &o.V)
+}
+
+func (o opt[T]) Ptr() *T {
+	if !o.Set {
+		return nil
+	}
+	return &o.V
 }
 
 // tx runs fn in a store transaction.
