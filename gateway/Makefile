@@ -27,7 +27,10 @@ web:
 test:
 	go test ./...
 
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo 0.1.0)
+LDFLAGS := -s -w -X main.version=$(VERSION)
+
 build:
-	go build -o bin/duckjump ./cmd/duckjump-gw
+	go build -ldflags='$(LDFLAGS)' -o bin/duckjump ./cmd/duckjump-gw
 	ln -sf duckjump bin/duckjump-gw
-	CGO_ENABLED=0 go build -ldflags='-s -w' -o bin/duckjump-agent ./cmd/duckjump-agent
+	CGO_ENABLED=0 go build -ldflags='$(LDFLAGS)' -o bin/duckjump-agent ./cmd/duckjump-agent

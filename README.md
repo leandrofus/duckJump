@@ -90,9 +90,24 @@ Running pieces on separate hosts: the gateway ↔ duckjumpd link carries live cr
 
 ## Install
 
+Download from [GitHub Releases](https://github.com/leandrofus/duckJump/releases/latest) or install directly:
+
 ```sh
-make packages      # dist/packages: duckjump and duckjump-agent, as rpm and deb (needs podman or docker)
-sudo dnf install ./duckjump-0.1.0-1.x86_64.rpm     # or: sudo apt install ./duckjump_0.1.0-1_amd64.deb
+# RHEL 9+, Rocky Linux, AlmaLinux, Fedora (x86_64 or aarch64):
+curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest.x86_64.rpm
+sudo dnf install ./duckjump-latest.x86_64.rpm
+
+# Debian 11+, Ubuntu 22.04+ (amd64 or arm64):
+curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump_latest_amd64.deb
+sudo apt install ./duckjump_latest_amd64.deb
+
+# Windows (MSI installer as Administrator service):
+curl.exe -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest-x64.msi
+Start-Process msiexec -Wait -ArgumentList '/i duckjump-latest-x64.msi'
+
+# Portable standalone binary (Linux / macOS):
+curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-linux-amd64
+chmod +x duckjump && ./duckjump serve
 ```
 
 The package creates the service user, generates the vault master key and the internal token (in

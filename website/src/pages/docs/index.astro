@@ -1,6 +1,10 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+import { getLatestTag } from '../../release';
+
 const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+const latestTag = await getLatestTag();
+const versionNum = latestTag.replace(/^v/, '');
 ---
 
 <DocsLayout 
@@ -13,7 +17,7 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
     <!-- Title & Badge -->
     <div>
       <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-mono mb-3">
-        Version 0.1.0 • Stable Core
+        Version <span data-docs-version>{versionNum}</span> • Stable Core
       </div>
       <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
         duckJump Documentation
@@ -82,11 +86,17 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
       </p>
 
       <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-slate-200 space-y-2">
-        <div class="text-slate-500"># For Debian 11+ or Ubuntu 22.04+ (amd64):</div>
-        <div class="text-amber-400">sudo apt install ./duckjump_0.1.0-1_amd64.deb</div>
+        <div class="text-slate-500"># For Debian 11+ or Ubuntu 22.04+ (amd64 / arm64):</div>
+        <div class="text-amber-400">curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump_latest_amd64.deb</div>
+        <div class="text-amber-400">sudo apt install ./duckjump_latest_amd64.deb</div>
         
         <div class="text-slate-500 pt-2"># For RHEL 9+, Rocky Linux, or AlmaLinux 9+:</div>
-        <div class="text-amber-400">sudo dnf install ./duckjump-0.1.0-1.x86_64.rpm</div>
+        <div class="text-amber-400">curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest.x86_64.rpm</div>
+        <div class="text-amber-400">sudo dnf install ./duckjump-latest.x86_64.rpm</div>
+
+        <div class="text-slate-500 pt-2"># For Windows (PowerShell Administrator):</div>
+        <div class="text-amber-400">curl.exe -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest-x64.msi</div>
+        <div class="text-amber-400">Start-Process msiexec -Wait -ArgumentList '/i duckjump-latest-x64.msi'</div>
       </div>
 
       <h3 class="text-lg font-semibold text-white pt-2">What the Package Does Automatically:</h3>
@@ -139,3 +149,22 @@ const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
 
   </div>
 </DocsLayout>
+
+<script>
+  (function updateDocsRelease() {
+    fetch('https://api.github.com/repos/leandrofus/duckJump/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data || !data.tag_name) return;
+        const tag = data.tag_name.replace(/^v/, '');
+        const versionEl = document.querySelector('[data-docs-version]');
+        if (versionEl && versionEl.textContent !== tag) {
+          versionEl.textContent = tag;
+        }
+      })
+      .catch(() => {});
+  })();
+</script>
+
