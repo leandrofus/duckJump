@@ -681,8 +681,11 @@ func grantCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // groupCmd handles `group [ls | add | rm | member]`.
 func groupCmd(ctx context.Context, st *store.Store, args []string) error {
+	grpSvc := services.NewGroupService(st)
+	usrSvc := services.NewUserService(st)
+
 	if len(args) == 0 || args[0] == "ls" {
-		groups, err := st.Q.ListGroups(ctx)
+		groups, err := grpSvc.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -708,43 +711,31 @@ func groupCmd(ctx context.Context, st *store.Store, args []string) error {
 		if name == "" {
 			return fmt.Errorf("usage: duckjump group add <name> [--desc \"...\"]")
 		}
-		id := store.NewID()
-		return st.Tx(ctx, func(q *db.Queries) error {
-			if err := q.CreateGroup(ctx, db.CreateGroupParams{
-				ID: id, Name: name, Description: *desc, Source: "local", Now: store.Now(),
-			}); err != nil {
-				return store.Classify(err)
-			}
-			fmt.Printf("group %s created\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "group.create", ObjectType: "group", ObjectID: id,
-				Details: map[string]any{"name": name},
-			})
+		g, err := grpSvc.Create(ctx, services.CreateGroupParams{
+			Name:        name,
+			Description: *desc,
+			Actor:       cli,
 		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("group %s created\n", g.Name)
+		return nil
 
 	case "rm":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: duckjump group rm <name>")
 		}
 		name := args[1]
-		return st.Tx(ctx, func(q *db.Queries) error {
-			g, err := q.GetGroupByName(ctx, name)
-			if err != nil {
-				return fmt.Errorf("group %q: %w", name, store.Classify(err))
-			}
-			n, err := q.DeleteGroup(ctx, g.ID)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return fmt.Errorf("group %q not found", name)
-			}
-			fmt.Printf("group %s deleted\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "group.delete", ObjectType: "group", ObjectID: g.ID,
-				Details: map[string]any{"name": name},
-			})
-		})
+		g, err := grpSvc.GetByName(ctx, name)
+		if err != nil {
+			return fmt.Errorf("group %q: %w", name, err)
+		}
+		if err := grpSvc.Delete(ctx, cli, g.ID); err != nil {
+			return err
+		}
+		fmt.Printf("group %s deleted\n", name)
+		return nil
 
 	case "member":
 		if len(args) < 3 {
@@ -752,13 +743,13 @@ func groupCmd(ctx context.Context, st *store.Store, args []string) error {
 		}
 		action := args[1]
 		groupName := args[2]
-		g, err := st.Q.GetGroupByName(ctx, groupName)
+		g, err := grpSvc.GetByName(ctx, groupName)
 		if err != nil {
-			return fmt.Errorf("group %q: %w", groupName, store.Classify(err))
+			return fmt.Errorf("group %q: %w", groupName, err)
 		}
 		switch action {
 		case "ls":
-			members, err := st.Q.ListGroupMembers(ctx, g.ID)
+			members, err := grpSvc.ListMembers(ctx, g.ID)
 			if err != nil {
 				return err
 			}
@@ -773,40 +764,29 @@ func groupCmd(ctx context.Context, st *store.Store, args []string) error {
 				return fmt.Errorf("usage: duckjump group member add <group> <user>")
 			}
 			userName := strings.ToLower(args[3])
-			u, err := st.Q.GetUserByUsername(ctx, userName)
+			u, err := usrSvc.GetByUsername(ctx, userName)
 			if err != nil {
-				return fmt.Errorf("user %q: %w", userName, store.Classify(err))
+				return fmt.Errorf("user %q: %w", userName, err)
 			}
-			return st.Tx(ctx, func(q *db.Queries) error {
-				if err := q.AddGroupMember(ctx, db.AddGroupMemberParams{GroupID: g.ID, UserID: u.ID}); err != nil {
-					return err
-				}
-				fmt.Printf("user %s added to group %s\n", userName, groupName)
-				return store.Audit(ctx, q, store.Event{
-					Actor: cli, Action: "group.member_add", ObjectType: "group", ObjectID: g.ID,
-					Details: map[string]any{"group": groupName, "user": userName},
-				})
-			})
+			if err := grpSvc.AddMember(ctx, cli, g.ID, u.ID); err != nil {
+				return err
+			}
+			fmt.Printf("user %s added to group %s\n", userName, groupName)
+			return nil
 		case "rm":
 			if len(args) < 4 {
 				return fmt.Errorf("usage: duckjump group member rm <group> <user>")
 			}
 			userName := strings.ToLower(args[3])
-			u, err := st.Q.GetUserByUsername(ctx, userName)
+			u, err := usrSvc.GetByUsername(ctx, userName)
 			if err != nil {
-				return fmt.Errorf("user %q: %w", userName, store.Classify(err))
+				return fmt.Errorf("user %q: %w", userName, err)
 			}
-			return st.Tx(ctx, func(q *db.Queries) error {
-				_, err := q.RemoveGroupMember(ctx, db.RemoveGroupMemberParams{GroupID: g.ID, UserID: u.ID})
-				if err != nil {
-					return err
-				}
-				fmt.Printf("user %s removed from group %s\n", userName, groupName)
-				return store.Audit(ctx, q, store.Event{
-					Actor: cli, Action: "group.member_remove", ObjectType: "group", ObjectID: g.ID,
-					Details: map[string]any{"group": groupName, "user": userName},
-				})
-			})
+			if err := grpSvc.RemoveMember(ctx, cli, g.ID, u.ID); err != nil {
+				return err
+			}
+			fmt.Printf("user %s removed from group %s\n", userName, groupName)
+			return nil
 		default:
 			return fmt.Errorf("usage: duckjump group member [ls <group> | add <group> <user> | rm <group> <user>]")
 		}

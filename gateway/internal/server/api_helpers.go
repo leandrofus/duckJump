@@ -109,6 +109,10 @@ func fromService(err error, what string) error {
 		return badRequest("%s", err.Error())
 	case errors.Is(err, services.ErrInvalidObjectType):
 		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrGroupSyncedReadOnly):
+		return conflict("%s", err.Error())
+	case errors.Is(err, services.ErrMembershipNotFound):
+		return notFound("membership")
 	default:
 		return fromStore(err, what)
 	}
