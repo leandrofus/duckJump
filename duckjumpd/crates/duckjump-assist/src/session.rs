@@ -143,6 +143,20 @@ enum ActiveInputBackend {
     Wayland(Arc<tokio::sync::Mutex<wayland::WaylandSession>>),
 }
 
+async fn connect_ws(
+    url: &str,
+) -> Result<
+    (
+        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        tokio_tungstenite::tungstenite::handshake::client::Response,
+    ),
+    tokio_tungstenite::tungstenite::Error,
+> {
+    let tls_config = duckjump_net::PinnedCert::new(None).client_config();
+    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(tls_config));
+    tokio_tungstenite::connect_async_tls_with_config(url, None, false, Some(connector)).await
+}
+
 async fn run(cfg: SessionConfig, events: UnboundedSender<Event>) -> anyhow::Result<EndReason> {
     let emit = |e: Event| {
         let _ = events.send(e);
@@ -151,7 +165,7 @@ async fn run(cfg: SessionConfig, events: UnboundedSender<Event>) -> anyhow::Resu
 
     // 1. Control channel
     let control_url = ws_url(&cfg.server, &cfg.token, "control");
-    let (mut control_ws, _) = match tokio_tungstenite::connect_async(&control_url).await {
+    let (mut control_ws, _) = match connect_ws(&control_url).await {
         Ok(ws) => ws,
         Err(e) => {
             let err_str = e.to_string();
@@ -189,7 +203,7 @@ async fn run(cfg: SessionConfig, events: UnboundedSender<Event>) -> anyhow::Resu
 
     // 2. Display channel
     let display_url = ws_url(&cfg.server, &cfg.token, "display");
-    let (display_ws, _) = tokio_tungstenite::connect_async(&display_url)
+    let (display_ws, _) = connect_ws(&display_url)
         .await
         .map_err(|e| anyhow::anyhow!("no se pudo abrir el canal de pantalla: {}", e))?;
     let (mut disp_write, mut disp_read) = display_ws.split();

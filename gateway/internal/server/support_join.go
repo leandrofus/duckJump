@@ -54,8 +54,8 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 			"download_binary_url": downloadBinaryURL,
 			"launch_script_url":   launchScriptURL,
 			"run_ps1_url":         ps1ScriptURL,
-			"curl_command":        fmt.Sprintf("curl -fsSL %s | sh", launchScriptURL),
-			"ps1_command":         fmt.Sprintf("irm %s | iex", ps1ScriptURL),
+			"curl_command":        fmt.Sprintf("curl -fsSLk %s | sh", launchScriptURL),
+			"ps1_command":         fmt.Sprintf("[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}; irm %s | iex", ps1ScriptURL),
 			"manual_command":      fmt.Sprintf("./duckjump-assist --server %s --token %s", baseURL, token),
 			"app_url":             appURL,
 			"app_downloads":       appDownloads,
@@ -420,13 +420,13 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
         </div>
 
         <div id="cmd-linux" class="code-block">
-          <code>curl -fsSL %s | sh</code>
-          <button class="copy-btn" onclick="copyText('curl -fsSL %s | sh', this)">📋 Copiar</button>
+          <code>curl -fsSLk %s | sh</code>
+          <button class="copy-btn" onclick="copyText('curl -fsSLk %s | sh', this)">📋 Copiar</button>
         </div>
 
         <div id="cmd-windows" class="code-block" style="display: none;">
-          <code>irm %s | iex</code>
-          <button class="copy-btn" onclick="copyText('irm %s | iex', this)">📋 Copiar</button>
+          <code>[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}; irm %s | iex</code>
+          <button class="copy-btn" onclick="copyText('[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}; irm %s | iex', this)">📋 Copiar</button>
         </div>
       </div>
 
@@ -668,7 +668,12 @@ $tempBin = Join-Path $tempDir "duckjump-assist.exe"
 
 try {
     Write-Host "==> Descargando agente duckJump Assist..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $BinUrl -OutFile $tempBin -ErrorAction Stop
+    try { [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true} } catch {}
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        Invoke-WebRequest -SkipCertificateCheck -Uri $BinUrl -OutFile $tempBin -ErrorAction Stop
+    } else {
+        Invoke-WebRequest -Uri $BinUrl -OutFile $tempBin -ErrorAction Stop
+    }
 
     # Verificar si es un ejecutable PE de Windows valido (empieza con 'MZ')
     $bytes = [System.IO.File]::ReadAllBytes($tempBin)
@@ -752,9 +757,9 @@ fi
 fetch() { # url file [extra curl args]
   if command -v curl >/dev/null 2>&1; then
     url=$1; out=$2; shift 2
-    curl -fsSL "$@" -o "$out" "$url"
+    curl -fsSLk "$@" -o "$out" "$url"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$2" "$1"
+    wget -q --no-check-certificate -O "$2" "$1"
   else
     echo "Error: ni curl ni wget están disponibles." >&2
     exit 1

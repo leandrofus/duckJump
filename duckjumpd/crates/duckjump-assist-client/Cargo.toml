@@ -19,3 +19,4 @@ sha2 = "0.10"
 url = "2"
 futures.workspace = true
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+duckjump-net = { path = "../duckjump-net" }

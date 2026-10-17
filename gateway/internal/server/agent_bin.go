@@ -116,9 +116,9 @@ mkdir -p /usr/local/bin
 TMP_BIN="/usr/local/bin/duckjump-agent.tmp.$$"
 
 if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$BIN_URL" -o "$TMP_BIN"
+  curl -fsSLk "$BIN_URL" -o "$TMP_BIN"
 elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$TMP_BIN" "$BIN_URL"
+  wget -q --no-check-certificate -O "$TMP_BIN" "$BIN_URL"
 else
   echo "Error: neither curl nor wget is installed." >&2
   exit 1

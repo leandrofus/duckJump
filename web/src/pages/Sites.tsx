@@ -145,10 +145,10 @@ function AgentInstructions({ site, token }: { site?: Site; token: string }) {
   const cleanServer = server.trim() || defaultServer
 
   const serviceCmd = token && token !== '<TOKEN>'
-    ? `curl -fsSL "${installUrl}?token=${encodeURIComponent(token)}&server=${encodeURIComponent(cleanServer)}&allow=${encodeURIComponent(cleanAllow)}" | sudo bash`
-    : `curl -fsSL "${installUrl}?server=${encodeURIComponent(cleanServer)}&allow=${encodeURIComponent(cleanAllow)}" | sudo DUCKJUMP_AGENT_TOKEN="<TOKEN>" bash`
+    ? `curl -fsSLk "${installUrl}?token=${encodeURIComponent(token)}&server=${encodeURIComponent(cleanServer)}&allow=${encodeURIComponent(cleanAllow)}" | sudo bash`
+    : `curl -fsSLk "${installUrl}?server=${encodeURIComponent(cleanServer)}&allow=${encodeURIComponent(cleanAllow)}" | sudo DUCKJUMP_AGENT_TOKEN="<TOKEN>" bash`
 
-  const manualCmd = `curl -fsSL ${downloadUrl} -o duckjump-agent && chmod +x duckjump-agent && \\\n  DUCKJUMP_AGENT_TOKEN=${token} ./duckjump-agent \\\n  -server ${cleanServer} \\\n  -allow ${cleanAllow}`
+  const manualCmd = `curl -fsSLk ${downloadUrl} -o duckjump-agent && chmod +x duckjump-agent && \\\n  DUCKJUMP_AGENT_TOKEN=${token} ./duckjump-agent \\\n  -server ${cleanServer} \\\n  -allow ${cleanAllow}`
 
   const cmd = mode === 'service' ? serviceCmd : manualCmd
 

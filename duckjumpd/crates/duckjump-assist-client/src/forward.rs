@@ -191,7 +191,9 @@ async fn proxy_connection(
         }
     }
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(req)
+    let tls_config = duckjump_net::PinnedCert::new(None).client_config();
+    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(tls_config));
+    let (ws_stream, _) = tokio_tungstenite::connect_async_tls_with_config(req, None, false, Some(connector))
         .await
         .map_err(|e| format!("websocket connect failed to {ws_url}: {e}"))?;
 

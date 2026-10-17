@@ -204,6 +204,7 @@ impl Gateway {
         let base = normalize_server(server)?;
         let jar = Arc::new(Jar::default());
         let http = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
             .cookie_provider(jar.clone())
             .timeout(Duration::from_secs(15))
             .user_agent(concat!("duckjump-assist-app/", env!("CARGO_PKG_VERSION")))
