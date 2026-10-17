@@ -53,21 +53,9 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) err
 	}
 
 	ctx, connID := r.Context(), r.PathValue("id")
-	connRes, err := s.Connections.Get(ctx, connID)
+	conn, err := s.Connections.CheckConnectAccess(ctx, p.actor(), p.User.ID, p.Dev, connID)
 	if err != nil {
 		return fromService(err, "connection")
-	}
-	conn := connRes.Connection
-	if !p.Dev {
-		allowed, err := s.Store.CanConnect(ctx, p.User.ID, connID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "session.denied", ObjectType: "connection", ObjectID: connID,
-				Details: map[string]any{"name": conn.Name}})
-			return errForbidden
-		}
 	}
 	if conn.Protocol == "tcp" {
 		return s.forwardTunnel(w, r, p)
@@ -193,7 +181,7 @@ func (s *Server) resolveCreds(ctx context.Context, ws *websocket.Conn, c db.Conf
 
 // vaultCreds unseals the connection's vaulted credential.
 func (s *Server) vaultCreds(ctx context.Context, c db.ConfigConnection) (sessionCreds, error) {
-	sec, err := s.Store.Q.GetSecret(ctx, c.SecretID.String)
+	sec, err := s.Secrets.Get(ctx, c.SecretID.String)
 	if err != nil {
 		return sessionCreds{}, fmt.Errorf("loading secret: %w", err)
 	}
@@ -281,21 +269,25 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, ls *liveSes
 	// deleted later. Never includes credentials.
 	snap, _ := json.Marshal(map[string]any{"id": c.ID, "name": c.Name, "protocol": c.Protocol, "host": c.Host, "port": c.Port,
 		"site": siteName, "secret": cr.SecretName, "account": cr.Username, "credentials": cr.Source, "record": c.Record, "record_input": c.RecordInput})
-	err = s.tx(ctx, func(q *db.Queries) error {
-		if err := q.StartSessionRecord(ctx, db.StartSessionRecordParams{
-			ID: sessionID, UserID: store.NullString(p.User.ID), Username: p.User.Username, ConnectionID: c.ID,
-			ConnectionSnapshot: string(snap), Site: siteName, ClientIP: p.IP, Recording: store.NullString(recName), Now: store.Now(),
-		}); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "session.start", ObjectType: "session", ObjectID: sessionID,
-			Details: map[string]any{"connection_id": c.ID, "connection": c.Name, "account": cr.Username, "credentials": cr.Source}})
-	})
-	if err != nil {
+	if err := s.Sessions.StartSession(ctx, services.StartSessionParams{
+		SessionID:          sessionID,
+		UserID:             p.User.ID,
+		Username:           p.User.Username,
+		ConnectionID:       c.ID,
+		ConnectionSnapshot: string(snap),
+		Site:               siteName,
+		ClientIP:           p.IP,
+		Recording:          recName,
+		Actor:              p.actor(),
+		AuditDetails: map[string]any{
+			"connection_id": c.ID,
+			"connection":    c.Name,
+			"account":       cr.Username,
+			"credentials":   cr.Source,
+		},
+		Node: s.node(),
+	}); err != nil {
 		return "", fmt.Errorf("audit: %w", err)
-	}
-	if err := s.Sessions.Beat(ctx, sessionID, s.node()); err != nil {
-		log.Error("session heartbeat", "err", err)
 	}
 	reason := "closed"
 	defer func() {
@@ -480,18 +472,12 @@ func (s *Server) joinSession(w http.ResponseWriter, r *http.Request, p principal
 	token := r.URL.Query().Get("token")
 	canAccess := p.Dev || admins[p.User.Role] || ls.userID == p.User.ID || (token != "" && ls.validateShareToken(token))
 	if !canAccess {
-		allowed, err := s.Store.CanConnect(ctx, p.User.ID, ls.connID)
+		allowed, err := s.Connections.CanConnect(ctx, p.User.ID, ls.connID)
 		if err != nil {
 			return err
 		}
 		if !allowed {
-			s.Store.AuditTx(ctx, store.Event{
-				Actor:      p.actor(),
-				Action:     "session.join_denied",
-				ObjectType: "session",
-				ObjectID:   sessionID,
-				Details:    map[string]any{"connection": ls.conn.Name},
-			})
+			_ = s.Sessions.AuditJoinDenied(ctx, p.actor(), sessionID, ls.conn.Name)
 			return errForbidden
 		}
 	}
@@ -517,21 +503,9 @@ func (s *Server) joinSession(w http.ResponseWriter, r *http.Request, p principal
 	log := slog.With("session", sessionID, "user", p.User.Username, "role", "participant")
 	log.Info("joined live session")
 
-	s.Store.AuditTx(ctx, store.Event{
-		Actor:      p.actor(),
-		Action:     "session.join",
-		ObjectType: "session",
-		ObjectID:   sessionID,
-		Details:    map[string]any{"connection": ls.conn.Name, "owner": ls.username},
-	})
+	_ = s.Sessions.AuditJoin(ctx, p.actor(), sessionID, ls.conn.Name, ls.username)
 	defer func() {
-		s.Store.AuditTx(context.WithoutCancel(ctx), store.Event{
-			Actor:      p.actor(),
-			Action:     "session.leave",
-			ObjectType: "session",
-			ObjectID:   sessionID,
-			Details:    map[string]any{"connection": ls.conn.Name},
-		})
+		_ = s.Sessions.AuditLeave(context.WithoutCancel(ctx), p.actor(), sessionID, ls.conn.Name)
 	}()
 
 	ls.addParticipant(lp)
@@ -652,7 +626,7 @@ func (s *Server) getSessionInfo(w http.ResponseWriter, r *http.Request, p princi
 	tok := r.URL.Query().Get("token")
 	canAccess := p.Dev || admins[p.User.Role] || ls.userID == p.User.ID || (tok != "" && ls.validateShareToken(tok))
 	if !canAccess {
-		allowed, err := s.Store.CanConnect(ctx, p.User.ID, ls.connID)
+		allowed, err := s.Connections.CanConnect(ctx, p.User.ID, ls.connID)
 		if err != nil || !allowed {
 			return errForbidden
 		}

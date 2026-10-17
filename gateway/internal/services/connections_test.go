@@ -91,3 +91,81 @@ func TestConnectionService_Lifecycle(t *testing.T) {
 		t.Fatalf("expected store.ErrNotFound, got %v", err)
 	}
 }
+
+func TestConnectionService_CheckForwardAccess(t *testing.T) {
+	st := newTestStore(t)
+	svc := NewConnectionService(st)
+	userSvc := NewUserService(st)
+	ctx := context.Background()
+	actor := store.Actor{Name: "test-admin"}
+
+	u, err := userSvc.Create(ctx, CreateUserParams{
+		Username:   "bob",
+		Password:   "password1234",
+		Role:       "user",
+		CallerRole: "superadmin",
+		Actor:      actor,
+	})
+	if err != nil {
+		t.Fatalf("Create user failed: %v", err)
+	}
+
+	conn, err := svc.Create(ctx, CreateConnectionParams{
+		Name:     "db-proxy",
+		Protocol: "tcp",
+		Host:     "127.0.0.1",
+		Port:     5432,
+		Actor:    actor,
+	})
+	if err != nil {
+		t.Fatalf("Create connection failed: %v", err)
+	}
+
+	// 1. Resolve by name for dev user -> allowed
+	c, err := svc.CheckForwardAccess(ctx, actor, u.ID, true, "db-proxy")
+	if err != nil {
+		t.Fatalf("CheckForwardAccess by name failed: %v", err)
+	}
+	if c.ID != conn.Connection.ID {
+		t.Fatalf("expected conn ID %s, got %s", conn.Connection.ID, c.ID)
+	}
+
+	// 2. Resolve by ID for non-dev user without forward permission -> ErrForbidden
+	_, err = svc.CheckForwardAccess(ctx, actor, u.ID, false, conn.Connection.ID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+
+	// 3. Unknown connection -> store.ErrNotFound
+	_, err = svc.CheckForwardAccess(ctx, actor, u.ID, false, "nonexistent")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected store.ErrNotFound, got %v", err)
+	}
+
+	// 4. CheckConnectAccess
+	// Dev has access
+	connDev, err := svc.CheckConnectAccess(ctx, actor, u.ID, true, conn.Connection.ID)
+	if err != nil {
+		t.Fatalf("CheckConnectAccess for dev failed: %v", err)
+	}
+	if connDev.ID != conn.Connection.ID {
+		t.Fatalf("expected conn ID %s, got %s", conn.Connection.ID, connDev.ID)
+	}
+
+	// Non-dev without access -> ErrForbidden
+	_, err = svc.CheckConnectAccess(ctx, actor, u.ID, false, conn.Connection.ID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+
+	// 5. CanConnect
+	canConn, err := svc.CanConnect(ctx, u.ID, conn.Connection.ID)
+	if err != nil {
+		t.Fatalf("CanConnect failed: %v", err)
+	}
+	if canConn {
+		t.Fatalf("expected canConn to be false for unprivileged user")
+	}
+}
+
+

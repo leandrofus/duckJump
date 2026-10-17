@@ -164,8 +164,10 @@ func fromService(err error, what string) error {
 		return &apiError{http.StatusNotImplemented, "not_configured", "file transfer is not configured on this gateway (-files)"}
 	case errors.Is(err, services.ErrFileTooLarge):
 		return &apiError{http.StatusRequestEntityTooLarge, "too_large", err.Error()}
-	case errors.Is(err, services.ErrFileForbidden):
+	case errors.Is(err, services.ErrFileForbidden), errors.Is(err, services.ErrFileTransferForbidden):
 		return &apiError{http.StatusForbidden, "forbidden", err.Error()}
+	case errors.Is(err, services.ErrFileTransferSSHOnly):
+		return badRequest("%s", err.Error())
 	case errors.Is(err, services.ErrFileNotFound):
 		return notFound("file")
 	case errors.Is(err, services.ErrSupportSessionNotFound):

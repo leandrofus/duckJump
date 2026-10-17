@@ -505,7 +505,7 @@ func (s *Server) checkLive(ctx context.Context) {
 	if len(live) == 0 {
 		return
 	}
-	kills, err := s.Store.Q.ListSessionKills(ctx)
+	kills, err := s.Sessions.ListKills(ctx)
 	if err != nil {
 		slog.Error("checking live sessions", "err", err)
 		return
@@ -536,24 +536,7 @@ func (s *Server) checkLive(ctx context.Context) {
 
 // stillAllowed returns why a live session may no longer run ("" if it may).
 func (s *Server) stillAllowed(ctx context.Context, ls *liveSession) (string, error) {
-	u, err := s.Store.Q.GetUser(ctx, ls.userID)
-	if errors.Is(store.Classify(err), store.ErrNotFound) {
-		return "the user was deleted", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if u.Disabled {
-		return "the user was disabled", nil
-	}
-	ok, err := s.Store.CanConnect(ctx, ls.userID, ls.connID)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "access to this connection expired or was revoked", nil
-	}
-	return "", nil
+	return s.Sessions.CheckSessionAllowed(ctx, ls.userID, ls.connID)
 }
 
 // revalidating re-checks live sessions after admin changes that can take

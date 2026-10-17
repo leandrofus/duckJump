@@ -170,4 +170,39 @@ func TestFileService(t *testing.T) {
 	if purged != 1 {
 		t.Fatalf("expected 1 purged file, got %d", purged)
 	}
+
+	// 9. CheckFileAccess and AuditPush
+	connSvc := NewConnectionService(st)
+	conn, err := connSvc.Create(ctx, CreateConnectionParams{
+		Name:     "ssh-server",
+		Protocol: "ssh",
+		Host:     "127.0.0.1",
+		Port:     22,
+		Actor:    store.Actor{Name: "cli"},
+	})
+	if err != nil {
+		t.Fatalf("Create connection failed: %v", err)
+	}
+
+	// Dev user has access
+	c, err := fileSvc.CheckFileAccess(ctx, u.ID, true, conn.Connection.ID, true, true)
+	if err != nil {
+		t.Fatalf("CheckFileAccess for dev failed: %v", err)
+	}
+	if c.ID != conn.Connection.ID {
+		t.Fatalf("conn ID mismatch: got %q, want %q", c.ID, conn.Connection.ID)
+	}
+
+	// Non-dev user without upload/download permission is forbidden
+	_, err = fileSvc.CheckFileAccess(ctx, u.ID, false, conn.Connection.ID, true, false)
+	if !errors.Is(err, ErrFileTransferForbidden) {
+		t.Fatalf("expected ErrFileTransferForbidden, got %v", err)
+	}
+
+	// AuditPush
+	err = fileSvc.AuditPush(ctx, aliceActor, expiredUploaded, conn.Connection, "/tmp/hello.txt", true)
+	if err != nil {
+		t.Fatalf("AuditPush failed: %v", err)
+	}
 }
+

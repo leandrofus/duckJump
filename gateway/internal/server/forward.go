@@ -21,8 +21,6 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/leandrofus/duckjump/gateway/internal/services"
-	"github.com/leandrofus/duckjump/gateway/internal/store"
-	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 type countingReader struct {
@@ -70,33 +68,9 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 
 func (s *Server) forwardTunnel(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx := r.Context()
-	connID := r.PathValue("id")
-	conn, err := s.Store.Q.GetConnection(ctx, connID)
+	conn, err := s.Connections.CheckForwardAccess(ctx, p.actor(), p.User.ID, p.Dev, r.PathValue("id"))
 	if err != nil {
-		// Try resolving by name
-		cByName, err2 := s.Store.Q.GetConnectionByName(ctx, connID)
-		if err2 == nil {
-			conn = cByName
-		} else {
-			return fromStore(err, "connection")
-		}
-	}
-
-	if !p.Dev {
-		allowed, err := s.Store.CanForward(ctx, p.User.ID, conn.ID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			s.Store.AuditTx(ctx, store.Event{
-				Actor:      p.actor(),
-				Action:     "session.denied",
-				ObjectType: "connection",
-				ObjectID:   conn.ID,
-				Details:    map[string]any{"name": conn.Name, "protocol": conn.Protocol},
-			})
-			return errForbidden
-		}
+		return fromService(err, "connection")
 	}
 
 	targetHost := conn.Host
@@ -215,34 +189,24 @@ func (s *Server) forwardTunnel(w http.ResponseWriter, r *http.Request, p princip
 		auditDetails["virtual_host"] = vhost
 	}
 	snap, _ := json.Marshal(auditDetails)
-	_ = s.tx(ctx, func(q *db.Queries) error {
-		if err := q.StartSessionRecord(ctx, db.StartSessionRecordParams{
-			ID:                 sessionID,
-			UserID:             store.NullString(p.User.ID),
-			Username:           p.User.Username,
-			ConnectionID:       conn.ID,
-			ConnectionSnapshot: string(snap),
-			Site:               siteName,
-			ClientIP:           p.IP,
-			Now:                store.Now(),
-		}); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{
-			Actor:      p.actor(),
-			Action:     "session.start",
-			ObjectType: "session",
-			ObjectID:   sessionID,
-			Details: map[string]any{
-				"connection_id": conn.ID,
-				"connection":    conn.Name,
-				"protocol":      conn.Protocol,
-				"target":        net.JoinHostPort(targetHost, strconv.Itoa(targetPort)),
-				"virtual_host":  vhost,
-			},
-		})
+	_ = s.Sessions.StartSession(ctx, services.StartSessionParams{
+		SessionID:          sessionID,
+		UserID:             p.User.ID,
+		Username:           p.User.Username,
+		ConnectionID:       conn.ID,
+		ConnectionSnapshot: string(snap),
+		Site:               siteName,
+		ClientIP:           p.IP,
+		Actor:              p.actor(),
+		AuditDetails: map[string]any{
+			"connection_id": conn.ID,
+			"connection":    conn.Name,
+			"protocol":      conn.Protocol,
+			"target":        net.JoinHostPort(targetHost, strconv.Itoa(targetPort)),
+			"virtual_host":  vhost,
+		},
+		Node: s.node(),
 	})
-	_ = s.Sessions.Beat(ctx, sessionID, s.node())
 
 	wsConn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	defer wsConn.Close()
@@ -421,32 +385,10 @@ func proxyHTTPStream(ctx context.Context, wsConn, target net.Conn, vhost, scheme
 
 func (s *Server) httpProxy(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx := r.Context()
-	connID := r.PathValue("id")
-	conn, err := s.Store.Q.GetConnection(ctx, connID)
+	idOrName := r.PathValue("id")
+	conn, err := s.Connections.CheckForwardAccess(ctx, p.actor(), p.User.ID, p.Dev, idOrName)
 	if err != nil {
-		cByName, err2 := s.Store.Q.GetConnectionByName(ctx, connID)
-		if err2 == nil {
-			conn = cByName
-		} else {
-			return fromStore(err, "connection")
-		}
-	}
-
-	if !p.Dev {
-		allowed, err := s.Store.CanForward(ctx, p.User.ID, conn.ID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			s.Store.AuditTx(ctx, store.Event{
-				Actor:      p.actor(),
-				Action:     "session.denied",
-				ObjectType: "connection",
-				ObjectID:   conn.ID,
-				Details:    map[string]any{"name": conn.Name, "protocol": conn.Protocol},
-			})
-			return errForbidden
-		}
+		return fromService(err, "connection")
 	}
 
 	targetHost := conn.Host
@@ -486,7 +428,7 @@ func (s *Server) httpProxy(w http.ResponseWriter, r *http.Request, p principal) 
 
 	targetURL, _ := url.Parse(fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(targetHost, strconv.Itoa(targetPort))))
 
-	prefix := fmt.Sprintf("/api/v1/connections/%s/http", connID)
+	prefix := fmt.Sprintf("/api/v1/connections/%s/http", idOrName)
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 	if conn.SiteID.Valid && s.Hub != nil {

@@ -156,3 +156,107 @@ func (s *SessionService) AuditUnshare(ctx context.Context, actor store.Actor, se
 		ObjectID:   sessionID,
 	})
 }
+
+type StartSessionParams struct {
+	SessionID          string
+	UserID             string
+	Username           string
+	ConnectionID       string
+	ConnectionSnapshot string
+	Site               string
+	ClientIP           string
+	Recording          string
+	Actor              store.Actor
+	AuditDetails       map[string]any
+	Node               string
+}
+
+func (s *SessionService) StartSession(ctx context.Context, params StartSessionParams) error {
+	err := s.store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.StartSessionRecord(ctx, db.StartSessionRecordParams{
+			ID:                 params.SessionID,
+			UserID:             store.NullString(params.UserID),
+			Username:           params.Username,
+			ConnectionID:       params.ConnectionID,
+			ConnectionSnapshot: params.ConnectionSnapshot,
+			Site:               params.Site,
+			ClientIP:           params.ClientIP,
+			Recording:          store.NullString(params.Recording),
+			Now:                store.Now(),
+		}); err != nil {
+			return err
+		}
+		return store.Audit(ctx, q, store.Event{
+			Actor:      params.Actor,
+			Action:     "session.start",
+			ObjectType: "session",
+			ObjectID:   params.SessionID,
+			Details:    params.AuditDetails,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if params.Node != "" {
+		_ = s.Beat(ctx, params.SessionID, params.Node)
+	}
+	return nil
+}
+
+func (s *SessionService) AuditJoinDenied(ctx context.Context, actor store.Actor, sessionID, connName string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "session.join_denied",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+		Details:    map[string]any{"connection": connName},
+	})
+}
+
+func (s *SessionService) AuditJoin(ctx context.Context, actor store.Actor, sessionID, connName, ownerName string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "session.join",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+		Details:    map[string]any{"connection": connName, "owner": ownerName},
+	})
+}
+
+func (s *SessionService) AuditLeave(ctx context.Context, actor store.Actor, sessionID, connName string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "session.leave",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+		Details:    map[string]any{"connection": connName},
+	})
+}
+
+func (s *SessionService) ListKills(ctx context.Context) ([]db.AuditSessionKill, error) {
+	return s.store.Q.ListSessionKills(ctx)
+}
+
+func (s *SessionService) CheckSessionAllowed(ctx context.Context, userID, connID string) (string, error) {
+	u, err := s.store.Q.GetUser(ctx, userID)
+	if errors.Is(store.Classify(err), store.ErrNotFound) {
+		return "the user was deleted", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if u.Disabled {
+		return "the user was disabled", nil
+	}
+	ok, err := s.store.CanConnect(ctx, userID, connID)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "access to this connection expired or was revoked", nil
+	}
+	return "", nil
+}
+
+
+

@@ -623,3 +623,62 @@ func (s *ConnectionService) PinHostKey(ctx context.Context, id, hostKey string) 
 	})
 }
 
+func (s *ConnectionService) CheckForwardAccess(ctx context.Context, actor store.Actor, userID string, isDev bool, idOrName string) (db.ConfigConnection, error) {
+	conn, err := s.store.Q.GetConnection(ctx, idOrName)
+	if err != nil {
+		cByName, err2 := s.store.Q.GetConnectionByName(ctx, idOrName)
+		if err2 == nil {
+			conn = cByName
+		} else {
+			return conn, store.Classify(err)
+		}
+	}
+
+	if !isDev {
+		allowed, err := s.store.CanForward(ctx, userID, conn.ID)
+		if err != nil {
+			return conn, err
+		}
+		if !allowed {
+			_ = s.store.AuditTx(ctx, store.Event{
+				Actor:      actor,
+				Action:     "session.denied",
+				ObjectType: "connection",
+				ObjectID:   conn.ID,
+				Details:    map[string]any{"name": conn.Name, "protocol": conn.Protocol},
+			})
+			return conn, ErrForbidden
+		}
+	}
+	return conn, nil
+}
+
+func (s *ConnectionService) CheckConnectAccess(ctx context.Context, actor store.Actor, userID string, isDev bool, connID string) (db.ConfigConnection, error) {
+	conn, err := s.store.Q.GetConnection(ctx, connID)
+	if err != nil {
+		return conn, store.Classify(err)
+	}
+	if !isDev {
+		allowed, err := s.store.CanConnect(ctx, userID, connID)
+		if err != nil {
+			return conn, err
+		}
+		if !allowed {
+			_ = s.store.AuditTx(ctx, store.Event{
+				Actor:      actor,
+				Action:     "session.denied",
+				ObjectType: "connection",
+				ObjectID:   connID,
+				Details:    map[string]any{"name": conn.Name, "protocol": conn.Protocol},
+			})
+			return conn, ErrForbidden
+		}
+	}
+	return conn, nil
+}
+
+func (s *ConnectionService) CanConnect(ctx context.Context, userID, connID string) (bool, error) {
+	return s.store.CanConnect(ctx, userID, connID)
+}
+
+

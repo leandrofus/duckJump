@@ -297,26 +297,9 @@ type fileSession struct {
 // fileAccess checks the caller may move files to (up) or from (down) the
 // connection, or either (list), and returns it.
 func (s *Server) fileAccess(ctx context.Context, p principal, connID string, up, down bool) (db.ConfigConnection, error) {
-	c, err := s.Store.Q.GetConnection(ctx, connID)
+	c, err := s.FileSvc.CheckFileAccess(ctx, p.User.ID, p.Dev, connID, up, down)
 	if err != nil {
-		return c, fromStore(err, "connection")
-	}
-	if c.Protocol != "ssh" {
-		return c, badRequest("file transfer is available on SSH connections")
-	}
-	if p.Dev {
-		return c, nil
-	}
-	canUp, err := s.Store.CanUpload(ctx, p.User.ID, connID)
-	if err != nil {
-		return c, err
-	}
-	canDown, err := s.Store.CanDownload(ctx, p.User.ID, connID)
-	if err != nil {
-		return c, err
-	}
-	if (up && !canUp) || (down && !canDown) || (!up && !down && !canUp && !canDown) {
-		return c, &apiError{http.StatusForbidden, "forbidden", "you may not transfer files with this connection"}
+		return c, fromService(err, "connection")
 	}
 	return c, nil
 }
@@ -514,7 +497,7 @@ func (s *Server) hostList(w http.ResponseWriter, r *http.Request, p principal) e
 //   '201': { description: In the tray, schema: TrayFile }
 
 func (s *Server) hostPull(w http.ResponseWriter, r *http.Request, p principal) error {
-	if s.Files == nil {
+	if !s.FileSvc.Configured() {
 		return errNoFiles
 	}
 	var req hostPullRequest
@@ -570,7 +553,7 @@ func (s *Server) hostPull(w http.ResponseWriter, r *http.Request, p principal) e
 //   '422': Error
 
 func (s *Server) hostPush(w http.ResponseWriter, r *http.Request, p principal) error {
-	if s.Files == nil {
+	if !s.FileSvc.Configured() {
 		return errNoFiles
 	}
 	var req hostPushRequest
@@ -593,7 +576,7 @@ func (s *Server) hostPush(w http.ResponseWriter, r *http.Request, p principal) e
 	if strings.HasSuffix(dest, "/") {
 		dest += f.Name
 	}
-	body, err := s.Files.Open(ctx, f.StorageKey)
+	body, err := s.FileSvc.OpenStore(ctx, f.StorageKey)
 	if err != nil {
 		return err
 	}
@@ -612,9 +595,7 @@ func (s *Server) hostPush(w http.ResponseWriter, r *http.Request, p principal) e
 		slog.Error("tray file changed in storage", "file", f.ID, "want", f.Sha256, "got", got)
 		return fmt.Errorf("file %s does not match its recorded hash", f.ID)
 	}
-	if err := s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "file.push", ObjectType: "file", ObjectID: f.ID,
-		Details: map[string]any{"name": f.Name, "size": f.Size, "sha256": f.Sha256, "connection_id": c.ID, "connection": c.Name,
-			"path": dest, "overwrite": req.Overwrite}}); err != nil {
+	if err := s.FileSvc.AuditPush(ctx, p.actor(), f, c, dest, req.Overwrite); err != nil {
 		return err
 	}
 	return noContent(w)

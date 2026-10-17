@@ -26,8 +26,10 @@ var (
 	ErrFilesNotConfigured = errors.New("file transfer is not configured on this gateway (-files)")
 	ErrInvalidFileName    = errors.New("invalid file name")
 	ErrFileTooLarge       = errors.New("file is too large")
-	ErrFileNotFound       = errors.New("file not found")
-	ErrFileForbidden      = errors.New("you may no longer download files from the host this one came from")
+	ErrFileNotFound          = errors.New("file not found")
+	ErrFileForbidden         = errors.New("you may no longer download files from the host this one came from")
+	ErrFileTransferSSHOnly   = errors.New("file transfer is available on SSH connections")
+	ErrFileTransferForbidden = errors.New("you may not transfer files with this connection")
 )
 
 type FileDeletedError struct {
@@ -377,4 +379,47 @@ func (s *FileService) OpenStore(ctx context.Context, storageKey string) (io.Read
 		return nil, ErrFilesNotConfigured
 	}
 	return fs.Open(ctx, storageKey)
+}
+
+func (s *FileService) CheckFileAccess(ctx context.Context, userID string, isDev bool, connID string, up, down bool) (db.ConfigConnection, error) {
+	c, err := s.store.Q.GetConnection(ctx, connID)
+	if err != nil {
+		return c, store.Classify(err)
+	}
+	if c.Protocol != "ssh" {
+		return c, ErrFileTransferSSHOnly
+	}
+	if isDev {
+		return c, nil
+	}
+	canUp, err := s.store.CanUpload(ctx, userID, connID)
+	if err != nil {
+		return c, err
+	}
+	canDown, err := s.store.CanDownload(ctx, userID, connID)
+	if err != nil {
+		return c, err
+	}
+	if (up && !canUp) || (down && !canDown) || (!up && !down && !canUp && !canDown) {
+		return c, ErrFileTransferForbidden
+	}
+	return c, nil
+}
+
+func (s *FileService) AuditPush(ctx context.Context, actor store.Actor, file db.AuditFile, conn db.ConfigConnection, dest string, overwrite bool) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "file.push",
+		ObjectType: "file",
+		ObjectID:   file.ID,
+		Details: map[string]any{
+			"name":          file.Name,
+			"size":          file.Size,
+			"sha256":        file.Sha256,
+			"connection_id": conn.ID,
+			"connection":    conn.Name,
+			"path":          dest,
+			"overwrite":     overwrite,
+		},
+	})
 }
