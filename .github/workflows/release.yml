@@ -72,19 +72,29 @@ jobs:
 
           # Version-less copies of the packages
           cd dist
-          for f in duckjump-*.rpm; do
+          for f in duckjump-agent-*.rpm; do
             [ -f "$f" ] || continue
             case "$f" in *-latest.*) continue ;; esac
             arch=${f%.rpm}; arch=${arch##*.}
-            pkg_name=${f%%-*}
-            cp "$f" "${pkg_name}-latest.$arch.rpm"
+            cp "$f" "duckjump-agent-latest.$arch.rpm"
           done
-          for f in duckjump_*.deb; do
+          for f in duckjump-*.rpm; do
+            [ -f "$f" ] || continue
+            case "$f" in duckjump-agent-*|*-latest.*) continue ;; esac
+            arch=${f%.rpm}; arch=${arch##*.}
+            cp "$f" "duckjump-latest.$arch.rpm"
+          done
+          for f in duckjump-agent_*.deb; do
             [ -f "$f" ] || continue
             case "$f" in *_latest_*) continue ;; esac
             arch=${f##*_}; arch=${arch%.deb}
-            pkg_name=${f%%_*}
-            cp "$f" "${pkg_name}_latest_$arch.deb"
+            cp "$f" "duckjump-agent_latest_$arch.deb"
+          done
+          for f in duckjump_*.deb; do
+            [ -f "$f" ] || continue
+            case "$f" in duckjump-agent_*|*_latest_*) continue ;; esac
+            arch=${f##*_}; arch=${arch%.deb}
+            cp "$f" "duckjump_latest_$arch.deb"
           done
           ls -l *-latest.* *_latest_* || true
 

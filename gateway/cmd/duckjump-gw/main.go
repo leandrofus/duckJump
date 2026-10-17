@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -182,7 +184,7 @@ func main() {
 
 func serve(ctx context.Context, st *store.Store, args []string, openBrowser bool) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	listen := fs.String("listen", "127.0.0.1:8080", "HTTP listen address")
+	listen := fs.String("listen", "127.0.0.1:8088", "HTTP listen address")
 	allowFlag := fs.String("allow", "", "allowed client IPs, CIDRs or hostnames (comma-separated). Loopback is always allowed")
 	dev := fs.Bool("dev", false, "disable user authentication (PoC only, never expose)")
 	agentListen := fs.String("agent-listen", "", "listen address for edge agents (only /agent/connect), e.g. 0.0.0.0:18443")
@@ -265,10 +267,35 @@ func serve(ctx context.Context, st *store.Store, args []string, openBrowser bool
 		return err
 	}
 	if token == "" {
-		return fmt.Errorf("DUCKJUMPD_TOKEN is required")
+		tokBytes := make([]byte, 16)
+		if _, err := rand.Read(tokBytes); err == nil {
+			tok := hex.EncodeToString(tokBytes)
+			if err := os.WriteFile("duckjumpd.token", []byte(tok+"\n"), 0o600); err == nil {
+				slog.Info("daemon token not configured: generated new token in ./duckjumpd.token")
+				token = tok
+			}
+		}
+		if token == "" {
+			return fmt.Errorf("DUCKJUMPD_TOKEN is required")
+		}
 	}
 	if n, err := st.Q.CountUsers(ctx); err == nil && n == 0 && !*dev {
-		slog.Warn("no users yet: create one with `duckjump user add admin --password ... --role superadmin`")
+		pwBytes := make([]byte, 8)
+		if _, err := rand.Read(pwBytes); err == nil {
+			initPass := hex.EncodeToString(pwBytes)
+			userSvc := services.NewUserService(st)
+			if _, err := userSvc.Create(ctx, services.CreateUserParams{
+				Username: "admin",
+				Password: initPass,
+				Role:     "superadmin",
+			}); err == nil {
+				_ = os.WriteFile("initial-admin-password", []byte(initPass+"\n"), 0o600)
+				fmt.Printf("\n  Initial admin user created:\n    Username: admin\n    Password: %s\n    (saved to ./initial-admin-password)\n\n", initPass)
+			}
+		}
+		if n, _ := st.Q.CountUsers(ctx); n == 0 {
+			slog.Warn("no users yet: create one with `duckjump user add admin --password ... --role superadmin`")
+		}
 	}
 
 	hub := edge.NewHub(st.AgentSiteLookup)
@@ -676,6 +703,11 @@ func openVault() (*vault.Vault, error) {
 		return nil, err
 	}
 	if k == "" {
+		newKey := vault.GenerateKey()
+		if err := os.WriteFile("master.key", []byte(newKey+"\n"), 0o600); err == nil {
+			slog.Info("vault master key not configured: generated new master key in ./master.key")
+			return vault.New(newKey)
+		}
 		return nil, fmt.Errorf("DUCKJUMP_MASTER_KEY is required (generate one with: duckjump keygen)")
 	}
 	return vault.New(k)
