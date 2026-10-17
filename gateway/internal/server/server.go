@@ -50,6 +50,7 @@ type Server struct {
 	Recordings     *services.RecordingService
 	SIEM           *services.SIEMService
 	FileSvc        *services.FileService
+	Support        *services.SupportService
 	Hub            *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -164,6 +165,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.SupportHub == nil {
 		s.SupportHub = NewSupportHub()
+	}
+	if s.Support == nil && s.Store != nil {
+		s.Support = services.NewSupportService(s.Store, s.SupportHub)
 	}
 	mux := http.NewServeMux()
 	// Methodless so it does not clash with the /api/ catch-all; static() allows only GET/HEAD.

@@ -2,13 +2,10 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -18,19 +15,9 @@ import (
 	"github.com/coder/websocket"
 	"github.com/hashicorp/yamux"
 
-	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
-	"github.com/leandrofus/duckjump/gateway/internal/totp"
 )
-
-// generateVerificationCode generates an on-the-fly random 6-digit verification code.
-func generateVerificationCode() string {
-	n, err := rand.Int(rand.Reader, big.NewInt(900000))
-	if err != nil {
-		return fmt.Sprintf("%06d", time.Now().UnixNano()%900000+100000)
-	}
-	return fmt.Sprintf("%06d", n.Int64()+100000)
-}
 
 // openapi:schema CreateSupportSession
 // type: object
@@ -247,6 +234,32 @@ func (h *SupportHub) GetByToken(token string) *activeSupport {
 	return h.byToken[token]
 }
 
+func (h *SupportHub) CloseAndUnregisterByToken(token string) {
+	if a := h.GetByToken(token); a != nil {
+		a.close()
+		h.Unregister(a)
+	}
+}
+
+func (h *SupportHub) CloseAndUnregisterByID(id string) {
+	if a := h.Get(id); a != nil {
+		a.close()
+		h.Unregister(a)
+	}
+}
+
+func (h *SupportHub) NotifyVerified(id string) {
+	if a := h.Get(id); a != nil {
+		a.verified = true
+		if a.controlConn != nil {
+			_ = json.NewEncoder(a.controlConn).Encode(map[string]any{
+				"type":          "code_verified",
+				"totp_verified": true,
+			})
+		}
+	}
+}
+
 func (s *Server) toSupportSessionDTO(r db.ConfigSupportSession) supportSessionDTO {
 	joinURL := fmt.Sprintf("%s/support/join/%s", strings.TrimRight(s.FrontendURL, "/"), r.Token)
 	return supportSessionDTO{
@@ -282,57 +295,15 @@ func (s *Server) createSupportSession(w http.ResponseWriter, r *http.Request, p 
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	if strings.TrimSpace(req.TargetName) == "" {
-		return badRequest("target_name is required")
-	}
-	ttl := 30 * time.Minute
-	if req.TTLMinutes > 0 {
-		ttl = time.Duration(req.TTLMinutes) * time.Minute
-	}
-
-	tokenBytes := make([]byte, 16)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return err
-	}
-	token := hex.EncodeToString(tokenBytes)
-	verificationCode := generateVerificationCode()
-	id := store.NewID()
-	now := store.Now()
-	expiresAt := now.Add(ttl)
-
-	ctx := r.Context()
-	err := s.Store.Q.CreateSupportSession(ctx, db.CreateSupportSessionParams{
-		ID:         id,
-		Token:      token,
-		CreatedBy:  p.User.ID,
-		TargetName: strings.TrimSpace(req.TargetName),
-		Reason:     strings.TrimSpace(req.Reason),
-		Ticket:     strings.TrimSpace(req.Ticket),
-		TotpSecret: verificationCode,
-		ExpiresAt:  expiresAt,
-		Now:        now,
+	sess, err := s.Support.CreateSession(r.Context(), p.actor(), p.User.ID, services.CreateSupportSessionParams{
+		TargetName: req.TargetName,
+		Reason:     req.Reason,
+		Ticket:     req.Ticket,
+		TTLMinutes: req.TTLMinutes,
 	})
 	if err != nil {
-		return fromStore(err, "support_session")
+		return fromService(err, "support_session")
 	}
-
-	sess, err := s.Store.Q.GetSupportSession(ctx, id)
-	if err != nil {
-		return fromStore(err, "support_session")
-	}
-
-	s.Store.AuditTx(ctx, store.Event{
-		Actor:      p.actor(),
-		Action:     "support_session.created",
-		ObjectType: "support_session",
-		ObjectID:   id,
-		Details: map[string]any{
-			"target_name": req.TargetName,
-			"ticket":      req.Ticket,
-			"expires_at":  expiresAt.Format(time.RFC3339),
-		},
-	})
-
 	return created(w, s.toSupportSessionDTO(sess))
 }
 
@@ -369,69 +340,23 @@ func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, badRequest("%s", err.Error()))
 		return
 	}
-	if strings.TrimSpace(req.TargetName) == "" {
-		req.TargetName = p.User.Username
-	}
-	ttl := 30 * time.Minute
-
-	tokenBytes := make([]byte, 16)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		writeErr(w, err)
-		return
-	}
-	token := hex.EncodeToString(tokenBytes)
-	verificationCode := generateVerificationCode()
-	id := store.NewID()
-	now := store.Now()
-	expiresAt := now.Add(ttl)
-
-	ctx := r.Context()
-	createdBy := p.User.ID
-
-	target := strings.TrimSpace(req.TargetName)
-	if req.Domain != "" && !strings.Contains(target, `\`) && !strings.Contains(target, `@`) {
-		target = fmt.Sprintf(`%s\%s`, req.Domain, target)
-	}
-
-	err = s.Store.Q.CreateSupportSession(ctx, db.CreateSupportSessionParams{
-		ID:         id,
-		Token:      token,
-		CreatedBy:  createdBy,
-		TargetName: target,
-		Reason:     strings.TrimSpace(req.Reason),
-		Ticket:     strings.TrimSpace(req.Ticket),
-		TotpSecret: verificationCode,
-		ExpiresAt:  expiresAt,
-		Now:        now,
+	sess, code, err := s.Support.RequestSession(r.Context(), p.actor(), p.User.ID, p.User.Username, services.RequestSupportSessionParams{
+		TargetName:  req.TargetName,
+		Reason:      req.Reason,
+		Ticket:      req.Ticket,
+		AccountType: req.AccountType,
+		Domain:      req.Domain,
+		Hostname:    req.Hostname,
+		ClientOS:    req.ClientOS,
 	})
 	if err != nil {
-		writeErr(w, fromStore(err, "support_session"))
-		return
-	}
-
-	sess, err := s.Store.Q.GetSupportSession(ctx, id)
-	if err != nil {
-		writeErr(w, fromStore(err, "support_session"))
+		writeErr(w, fromService(err, "support_session"))
 		return
 	}
 
 	dto := s.toSupportSessionDTO(sess)
-	dto.TotpSecret = verificationCode
-	dto.VerificationCode = verificationCode
-
-	s.Store.AuditTx(ctx, store.Event{
-		Actor:      p.actor(),
-		Action:     "support_session.requested",
-		ObjectType: "support_session",
-		ObjectID:   id,
-		Details: map[string]any{
-			"target_name":  target,
-			"ticket":       req.Ticket,
-			"account_type": req.AccountType,
-			"hostname":     req.Hostname,
-			"client_os":    req.ClientOS,
-		},
-	})
+	dto.TotpSecret = code
+	dto.VerificationCode = code
 
 	_ = created(w, dto)
 }
@@ -446,14 +371,9 @@ func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getSupportStatusByToken(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	if token == "" {
-		writeErr(w, badRequest("token is required"))
-		return
-	}
-	ctx := r.Context()
-	sess, err := s.Store.Q.GetSupportSessionByToken(ctx, token)
+	sess, err := s.Support.GetStatusByToken(r.Context(), token)
 	if err != nil {
-		writeErr(w, notFound("support session not found"))
+		writeErr(w, fromService(err, "support_session"))
 		return
 	}
 	ok(w, supportStatusDTO{
@@ -487,25 +407,9 @@ func (s *Server) endSupportSessionByToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	token := r.PathValue("token")
-	if token == "" {
-		writeErr(w, badRequest("token is required"))
+	if err := s.Support.EndByToken(r.Context(), token); err != nil {
+		writeErr(w, fromService(err, "support_session"))
 		return
-	}
-	ctx := r.Context()
-	sess, err := s.Store.Q.GetSupportSessionByToken(ctx, token)
-	if err != nil {
-		writeErr(w, notFound("support session not found"))
-		return
-	}
-	now := store.Now()
-	_ = s.Store.Q.EndSupportSession(ctx, db.EndSupportSessionParams{
-		ID:          sess.ID,
-		Now:         store.NullTime(now),
-		EndedReason: "client_ended",
-	})
-	if active := s.SupportHub.GetByToken(token); active != nil {
-		active.close()
-		s.SupportHub.Unregister(active)
 	}
 	ok(w, supportEnded{Status: "ended"})
 }
@@ -525,12 +429,9 @@ func (s *Server) listSupportSessions(w http.ResponseWriter, r *http.Request, p p
 	}
 	status := r.URL.Query().Get("status")
 
-	rows, err := s.Store.Q.ListSupportSessions(ctx, db.ListSupportSessionsParams{
-		CreatedBy: createdBy,
-		Status:    status,
-	})
+	rows, err := s.Support.ListSessions(ctx, createdBy, status)
 	if err != nil {
-		return fromStore(err, "support_session")
+		return fromService(err, "support_session")
 	}
 
 	out := make([]supportSessionDTO, 0, len(rows))
@@ -547,11 +448,9 @@ func (s *Server) listSupportSessions(w http.ResponseWriter, r *http.Request, p p
 //   '200': { description: OK, schema: SupportSession }
 
 func (s *Server) getSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx := r.Context()
-	id := r.PathValue("id")
-	sess, err := s.Store.Q.GetSupportSession(ctx, id)
+	sess, err := s.Support.GetSession(r.Context(), r.PathValue("id"))
 	if err != nil {
-		return fromStore(err, "support_session")
+		return fromService(err, "support_session")
 	}
 	return ok(w, s.toSupportSessionDTO(sess))
 }
@@ -570,69 +469,9 @@ func (s *Server) verifySupportTOTP(w http.ResponseWriter, r *http.Request, p pri
 		return err
 	}
 
-	ctx := r.Context()
-	id := r.PathValue("id")
-	sess, err := s.Store.Q.GetSupportSession(ctx, id)
+	updated, err := s.Support.VerifyTOTP(r.Context(), p.actor(), r.PathValue("id"), req.Code)
 	if err != nil {
-		return fromStore(err, "support_session")
-	}
-
-	if sess.Status != "connected" && sess.Status != "pending" {
-		return badRequest("session cannot be verified in status %s", sess.Status)
-	}
-
-	cleanCode := strings.ReplaceAll(strings.TrimSpace(req.Code), " ", "")
-	cleanSecret := strings.ReplaceAll(strings.TrimSpace(sess.TotpSecret), " ", "")
-
-	// Direct match for on-the-fly verification code
-	valid := cleanCode != "" && cleanCode == cleanSecret
-	if !valid {
-		// Fallback for legacy RFC6238 TOTP secrets
-		valid = totp.Validate(sess.TotpSecret, cleanCode, time.Now())
-	}
-
-	if !valid {
-		s.Store.AuditTx(ctx, store.Event{
-			Actor:      p.actor(),
-			Action:     "support_session.verify_failed",
-			ObjectType: "support_session",
-			ObjectID:   id,
-		})
-		return badRequest("invalid verification code")
-	}
-
-	now := store.Now()
-	if err := s.Store.Q.ActivateSupportSession(ctx, db.ActivateSupportSessionParams{
-		ID:  id,
-		Now: store.NullTime(now),
-	}); err != nil {
-		return fromStore(err, "support_session")
-	}
-
-	// Notify active support session if connected
-	if a := s.SupportHub.Get(id); a != nil {
-		a.verified = true
-		if a.controlConn != nil {
-			_ = json.NewEncoder(a.controlConn).Encode(map[string]any{
-				"type":          "code_verified",
-				"totp_verified": true,
-			})
-		}
-	}
-
-	s.Store.AuditTx(ctx, store.Event{
-		Actor:      p.actor(),
-		Action:     "support_session.totp_verified",
-		ObjectType: "support_session",
-		ObjectID:   id,
-		Details: map[string]any{
-			"activated_at": now.Format(time.RFC3339),
-		},
-	})
-
-	updated, err := s.Store.Q.GetSupportSession(ctx, id)
-	if err != nil {
-		return fromStore(err, "support_session")
+		return fromService(err, "support_session")
 	}
 	return ok(w, s.toSupportSessionDTO(updated))
 }
@@ -644,33 +483,9 @@ func (s *Server) verifySupportTOTP(w http.ResponseWriter, r *http.Request, p pri
 //   '200': { description: Session ended, schema: SupportSession }
 
 func (s *Server) endSupportSession(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx := r.Context()
-	id := r.PathValue("id")
-	now := store.Now()
-
-	if a := s.SupportHub.Get(id); a != nil {
-		a.close()
-		s.SupportHub.Unregister(a)
-	}
-
-	if err := s.Store.Q.EndSupportSession(ctx, db.EndSupportSessionParams{
-		ID:          id,
-		Now:         store.NullTime(now),
-		EndedReason: "operator_ended",
-	}); err != nil {
-		return fromStore(err, "support_session")
-	}
-
-	s.Store.AuditTx(ctx, store.Event{
-		Actor:      p.actor(),
-		Action:     "support_session.ended",
-		ObjectType: "support_session",
-		ObjectID:   id,
-	})
-
-	updated, err := s.Store.Q.GetSupportSession(ctx, id)
+	updated, err := s.Support.EndSession(r.Context(), p.actor(), r.PathValue("id"))
 	if err != nil {
-		return fromStore(err, "support_session")
+		return fromService(err, "support_session")
 	}
 	return ok(w, s.toSupportSessionDTO(updated))
 }
@@ -690,7 +505,7 @@ func (s *Server) ServeSupportAgentTunnel(w http.ResponseWriter, r *http.Request)
 	}
 
 	ctx := r.Context()
-	sess, err := s.Store.Q.GetSupportSessionByToken(ctx, token)
+	sess, err := s.Support.GetStatusByToken(ctx, token)
 	if err != nil {
 		http.Error(w, "invalid or expired token", http.StatusNotFound)
 		return
@@ -791,14 +606,7 @@ func (s *Server) ServeSupportAgentTunnel(w http.ResponseWriter, r *http.Request)
 // cannot get back in on the old one. Ending a session is the operator's or
 // the user's explicit call (…/end), or its expiry.
 func (s *Server) releaseSupportSession(sess db.ConfigSupportSession) {
-	ctx := context.Background()
-	if time.Now().After(sess.ExpiresAt) {
-		_ = s.Store.Q.EndSupportSession(ctx, db.EndSupportSessionParams{
-			ID: sess.ID, Now: store.NullTime(time.Now()), EndedReason: "expired",
-		})
-		return
-	}
-	_ = s.Store.Q.ReleaseSupportSession(ctx, db.ReleaseSupportSessionParams{ID: sess.ID, TotpSecret: generateVerificationCode()})
+	_ = s.Support.ReleaseSession(context.Background(), sess)
 }
 
 func (s *Server) handleAgentStream(sessionID string, active *activeSupport, stream net.Conn, clientIP string) {
@@ -818,13 +626,7 @@ func (s *Server) handleAgentStream(sessionID string, active *activeSupport, stre
 	switch header.Stream {
 	case "control":
 		active.controlConn = stream
-		_ = s.Store.Q.MarkSupportSessionConnected(context.Background(), db.MarkSupportSessionConnectedParams{
-			ID:             sessionID,
-			Now:            store.NullTime(time.Now()),
-			ClientIP:       clientIP,
-			ClientOs:       header.OS,
-			ClientHostname: header.Hostname,
-		})
+		_ = s.Support.MarkConnected(context.Background(), sessionID, clientIP, header.OS, header.Hostname)
 		// Keep control stream alive and read events
 		var msg map[string]any
 		for dec.Decode(&msg) == nil {

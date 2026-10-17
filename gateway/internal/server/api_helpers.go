@@ -140,7 +140,10 @@ func fromService(err error, what string) error {
 		errors.Is(err, services.ErrAccessRequestEndInPast),
 		errors.Is(err, services.ErrRetentionDaysInvalid),
 		errors.Is(err, services.ErrSIEMEndpointRequired),
-		errors.Is(err, services.ErrInvalidFileName):
+		errors.Is(err, services.ErrInvalidFileName),
+		errors.Is(err, services.ErrTargetNameRequired),
+		errors.Is(err, services.ErrTokenRequired),
+		errors.Is(err, services.ErrInvalidVerificationCode):
 		return badRequest("%s", err.Error())
 	case errors.Is(err, services.ErrFilesNotConfigured):
 		return &apiError{http.StatusNotImplemented, "not_configured", "file transfer is not configured on this gateway (-files)"}
@@ -150,6 +153,8 @@ func fromService(err error, what string) error {
 		return &apiError{http.StatusForbidden, "forbidden", err.Error()}
 	case errors.Is(err, services.ErrFileNotFound):
 		return notFound("file")
+	case errors.Is(err, services.ErrSupportSessionNotFound):
+		return notFound("support session not found")
 	default:
 		var notEmptyErr *services.FolderNotEmptyError
 		if errors.As(err, &notEmptyErr) {
@@ -162,6 +167,10 @@ func fromService(err error, what string) error {
 		var fileDelErr *services.FileDeletedError
 		if errors.As(err, &fileDelErr) {
 			return &apiError{http.StatusGone, "deleted", fileDelErr.Error()}
+		}
+		var invalidStatusErr *services.InvalidSupportStatusError
+		if errors.As(err, &invalidStatusErr) {
+			return badRequest("%s", invalidStatusErr.Error())
 		}
 		return fromStore(err, what)
 	}
