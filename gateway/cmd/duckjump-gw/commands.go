@@ -14,7 +14,6 @@ import (
 	"github.com/leandrofus/duckjump/gateway/internal/server"
 	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
-	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 // userCmd handles `user [ls | add | rm | passwd | enable | disable]`.
@@ -915,6 +914,8 @@ func requestCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // auditCmd handles `audit [ls | verify | seal]`.
 func auditCmd(ctx context.Context, st *store.Store, args []string) error {
+	auditSvc := services.NewAuditService(st)
+
 	if len(args) == 0 || args[0] == "ls" {
 		fs := flag.NewFlagSet("audit ls", flag.ExitOnError)
 		lim := fs.Int64("limit", 50, "max events to show")
@@ -925,8 +926,8 @@ func auditCmd(ctx context.Context, st *store.Store, args []string) error {
 		}
 		fs.Parse(rest)
 
-		events, err := st.Q.ListAuditEvents(ctx, db.ListAuditEventsParams{
-			Lim:    *lim,
+		events, err := auditSvc.ListEvents(ctx, services.ListAuditEventsParams{
+			Limit:  *lim,
 			Action: *action,
 		})
 		if err != nil {
@@ -950,7 +951,7 @@ func auditCmd(ctx context.Context, st *store.Store, args []string) error {
 
 	switch args[0] {
 	case "verify":
-		res, err := st.VerifyAudit(ctx)
+		res, err := auditSvc.Verify(ctx)
 		if err != nil {
 			return err
 		}
@@ -974,7 +975,8 @@ func auditCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // recordingCmd handles `recording [ls]`.
 func recordingCmd(ctx context.Context, st *store.Store, args []string) error {
-	recs, err := st.Q.LiveRecordings(ctx)
+	sessionSvc := services.NewSessionService(st)
+	recs, err := sessionSvc.LiveRecordings(ctx)
 	if err != nil {
 		return err
 	}
@@ -1010,20 +1012,13 @@ func sessionCmd(ctx context.Context, st *store.Store, args []string) error {
 		if *id == "" {
 			return fmt.Errorf("usage: duckjump session kill <session-id> [--reason \"...\"]")
 		}
-		return st.Tx(ctx, func(q *db.Queries) error {
-			x, err := q.GetSessionRecord(ctx, *id)
-			if err != nil {
-				return fmt.Errorf("session %q: %w", *id, store.Classify(err))
-			}
-			if x.EndedAt.Valid {
-				return fmt.Errorf("session %s already ended", *id)
-			}
-			if err := server.RequestKill(ctx, q, x.ID, cli, *reason); err != nil {
-				return err
-			}
-			fmt.Printf("termination of %s (%s) requested; the gateway ends it within %s\n", x.ID, x.Username, server.SuperviseInterval)
-			return nil
-		})
+		sessionSvc := services.NewSessionService(st)
+		x, err := sessionSvc.RequestKill(ctx, cli, *id, *reason)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("termination of %s (%s) requested; the gateway ends it within %s\n", x.ID, x.Username, server.SuperviseInterval)
+		return nil
 	default:
 		return fmt.Errorf("usage: duckjump session [ls | kill <id>]")
 	}

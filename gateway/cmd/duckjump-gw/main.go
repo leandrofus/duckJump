@@ -27,6 +27,7 @@ import (
 	"github.com/leandrofus/duckjump/gateway/internal/envcompat"
 	"github.com/leandrofus/duckjump/gateway/internal/objstore"
 	"github.com/leandrofus/duckjump/gateway/internal/server"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 	"github.com/leandrofus/duckjump/gateway/internal/vault"
@@ -569,7 +570,8 @@ func approveKey(ctx context.Context, st *store.Store, args []string) error {
 }
 
 func listSessions(ctx context.Context, st *store.Store, args []string) error {
-	rows, err := st.Q.ListSessionRecords(ctx, db.ListSessionRecordsParams{ActiveOnly: true, Lim: 500})
+	sessionSvc := services.NewSessionService(st)
+	rows, err := sessionSvc.List(ctx, services.ListSessionsParams{ActiveOnly: true, Limit: 500})
 	if err != nil {
 		return err
 	}
@@ -592,24 +594,18 @@ func killSession(ctx context.Context, st *store.Store, args []string) error {
 	id := fs.String("session", "", "session id (see `duckjump session ls`)")
 	reason := fs.String("reason", "", "shown to the user and audited")
 	fs.Parse(args)
-	return st.Tx(ctx, func(q *db.Queries) error {
-		x, err := q.GetSessionRecord(ctx, *id)
-		if err != nil {
-			return fmt.Errorf("session %q: %w", *id, store.Classify(err))
-		}
-		if x.EndedAt.Valid {
-			return fmt.Errorf("session %s already ended", *id)
-		}
-		if err := server.RequestKill(ctx, q, x.ID, cli, *reason); err != nil {
-			return err
-		}
-		fmt.Printf("termination of %s (%s) requested; the gateway ends it within %s\n", x.ID, x.Username, server.SuperviseInterval)
-		return nil
-	})
+	sessionSvc := services.NewSessionService(st)
+	x, err := sessionSvc.RequestKill(ctx, cli, *id, *reason)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("termination of %s (%s) requested; the gateway ends it within %s\n", x.ID, x.Username, server.SuperviseInterval)
+	return nil
 }
 
 func auditSeal(ctx context.Context, st *store.Store, args []string) error {
-	res, err := st.VerifyAudit(ctx)
+	auditSvc := services.NewAuditService(st)
+	res, err := auditSvc.Verify(ctx)
 	if err != nil {
 		return err
 	}
@@ -620,7 +616,7 @@ func auditSeal(ctx context.Context, st *store.Store, args []string) error {
 	if res.BrokenAt != 0 {
 		return fmt.Errorf("the hash chain is broken at event %d (%s): refusing to seal it", res.BrokenAt, res.Reason)
 	}
-	n, err := st.SealAudit(ctx, cli)
+	n, err := auditSvc.Seal(ctx, cli)
 	if err != nil {
 		return err
 	}

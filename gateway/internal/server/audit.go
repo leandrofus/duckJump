@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
-	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 func limitParam(r *http.Request) (int64, error) {
@@ -46,11 +46,15 @@ func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request, p princ
 			return badRequest("before_id must be an integer")
 		}
 	}
-	rows, err := s.Store.Q.ListAuditEvents(r.Context(), db.ListAuditEventsParams{
-		BeforeID: before, ActorID: q.Get("actor_id"), Action: q.Get("action"), ObjectID: q.Get("object_id"), Lim: lim,
+	rows, err := s.Audit.ListEvents(r.Context(), services.ListAuditEventsParams{
+		BeforeID: before,
+		ActorID:  q.Get("actor_id"),
+		Action:   q.Get("action"),
+		ObjectID: q.Get("object_id"),
+		Limit:    lim,
 	})
 	if err != nil {
-		return err
+		return fromService(err, "audit")
 	}
 	out := make([]auditEventDTO, 0, len(rows))
 	for _, e := range rows {
@@ -67,11 +71,13 @@ func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request, p princ
 //   '200': { description: Verification result, schema: AuditVerification }
 
 func (s *Server) verifyAudit(w http.ResponseWriter, r *http.Request, p principal) error {
-	res, err := s.Store.VerifyAudit(r.Context())
-	if err != nil {
-		return err
-	}
-	return ok(w, res)
+	return handleOK(w, func() (store.VerifyResult, error) {
+		res, err := s.Audit.Verify(r.Context())
+		if err != nil {
+			return store.VerifyResult{}, fromService(err, "audit")
+		}
+		return res, nil
+	})
 }
 
 // openapi:operation
@@ -93,19 +99,24 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request, p principa
 	if err != nil {
 		return err
 	}
-	params := db.ListSessionRecordsParams{UserID: q.Get("user_id"), ConnectionID: q.Get("connection_id"),
-		ActiveOnly: q.Get("active") == "true", Lim: lim}
+	var before *time.Time
 	if v := q.Get("before"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
 			return badRequest("before must be RFC 3339")
 		}
-		params.HasBefore, params.Before = true, store.TS(t)
+		before = &t
 	}
 	ctx := r.Context()
-	rows, err := s.Store.Q.ListSessionRecords(ctx, params)
+	rows, err := s.Sessions.List(ctx, services.ListSessionsParams{
+		UserID:       q.Get("user_id"),
+		ConnectionID: q.Get("connection_id"),
+		ActiveOnly:   q.Get("active") == "true",
+		Before:       before,
+		Limit:        lim,
+	})
 	if err != nil {
-		return err
+		return fromService(err, "session")
 	}
 	days, err := s.RetentionDays(ctx)
 	if err != nil {
@@ -115,7 +126,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request, p principa
 	for _, x := range rows {
 		var pt time.Time
 		if x.Recording.Valid {
-			if p, err := s.Store.Q.GetRecordingPurge(ctx, x.ID); err == nil {
+			if p, err := s.Sessions.GetPurge(ctx, x.ID); err == nil {
 				pt = p.PurgedAt
 			}
 		}
@@ -132,16 +143,16 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request, p principa
 
 func (s *Server) getSessionRecord(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx := r.Context()
-	x, err := s.Store.Q.GetSessionRecord(ctx, r.PathValue("id"))
+	x, err := s.Sessions.Get(ctx, r.PathValue("id"))
 	if err != nil {
-		return fromStore(err, "session")
+		return fromService(err, "session")
 	}
 	days, err := s.RetentionDays(ctx)
 	if err != nil {
 		return err
 	}
 	var pt time.Time
-	if p, err := s.Store.Q.GetRecordingPurge(ctx, x.ID); err == nil {
+	if p, err := s.Sessions.GetPurge(ctx, x.ID); err == nil {
 		pt = p.PurgedAt
 	}
 	d := toSession(x, pt, days)

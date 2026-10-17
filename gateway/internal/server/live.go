@@ -608,18 +608,8 @@ func (s *Server) terminateSession(w http.ResponseWriter, r *http.Request, p prin
 		return badRequest("reason is too long")
 	}
 	ctx, id := r.Context(), r.PathValue("id")
-	err := s.tx(ctx, func(q *db.Queries) error {
-		x, err := q.GetSessionRecord(ctx, id)
-		if err != nil {
-			return fromStore(err, "session")
-		}
-		if x.EndedAt.Valid {
-			return conflict("the session already ended")
-		}
-		return RequestKill(ctx, q, id, p.actor(), req.Reason)
-	})
-	if err != nil {
-		return err
+	if _, err := s.Sessions.RequestKill(ctx, p.actor(), id, req.Reason); err != nil {
+		return fromService(err, "session")
 	}
 	if ls := s.live.get(id); ls != nil {
 		msg := "terminated by " + p.User.Username

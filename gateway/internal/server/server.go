@@ -45,6 +45,9 @@ type Server struct {
 	Secrets        *services.SecretService
 	Sites          *services.SiteService
 	AccessRequests *services.AccessRequestService
+	Audit          *services.AuditService
+	Sessions       *services.SessionService
+	Recordings     *services.RecordingService
 	Hub            *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -127,6 +130,22 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.AccessRequests == nil && s.Store != nil {
 		s.AccessRequests = services.NewAccessRequestService(s.Store, s.Policies)
+	}
+	if s.Audit == nil && s.Store != nil {
+		s.Audit = services.NewAuditService(s.Store)
+	}
+	if s.Sessions == nil && s.Store != nil {
+		s.Sessions = services.NewSessionService(s.Store)
+	}
+	if s.Recordings == nil && s.Store != nil {
+		s.Recordings = services.NewRecordingServiceWithFuncs(s.Store, func() string {
+			return s.RecordingsDir
+		}, func() services.RecordingObjectStore {
+			if s.Objects == nil {
+				return nil
+			}
+			return s.Objects
+		})
 	}
 	if s.SupportHub == nil {
 		s.SupportHub = NewSupportHub()
