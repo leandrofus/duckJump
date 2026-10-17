@@ -42,6 +42,7 @@ type Server struct {
 	Policies    *services.PolicyService
 	Groups      *services.GroupService
 	Folders     *services.FolderService
+	Secrets     *services.SecretService
 	Hub         *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -115,6 +116,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Folders == nil && s.Store != nil {
 		s.Folders = services.NewFolderService(s.Store)
+	}
+	if s.Secrets == nil && s.Store != nil {
+		s.Secrets = services.NewSecretService(s.Store, s.Vault)
 	}
 	if s.SupportHub == nil {
 		s.SupportHub = NewSupportHub()

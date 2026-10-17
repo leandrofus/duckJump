@@ -351,7 +351,8 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 // secretCmd handles `secret [ls | add | rm]`.
 func secretCmd(ctx context.Context, st *store.Store, args []string) error {
 	if len(args) == 0 || args[0] == "ls" {
-		secs, err := st.Q.ListSecrets(ctx)
+		svc := services.NewSecretService(st, nil)
+		secs, err := svc.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -389,51 +390,40 @@ func secretCmd(ctx context.Context, st *store.Store, args []string) error {
 		if err != nil {
 			return err
 		}
-		kind, plain := "password", []byte(*password)
+		kind, val := "password", *password
 		if *keyFile != "" {
-			if plain, err = os.ReadFile(*keyFile); err != nil {
+			plain, err := os.ReadFile(*keyFile)
+			if err != nil {
 				return err
 			}
 			kind = "private_key"
+			val = string(plain)
 		}
-		id := store.NewID()
-		return st.Tx(ctx, func(q *db.Queries) error {
-			if err := q.CreateSecret(ctx, db.CreateSecretParams{
-				ID: id, Name: *name, Kind: kind, Username: *user,
-				Sealed: v.Seal(plain, []byte(id)), Now: store.Now(),
-			}); err != nil {
-				return store.Classify(err)
-			}
-			fmt.Printf("secret %s stored (%s)\n", *name, kind)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "secret.create", ObjectType: "secret", ObjectID: id,
-				Details: map[string]any{"name": *name, "kind": kind, "username": *user},
-			})
+		svc := services.NewSecretService(st, v)
+		sec, err := svc.Create(ctx, services.CreateSecretParams{
+			Name:     *name,
+			Kind:     kind,
+			Username: *user,
+			Value:    val,
+			Actor:    cli,
 		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("secret %s stored (%s)\n", sec.Name, sec.Kind)
+		return nil
 
 	case "rm":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: duckjump secret rm <name>")
 		}
 		name := rest[0]
-		return st.Tx(ctx, func(q *db.Queries) error {
-			s, err := q.GetSecretByName(ctx, name)
-			if err != nil {
-				return fmt.Errorf("secret %q: %w", name, store.Classify(err))
-			}
-			n, err := q.DeleteSecret(ctx, s.ID)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return fmt.Errorf("secret %q not found", name)
-			}
-			fmt.Printf("secret %s deleted\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "secret.delete", ObjectType: "secret", ObjectID: s.ID,
-				Details: map[string]any{"name": name},
-			})
-		})
+		svc := services.NewSecretService(st, nil)
+		if err := svc.DeleteByName(ctx, cli, name); err != nil {
+			return fmt.Errorf("secret %q: %w", name, err)
+		}
+		fmt.Printf("secret %s deleted\n", name)
+		return nil
 
 	default:
 		return fmt.Errorf("usage: duckjump secret [ls | add <name> --user <u> ... | rm <name>]")

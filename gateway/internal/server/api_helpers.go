@@ -117,6 +117,12 @@ func fromService(err error, what string) error {
 		return conflict("%s", err.Error())
 	case errors.Is(err, services.ErrParentFolderNotFound):
 		return notFound("parent folder")
+	case errors.Is(err, services.ErrSecretKindInvalid),
+		errors.Is(err, services.ErrSecretMissingUsernameOrValue),
+		errors.Is(err, services.ErrSecretKindRequiredWithValue),
+		errors.Is(err, services.ErrSecretValueEmpty),
+		errors.Is(err, services.ErrSecretKindRequiresValue):
+		return badRequest("%s", err.Error())
 	default:
 		var notEmptyErr *services.FolderNotEmptyError
 		if errors.As(err, &notEmptyErr) {
