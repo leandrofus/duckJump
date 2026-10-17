@@ -58,6 +58,13 @@ assist-app: ## duckJump Assist desktop app (Tauri, own workspace)
 assist-app-bundle: ## duckJump Assist installers (AppImage, deb) into dist/bin; needs podman or docker
 	packaging/build-assist-app.sh
 
+assist-windows: ## Build duckjump-assist.exe for Windows
+	cargo build --release --manifest-path duckjumpd/crates/duckjump-assist/Cargo.toml --target x86_64-pc-windows-gnu
+	@mkdir -p dist
+	cp duckjumpd/target/x86_64-pc-windows-gnu/release/duckjump-assist.exe dist/duckjump-assist.exe
+	@ls -lh dist/duckjump-assist.exe
+
+
 # ---- launch (dev) ----
 
 run: web ## Launch the dev stack with auth: sshd, VNC, RDP test servers + duckjumpd + duckjump-gw

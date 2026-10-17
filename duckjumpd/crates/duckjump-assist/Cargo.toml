@@ -21,7 +21,17 @@ tracing-subscriber.workspace = true
 hmac = "0.13"
 sha1 = "0.11"
 tokio-tungstenite = "0.30.0"
-x11rb = "0.14.0"
-ashpd = { version = "0.13.13", features = ["remote_desktop", "screencast"] }
 png = "0.18"
 enigo = "0.6.1"
+
+[target.'cfg(unix)'.dependencies]
+x11rb = "0.14.0"
+ashpd = { version = "0.13.13", features = ["remote_desktop", "screencast"] }
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.52"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+]

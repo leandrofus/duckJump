@@ -3,9 +3,9 @@
 
     wix build packaging/windows/duckjump.wxs -arch x64 -d Version=0.1.0 -d Exe=dist/duckjump.exe -o duckjump.msi
 
-  Installs duckjump.exe in Program Files (and on the PATH) and runs it as
-  the "duckjump" service (`duckjump serve` as LocalSystem), with its data
-  in %ProgramData%\duckjump.
+  Installs duckjump.exe (and optional duckjump-assist.exe) in Program Files
+  (and on the PATH) and runs duckjump as the "duckjump" service
+  (`duckjump serve` as LocalSystem), with its data in %ProgramData%\duckjump.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="duckJump" Manufacturer="duckJump" Version="$(Version)" Scope="perMachine"
@@ -29,6 +29,11 @@
           <ServiceControl Id="ServiceControl" Name="duckjump" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
           <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" Permanent="no" />
         </Component>
+        <?ifdef AssistExe?>
+        <Component Id="Assist" Guid="8F2A3B4C-5D6E-7F8A-9B0C-1D2E3F4A5B6C">
+          <File Id="duckjump_assist.exe" Name="duckjump-assist.exe" Source="$(AssistExe)" KeyPath="yes" />
+        </Component>
+        <?endif?>
         <Component Id="Icon">
           <File Id="duckjump.ico" Source="$(sys.SOURCEFILEDIR)duckjump.ico" KeyPath="yes" />
         </Component>
@@ -48,6 +53,9 @@
 
     <Feature Id="Main">
       <ComponentRef Id="Service" />
+      <?ifdef AssistExe?>
+      <ComponentRef Id="Assist" />
+      <?endif?>
       <ComponentRef Id="Icon" />
       <ComponentRef Id="StartMenu" />
     </Feature>

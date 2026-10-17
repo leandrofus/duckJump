@@ -67,6 +67,10 @@ jobs:
             duckjumpd/rdp
       - run: cd duckjumpd && cargo test --locked
       - run: cd duckjumpd/rdp && cargo test --locked
+      - name: Verify Windows target for duckjump-assist
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          cd duckjumpd && cargo check --manifest-path crates/duckjump-assist/Cargo.toml --target x86_64-pc-windows-gnu
 
   assist-app:
     name: assist-app (Tauri build)

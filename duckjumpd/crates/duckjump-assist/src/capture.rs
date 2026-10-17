@@ -1,7 +1,10 @@
 use duckjump_gfx::{Damage, Framebuffer};
 use duckjump_proto::gfx::Display;
+#[cfg(unix)]
 use x11rb::connection::Connection;
+#[cfg(unix)]
 use x11rb::protocol::xproto::{self, ConnectionExt, ImageFormat};
+#[cfg(unix)]
 use x11rb::rust_connection::RustConnection;
 
 /// Trait abstracting OS-level display capture.
@@ -197,6 +200,7 @@ fn decode_image_to_fb(bytes: &[u8], fb: &mut Framebuffer) -> anyhow::Result<()> 
 }
 
 /// Real X11 screen capturer via `x11rb`.
+#[cfg(unix)]
 pub struct X11Capturer {
     conn: RustConnection,
     root: u32,
@@ -205,6 +209,7 @@ pub struct X11Capturer {
     pub height: u16,
 }
 
+#[cfg(unix)]
 impl X11Capturer {
     pub fn try_new() -> anyhow::Result<Self> {
         let (conn, screen_num) = x11rb::connect(None)
@@ -512,6 +517,7 @@ impl Drop for CommandCapturer {
 }
 
 /// Real Linux Screen Capturer supporting X11, Wayland compositors, and simulated fallback.
+#[cfg(unix)]
 pub enum LinuxScreenCapturer {
     X11 {
         capturer: X11Capturer,
@@ -526,6 +532,7 @@ pub enum LinuxScreenCapturer {
     Mock(MockCapturer),
 }
 
+#[cfg(unix)]
 impl ScreenCapturer for LinuxScreenCapturer {
     fn name(&self) -> String {
         match self {
@@ -567,73 +574,219 @@ impl ScreenCapturer for LinuxScreenCapturer {
     }
 }
 
+/// Real Windows screen capturer using native Win32 GDI API.
+#[cfg(windows)]
+pub struct WindowsScreenCapturer {
+    fb: Framebuffer,
+    prev_rgb: Vec<u8>,
+    width: u16,
+    height: u16,
+}
+
+#[cfg(windows)]
+impl WindowsScreenCapturer {
+    pub fn try_new() -> anyhow::Result<Self> {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
+        let (width, height) = unsafe {
+            let w = GetSystemMetrics(SM_CXSCREEN) as u16;
+            let h = GetSystemMetrics(SM_CYSCREEN) as u16;
+            (w, h)
+        };
+        if width == 0 || height == 0 {
+            anyhow::bail!("GetSystemMetrics returned invalid screen dimensions ({}x{})", width, height);
+        }
+        let fb = Framebuffer::new(width, height);
+        let prev_rgb = vec![0u8; fb.rgb.len()];
+        Ok(Self {
+            fb,
+            prev_rgb,
+            width,
+            height,
+        })
+    }
+
+    pub fn capture_screen(&mut self) -> anyhow::Result<()> {
+        use windows_sys::Win32::Graphics::Gdi::*;
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
+
+        unsafe {
+            let hwnd_desktop = GetDesktopWindow();
+            let hdc_screen = GetDC(hwnd_desktop);
+            if hdc_screen == 0 {
+                anyhow::bail!("GetDC returned NULL");
+            }
+
+            let hdc_mem = CreateCompatibleDC(hdc_screen);
+            if hdc_mem == 0 {
+                ReleaseDC(hwnd_desktop, hdc_screen);
+                anyhow::bail!("CreateCompatibleDC returned NULL");
+            }
+
+            let w = self.width as i32;
+            let h = self.height as i32;
+            let hbm = CreateCompatibleBitmap(hdc_screen, w, h);
+            if hbm == 0 {
+                DeleteDC(hdc_mem);
+                ReleaseDC(hwnd_desktop, hdc_screen);
+                anyhow::bail!("CreateCompatibleBitmap returned NULL");
+            }
+
+            let old_bm = SelectObject(hdc_mem, hbm);
+            BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, SRCCOPY);
+
+            let mut bmi: BITMAPINFO = std::mem::zeroed();
+            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bmi.bmiHeader.biWidth = w;
+            bmi.bmiHeader.biHeight = -h; // Top-down DIB so row 0 is top
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 24;
+            bmi.bmiHeader.biCompression = BI_RGB;
+
+            let stride = ((w * 3 + 3) / 4) * 4;
+            let buf_size = (stride * h) as usize;
+            let mut dib_buffer = vec![0u8; buf_size];
+
+            let lines = GetDIBits(
+                hdc_mem,
+                hbm,
+                0,
+                h as u32,
+                dib_buffer.as_mut_ptr() as *mut _,
+                &mut bmi,
+                DIB_RGB_COLORS,
+            );
+
+            SelectObject(hdc_mem, old_bm);
+            DeleteObject(hbm);
+            DeleteDC(hdc_mem);
+            ReleaseDC(hwnd_desktop, hdc_screen);
+
+            if lines == 0 {
+                anyhow::bail!("GetDIBits failed to copy bitmap bits");
+            }
+
+            let rgb = &mut self.fb.rgb;
+            for y in 0..self.height as usize {
+                let src_row = y * stride as usize;
+                let dst_row = y * (self.width as usize) * 3;
+                for x in 0..self.width as usize {
+                    let b = dib_buffer[src_row + x * 3];
+                    let g = dib_buffer[src_row + x * 3 + 1];
+                    let r = dib_buffer[src_row + x * 3 + 2];
+                    rgb[dst_row + x * 3] = r;
+                    rgb[dst_row + x * 3 + 1] = g;
+                    rgb[dst_row + x * 3 + 2] = b;
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+#[cfg(windows)]
+impl ScreenCapturer for WindowsScreenCapturer {
+    fn name(&self) -> String {
+        format!("Windows GDI Nativo ({}x{}, latencia ~5-15ms)", self.width, self.height)
+    }
+
+    fn capture(&mut self) -> anyhow::Result<Vec<Damage>> {
+        self.capture_screen()?;
+        Ok(detect_damage(&self.fb, &mut self.prev_rgb))
+    }
+
+    fn framebuffer(&self) -> &Framebuffer {
+        &self.fb
+    }
+}
+
 /// Automatically selects and initializes the best screen capture backend available on the system.
 pub fn create_best_capturer(fallback_w: u16, fallback_h: u16) -> anyhow::Result<Box<dyn ScreenCapturer>> {
-    // 1. Try X11 / XWayland capture FIRST whenever DISPLAY is available.
-    // X11 direct memory capture takes ~1-3ms, compared to ~250ms for CLI screenshot tools.
-    if let Ok(disp) = std::env::var("DISPLAY") {
-        match X11Capturer::try_new() {
-            Ok(mut x11) => {
-                let mut fb = Framebuffer::new(x11.width, x11.height);
-                match x11.capture_to_fb(&mut fb) {
-                    Ok(()) => {
-                        println!("⚡ Captura activa: X11 nativo directo ({}x{}, latencia sub-10ms)", x11.width, x11.height);
-                        let prev_rgb = fb.rgb.clone();
-                        return Ok(Box::new(LinuxScreenCapturer::X11 {
-                            capturer: x11,
-                            fb,
-                            prev_rgb,
-                        }));
-                    }
-                    Err(e) => {
-                        let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
-                        if is_wayland {
-                            println!("ℹ️ [AVISO] Sesión Wayland activa: Xwayland ({}) no permite lectura directa de ventana raíz.", disp);
-                            println!("          Buscando herramienta nativa de escritorio compatible...");
-                        } else {
-                            println!("⚠️ [AVISO] Conexión X11 activa ({}) pero falló captura GetImage: {:#}", disp, e);
+    #[cfg(windows)]
+    {
+        match WindowsScreenCapturer::try_new() {
+            Ok(win_cap) => {
+                println!("⚡ Captura activa: {}", win_cap.name());
+                return Ok(Box::new(win_cap));
+            }
+            Err(e) => {
+                println!("⚠️ [AVISO] Falló captura Windows GDI: {:#}", e);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        // 1. Try X11 / XWayland capture FIRST whenever DISPLAY is available.
+        if let Ok(disp) = std::env::var("DISPLAY") {
+            match X11Capturer::try_new() {
+                Ok(mut x11) => {
+                    let mut fb = Framebuffer::new(x11.width, x11.height);
+                    match x11.capture_to_fb(&mut fb) {
+                        Ok(()) => {
+                            println!("⚡ Captura activa: X11 nativo directo ({}x{}, latencia sub-10ms)", x11.width, x11.height);
+                            let prev_rgb = fb.rgb.clone();
+                            return Ok(Box::new(LinuxScreenCapturer::X11 {
+                                capturer: x11,
+                                fb,
+                                prev_rgb,
+                            }));
+                        }
+                        Err(e) => {
+                            let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+                            if is_wayland {
+                                println!("ℹ️ [AVISO] Sesión Wayland activa: Xwayland ({}) no permite lectura directa de ventana raíz.", disp);
+                                println!("          Buscando herramienta nativa de escritorio compatible...");
+                            } else {
+                                println!("⚠️ [AVISO] Conexión X11 activa ({}) pero falló captura GetImage: {:#}", disp, e);
+                            }
                         }
                     }
                 }
+                Err(e) => {
+                    println!("⚠️ [AVISO] X11 no pudo conectar en DISPLAY={}: {:#}", disp, e);
+                }
             }
-            Err(e) => {
-                println!("⚠️ [AVISO] X11 no pudo conectar en DISPLAY={}: {:#}", disp, e);
-            }
-        }
-    } else {
-        println!("ℹ️ [AVISO] DISPLAY no definido en el entorno (sesión Wayland pura).");
-    }
-
-    // 2. Try CLI capture (Grim, Scrot, Cinnamon, GNOME, Spectacle) if X11 was not available
-    if let Some(cmd) = CommandCapturer::try_detect() {
-        let fmt_name = if cmd.tmp_path.extension().map(|s| s == "bmp").unwrap_or(false) {
-            "BMP sin compresión (<1ms decode)"
         } else {
-            "PNG"
-        };
-        println!("📸 Captura activa: Herramienta de escritorio ({:?}, formato {})", cmd.kind, fmt_name);
-        let mut fb = Framebuffer::new(fallback_w, fallback_h);
-        if let Ok(()) = cmd.capture_to_fb(&mut fb) {
-            let prev_rgb = fb.rgb.clone();
-            return Ok(Box::new(LinuxScreenCapturer::Command {
-                capturer: cmd,
-                fb,
-                prev_rgb,
-            }));
+            println!("ℹ️ [AVISO] DISPLAY no definido en el entorno (sesión Wayland pura).");
+        }
+
+        // 2. Try CLI capture (Grim, Scrot, Cinnamon, GNOME, Spectacle) if X11 was not available
+        if let Some(cmd) = CommandCapturer::try_detect() {
+            let fmt_name = if cmd.tmp_path.extension().map(|s| s == "bmp").unwrap_or(false) {
+                "BMP sin compresión (<1ms decode)"
+            } else {
+                "PNG"
+            };
+            println!("📸 Captura activa: Herramienta de escritorio ({:?}, formato {})", cmd.kind, fmt_name);
+            let mut fb = Framebuffer::new(fallback_w, fallback_h);
+            if let Ok(()) = cmd.capture_to_fb(&mut fb) {
+                let prev_rgb = fb.rgb.clone();
+                return Ok(Box::new(LinuxScreenCapturer::Command {
+                    capturer: cmd,
+                    fb,
+                    prev_rgb,
+                }));
+            }
         }
     }
 
     // Explicit mock simulation ONLY when requested via environment variable for headless testing
     if std::env::var("DUCKJUMP_MOCK_DISPLAY").is_ok() {
         println!("⚠️ Captura activa: Simulación de escritorio (Mock solicitado por DUCKJUMP_MOCK_DISPLAY=1)");
-        return Ok(Box::new(LinuxScreenCapturer::Mock(MockCapturer::new(fallback_w, fallback_h))));
+        return Ok(Box::new(MockCapturer::new(fallback_w, fallback_h)));
     }
 
+    #[cfg(unix)]
     anyhow::bail!(
         "No se pudo inicializar la captura de pantalla real en este equipo.\n\
          • En sesiones Wayland (KDE/GNOME), asegúrese de tener disponible una herramienta de captura instalada (ej. spectacle o grim).\n\
          • Alternativamente, inicie sesión en una sesión X11 (ej. Cinnamon o Plasma X11/Xorg) para captura directa nativa a 60 FPS sin herramientas externas."
     );
+
+    #[cfg(not(unix))]
+    anyhow::bail!("No se pudo inicializar la captura de pantalla en este sistema operativo.");
 }
 
 /// Simulated desktop environment for headless CI / unit testing.

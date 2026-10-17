@@ -121,8 +121,8 @@ jobs:
           fi
 
   msi:
-    # Windows installer (service + Start menu shortcut), built with
-    # WiX on Windows and added to the release made above
+    # Windows installer (service + Start menu shortcut) and duckjump-assist agent,
+    # built with WiX and cargo on Windows and added to the release made above
     needs: release
     runs-on: windows-latest
     steps:
@@ -140,6 +140,14 @@ jobs:
           cd web
           bun install --frozen-lockfile
           bun run build
+      - name: Build duckjump-assist (Windows Rust)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          cargo build --release --locked --manifest-path duckjumpd/Cargo.toml -p duckjump-assist
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item "duckjumpd/target/release/duckjump-assist.exe" "dist/duckjump-assist.exe"
+          Copy-Item "duckjumpd/target/release/duckjump-assist.exe" "dist/duckjump-assist-windows-amd64.exe"
       - name: MSI
         shell: pwsh
         run: |
@@ -148,12 +156,11 @@ jobs:
             $v = (git describe --tags --abbrev=0 2>$null).TrimStart('v')
             if (-not $v) { $v = "0.1.0" }
           }
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
           cd gateway
           go build -trimpath -ldflags "-s -w -X main.version=$env:GITHUB_REF_NAME" -o ../dist/duckjump.exe ./cmd/duckjump-gw
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cd ..
-          ./packaging/windows/build-msi.ps1 -Version $v -Exe dist/duckjump.exe -Out "dist/duckjump-$v-x64.msi"
+          ./packaging/windows/build-msi.ps1 -Version $v -Exe dist/duckjump.exe -AssistExe dist/duckjump-assist.exe -Out "dist/duckjump-$v-x64.msi"
           Copy-Item "dist/duckjump-$v-x64.msi" dist/duckjump-latest-x64.msi
       - name: Publish
         shell: pwsh
@@ -168,12 +175,12 @@ jobs:
           $v = $tag.TrimStart('v')
           gh release download $tag -p SHA256SUMS -D sums --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $lines = Get-Content sums/SHA256SUMS | Where-Object { $_ -notmatch '\.msi$' }
-          foreach ($f in "duckjump-$v-x64.msi", 'duckjump-latest-x64.msi') {
+          $lines = Get-Content sums/SHA256SUMS | Where-Object { $_ -notmatch '(\.msi|duckjump-assist.*\.exe)$' }
+          foreach ($f in "duckjump-$v-x64.msi", 'duckjump-latest-x64.msi', 'duckjump-assist.exe', 'duckjump-assist-windows-amd64.exe') {
             $lines += "$((Get-FileHash "dist/$f" -Algorithm SHA256).Hash.ToLower())  $f"
           }
           [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", ($lines -join "`n") + "`n")
-          gh release upload $tag "dist/duckjump-$v-x64.msi" dist/duckjump-latest-x64.msi dist/SHA256SUMS --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $tag "dist/duckjump-$v-x64.msi" dist/duckjump-latest-x64.msi dist/duckjump-assist.exe dist/duckjump-assist-windows-amd64.exe dist/SHA256SUMS --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   site:

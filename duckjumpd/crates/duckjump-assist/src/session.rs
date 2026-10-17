@@ -17,7 +17,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::capture::{self, ScreenCapturer};
-use crate::{input, totp, wayland};
+use crate::{input, totp};
+#[cfg(unix)]
+use crate::wayland;
 
 /// Where to connect and what to capture.
 #[derive(Debug, Clone)]
@@ -136,7 +138,8 @@ pub async fn run_session(
 }
 
 enum ActiveInputBackend {
-    X11(Box<input::InputController>),
+    Enigo(Box<input::InputController>),
+    #[cfg(unix)]
     Wayland(Arc<tokio::sync::Mutex<wayland::WaylandSession>>),
 }
 
@@ -191,23 +194,36 @@ async fn run(cfg: SessionConfig, events: UnboundedSender<Event>) -> anyhow::Resu
         .map_err(|e| anyhow::anyhow!("no se pudo abrir el canal de pantalla: {}", e))?;
     let (mut disp_write, mut disp_read) = display_ws.split();
 
+    #[cfg(unix)]
     let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
         || std::env::var("XDG_SESSION_TYPE").map(|s| s.to_lowercase() == "wayland").unwrap_or(false);
+    #[cfg(not(unix))]
+    let is_wayland = false;
 
     let (mut capturer, input_backend): (Box<dyn ScreenCapturer>, ActiveInputBackend) = if is_wayland {
-        info!("Sesión Wayland detectada. Inicializando Portal RemoteDesktop nativo...");
-        let sess = wayland::WaylandSession::init()
-            .await
-            .map_err(|e| anyhow::anyhow!("portal Wayland: {:#}", e))?;
-        let pw_cap = wayland::WaylandPipeWireCapturer::start(sess.node_id, sess.width, sess.height)
-            .map_err(|e| anyhow::anyhow!("captura PipeWire: {:#}", e))?;
-        (Box::new(pw_cap), ActiveInputBackend::Wayland(Arc::new(tokio::sync::Mutex::new(sess))))
+        #[cfg(unix)]
+        {
+            info!("Sesión Wayland detectada. Inicializando Portal RemoteDesktop nativo...");
+            let sess = wayland::WaylandSession::init()
+                .await
+                .map_err(|e| anyhow::anyhow!("portal Wayland: {:#}", e))?;
+            let pw_cap = wayland::WaylandPipeWireCapturer::start(sess.node_id, sess.width, sess.height)
+                .map_err(|e| anyhow::anyhow!("captura PipeWire: {:#}", e))?;
+            (Box::new(pw_cap), ActiveInputBackend::Wayland(Arc::new(tokio::sync::Mutex::new(sess))))
+        }
+        #[cfg(not(unix))]
+        {
+            unreachable!()
+        }
     } else {
-        info!("Sesión X11 detectada. Usando capturador de memoria directa X11...");
+        #[cfg(unix)]
+        info!("Sesión X11 detectada. Usando capturador X11 / CLI...");
+        #[cfg(windows)]
+        info!("Sesión Windows detectada. Usando capturador nativo GDI...");
         let cap = capture::create_best_capturer(cfg.width, cfg.height)?;
         let mut ctrl = input::InputController::new();
         ctrl.set_enabled(true);
-        (cap, ActiveInputBackend::X11(Box::new(ctrl)))
+        (cap, ActiveInputBackend::Enigo(Box::new(ctrl)))
     };
     info!("Motor de captura inicializado: {}", capturer.name());
     emit(Event::CaptureReady { engine: capturer.name().to_string() });
@@ -276,9 +292,10 @@ async fn run(cfg: SessionConfig, events: UnboundedSender<Event>) -> anyhow::Resu
                                 }
                             }
                             Some(other) => match &mut backend {
-                                ActiveInputBackend::X11(ctrl) => {
+                                ActiveInputBackend::Enigo(ctrl) => {
                                     ctrl.handle_remote_input(other);
                                 }
+                                #[cfg(unix)]
                                 ActiveInputBackend::Wayland(sess) => {
                                     sess.lock().await.handle_remote_input(other).await;
                                 }

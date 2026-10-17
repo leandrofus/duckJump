@@ -7,6 +7,7 @@ pub mod input;
 pub mod session;
 pub mod sysenv;
 pub mod totp;
+#[cfg(unix)]
 pub mod wayland;
 
 pub use session::{format_verification_code, run_session, EndReason, Event, SessionConfig};

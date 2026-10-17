@@ -674,10 +674,8 @@ try {
     $bytes = [System.IO.File]::ReadAllBytes($tempBin)
     if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
         Write-Host ""
-        Write-Host "[!] Error: duckjump-assist.exe para Windows no esta compilado en este servidor." -ForegroundColor Red
-        Write-Host "    El servidor actualmente solo tiene disponible el agente para Linux (x86_64)." -ForegroundColor Yellow
-        Write-Host "    Para conectarse a la asistencia, por favor ejecute el comando en un equipo Linux:" -ForegroundColor Cyan
-        Write-Host "    curl -fsSL $Server/support/launch.sh?token=$Token | sh" -ForegroundColor White
+        Write-Host "[!] Error: duckjump-assist.exe no es un binario valido de Windows en este servidor." -ForegroundColor Red
+        Write-Host "    Asegurese de que duckjump-assist.exe este disponible en el servidor." -ForegroundColor Yellow
         Write-Host ""
         Write-Host "Presione Enter para salir..." -ForegroundColor Gray
         try { Read-Host } catch {}
@@ -694,10 +692,8 @@ try {
     }
 } catch {
     Write-Host ""
-    Write-Host "[!] Error: duckjump-assist.exe para Windows no esta disponible en el servidor." -ForegroundColor Red
+    Write-Host "[!] Error al descargar o ejecutar duckjump-assist.exe:" -ForegroundColor Red
     Write-Host "    Detalle: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "    El servidor actualmente solo tiene disponible el agente para Linux (x86_64)." -ForegroundColor Yellow
-    Write-Host "    Para conectarse a la asistencia, ejecute en Linux: curl -fsSL $Server/support/launch.sh?token=$Token | sh" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Presione Enter para salir..." -ForegroundColor Gray
     try { Read-Host } catch {}
