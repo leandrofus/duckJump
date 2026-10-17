@@ -24,7 +24,17 @@ const RetentionKey = "recordings.retention_days"
 var (
 	ErrRetentionDaysInvalid    = errors.New("retention_days must be 0-3650")
 	ErrRecordingsNotConfigured = errors.New("the gateway runs without -recordings, so it cannot delete recording files")
+	ErrRecordingMissing        = errors.New("recording not found")
 )
+
+type RecordingPurgedError struct {
+	PurgedAt time.Time
+	Reason   string
+}
+
+func (e *RecordingPurgedError) Error() string {
+	return fmt.Sprintf("the recording was deleted on %s (%s)", e.PurgedAt.UTC().Format("2006-01-02"), e.Reason)
+}
 
 type RecordingObjectStore interface {
 	Stat(ctx context.Context, name string) (objstore.Object, error)
@@ -287,3 +297,36 @@ func (s *RecordingService) PurgeRecordings(ctx context.Context, actor store.Acto
 func (s *RecordingService) LiveRecordings(ctx context.Context) ([]db.LiveRecordingsRow, error) {
 	return s.store.Q.LiveRecordings(ctx)
 }
+
+func (s *RecordingService) CheckViewRecording(ctx context.Context, actor store.Actor, userID string, isDev, isAuditor bool, sessionID string) (db.AuditSession, error) {
+	x, err := s.store.Q.GetSessionRecord(ctx, sessionID)
+	if err != nil {
+		return x, store.Classify(err)
+	}
+	if !isAuditor && !isDev {
+		allowed, err := s.store.CanViewRecordings(ctx, userID, x.ConnectionID)
+		if err != nil {
+			return x, err
+		}
+		if !allowed {
+			return x, ErrForbidden
+		}
+	}
+	if !x.Recording.Valid {
+		return x, ErrRecordingMissing
+	}
+	if purge, err := s.store.Q.GetRecordingPurge(ctx, x.ID); err == nil {
+		return x, &RecordingPurgedError{PurgedAt: purge.PurgedAt, Reason: purge.Reason}
+	}
+	return x, nil
+}
+
+func (s *RecordingService) AuditView(ctx context.Context, actor store.Actor, sessionID string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "recording.view",
+		ObjectType: "session",
+		ObjectID:   sessionID,
+	})
+}
+

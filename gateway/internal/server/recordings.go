@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -61,24 +60,9 @@ func acceptsGzip(r *http.Request) bool {
 
 func (s *Server) getRecording(w http.ResponseWriter, r *http.Request, p principal) error {
 	ctx := r.Context()
-	x, err := s.Store.Q.GetSessionRecord(ctx, r.PathValue("id"))
+	x, err := s.Recordings.CheckViewRecording(ctx, p.actor(), p.User.ID, p.Dev, auditors[p.User.Role], r.PathValue("id"))
 	if err != nil {
-		return fromStore(err, "session")
-	}
-	if !auditors[p.User.Role] && !p.Dev {
-		allowed, err := s.Store.CanViewRecordings(ctx, p.User.ID, x.ConnectionID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return errForbidden
-		}
-	}
-	if !x.Recording.Valid {
-		return notFound("recording")
-	}
-	if purge, err := s.Store.Q.GetRecordingPurge(ctx, x.ID); err == nil {
-		return &apiError{http.StatusGone, "purged", fmt.Sprintf("the recording was deleted on %s (%s)", purge.PurgedAt.UTC().Format("2006-01-02"), purge.Reason)}
+		return fromService(err, "session")
 	}
 	path, gz, _, err := s.recordingFile(x.Recording.String)
 	if err != nil {
@@ -98,7 +82,7 @@ func (s *Server) getRecording(w http.ResponseWriter, r *http.Request, p principa
 			return err
 		}
 		defer body.Close()
-		if err := s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "recording.view", ObjectType: "session", ObjectID: x.ID}); err != nil {
+		if err := s.Recordings.AuditView(ctx, p.actor(), x.ID); err != nil {
 			return err
 		}
 		recordingHeaders(w, x.ID, o.Gfx)
@@ -109,7 +93,7 @@ func (s *Server) getRecording(w http.ResponseWriter, r *http.Request, p principa
 		return notFound("recording file")
 	}
 	defer f.Close()
-	if err := s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "recording.view", ObjectType: "session", ObjectID: x.ID}); err != nil {
+	if err := s.Recordings.AuditView(ctx, p.actor(), x.ID); err != nil {
 		return err
 	}
 

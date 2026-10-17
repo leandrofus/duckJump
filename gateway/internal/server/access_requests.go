@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/leandrofus/duckjump/gateway/internal/services"
@@ -51,94 +50,68 @@ type reviewAccessRequest struct {
 	Comment string `json:"comment"`
 }
 
-func (s *Server) toAccessRequestDTO(ctx context.Context, r db.ConfigAccessRequest) (accessRequestDTO, error) {
-	dtos, err := s.toAccessRequestDTOs(ctx, []db.ConfigAccessRequest{r})
+func toAccessRequestDTO(e services.EnrichedAccessRequest) accessRequestDTO {
+	r := e.Request
+	return accessRequestDTO{
+		ID:                r.ID,
+		UserID:            r.UserID,
+		UserUsername:      e.UserUsername,
+		UserDisplayName:   e.UserDisplayName,
+		ObjectType:        r.ObjectType,
+		ObjectRef:         r.ObjectRef,
+		ObjectName:        e.ObjectName,
+		Ticket:            r.Ticket,
+		CanConnect:        r.CanConnect,
+		CanViewRecordings: r.CanViewRecordings,
+		CanUpload:         r.CanUpload,
+		CanDownload:       r.CanDownload,
+		CanForward:        r.CanForward,
+		Reason:            r.Reason,
+		StartsAt:          r.StartsAt.UTC(),
+		EndsAt:            r.EndsAt.UTC(),
+		Status:            r.Status,
+		ReviewedBy:        strPtr(r.ReviewedBy),
+		ReviewerUsername:  e.ReviewerUsername,
+		ReviewedAt:        timePtr(r.ReviewedAt),
+		ReviewComment:     r.ReviewComment,
+		CreatedPolicyID:   strPtr(r.CreatedPolicyID),
+		CreatedAt:         r.CreatedAt.UTC(),
+	}
+}
+
+func (s *Server) toEnrichedAccessRequestDTO(ctx context.Context, r db.ConfigAccessRequest) (accessRequestDTO, error) {
+	enriched, err := s.AccessRequests.Enrich(ctx, []db.ConfigAccessRequest{r})
 	if err != nil {
 		return accessRequestDTO{}, err
 	}
-	return dtos[0], nil
+	return toAccessRequestDTO(enriched[0]), nil
 }
 
-func (s *Server) toAccessRequestDTOs(ctx context.Context, rs []db.ConfigAccessRequest) ([]accessRequestDTO, error) {
-	users, _ := s.Store.Q.ListUsers(ctx)
-	userMap := make(map[string]db.ConfigUser, len(users))
-	for _, u := range users {
-		userMap[u.ID] = u
-	}
-
-	conns, _ := s.Store.Q.ListConnections(ctx)
-	connMap := make(map[string]string, len(conns))
-	for _, c := range conns {
-		connMap[c.ID] = c.Name
-	}
-
-	folders, _ := s.Store.Q.ListFolders(ctx)
-	folderMap := make(map[string]string, len(folders))
-	for _, f := range folders {
-		folderMap[f.ID] = f.Name
-	}
-
-	out := make([]accessRequestDTO, 0, len(rs))
-	for _, r := range rs {
-		var userUsername, userDisplayName string
-		if u, ok := userMap[r.UserID]; ok {
-			userUsername = u.Username
-			userDisplayName = u.DisplayName
-			if userDisplayName == "" {
-				userDisplayName = u.Username
-			}
-		}
-
-		var reviewerUsername *string
-		if r.ReviewedBy.Valid {
-			if rev, ok := userMap[r.ReviewedBy.String]; ok {
-				name := rev.DisplayName
-				if name == "" {
-					name = rev.Username
-				}
-				reviewerUsername = &name
-			}
-		}
-
-		objectName := r.ObjectRef
-		switch r.ObjectType {
-		case "connection":
-			if name, ok := connMap[r.ObjectRef]; ok {
-				objectName = name
-			}
-		case "folder":
-			if name, ok := folderMap[r.ObjectRef]; ok {
-				objectName = name
-			}
-		}
-
-		out = append(out, accessRequestDTO{
-			ID:                r.ID,
-			UserID:            r.UserID,
-			UserUsername:      userUsername,
-			UserDisplayName:   userDisplayName,
-			ObjectType:        r.ObjectType,
-			ObjectRef:         r.ObjectRef,
-			ObjectName:        objectName,
-			Ticket:            r.Ticket,
-			CanConnect:        r.CanConnect,
-			CanViewRecordings: r.CanViewRecordings,
-			CanUpload:         r.CanUpload,
-			CanDownload:       r.CanDownload,
-			CanForward:        r.CanForward,
-			Reason:            r.Reason,
-			StartsAt:          r.StartsAt.UTC(),
-			EndsAt:            r.EndsAt.UTC(),
-			Status:            r.Status,
-			ReviewedBy:        strPtr(r.ReviewedBy),
-			ReviewerUsername:  reviewerUsername,
-			ReviewedAt:        timePtr(r.ReviewedAt),
-			ReviewComment:     r.ReviewComment,
-			CreatedPolicyID:   strPtr(r.CreatedPolicyID),
-			CreatedAt:         r.CreatedAt.UTC(),
+func toAccessRequestTargetsDTO(t services.AccessRequestTargets) accessRequestTargetsDTO {
+	conns := make([]accessRequestConnectionTarget, 0, len(t.Connections))
+	for _, c := range t.Connections {
+		conns = append(conns, accessRequestConnectionTarget{
+			ID:          c.ID,
+			Name:        c.Name,
+			Protocol:    c.Protocol,
+			Environment: c.Environment,
+			FolderID:    c.FolderID,
+			Tags:        c.Tags,
 		})
 	}
-	return out, nil
+	folders := make([]accessRequestFolderTarget, 0, len(t.Folders))
+	for _, f := range t.Folders {
+		folders = append(folders, accessRequestFolderTarget{
+			ID:       f.ID,
+			ParentID: f.ParentID,
+			Name:     f.Name,
+		})
+	}
+	return accessRequestTargetsDTO{
+		Connections: conns,
+		Folders:     folders,
+		Tags:        t.Tags,
+	}
 }
 
 // openapi:operation
@@ -164,14 +137,14 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request, p pr
 		filterUser = qUser
 	}
 
-	reqs, err := s.AccessRequests.List(ctx, filterUser, qStatus)
+	rows, err := s.AccessRequests.ListEnriched(ctx, filterUser, qStatus)
 	if err != nil {
 		return fromService(err, "access request")
 	}
 
-	out, err := s.toAccessRequestDTOs(ctx, reqs)
-	if err != nil {
-		return err
+	out := make([]accessRequestDTO, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toAccessRequestDTO(r))
 	}
 	return ok(w, out)
 }
@@ -183,57 +156,11 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request, p pr
 //   '200': { description: 'Available connections, folders and tags', schema: AccessRequestTargets }
 
 func (s *Server) accessRequestTargets(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx := r.Context()
-	conns, err := s.Store.Q.ListConnections(ctx)
+	t, err := s.AccessRequests.Targets(r.Context())
 	if err != nil {
-		return err
+		return fromService(err, "targets")
 	}
-	allTags, err := s.Store.Q.ListAllConnectionTags(ctx)
-	if err != nil {
-		return err
-	}
-	tagMap := map[string][]string{}
-	uniqueTags := map[string]bool{}
-	for _, at := range allTags {
-		tagMap[at.ConnectionID] = append(tagMap[at.ConnectionID], at.Tag)
-		uniqueTags[at.Tag] = true
-	}
-	connDTOs := make([]accessRequestConnectionTarget, 0, len(conns))
-	for _, c := range conns {
-		connDTOs = append(connDTOs, accessRequestConnectionTarget{
-			ID:          c.ID,
-			Name:        c.Name,
-			Protocol:    c.Protocol,
-			Environment: c.Environment,
-			FolderID:    strPtr(c.FolderID),
-			Tags:        tagMap[c.ID],
-		})
-	}
-
-	folders, err := s.Store.Q.ListFolders(ctx)
-	if err != nil {
-		return err
-	}
-	folderDTOs := make([]accessRequestFolderTarget, 0, len(folders))
-	for _, f := range folders {
-		folderDTOs = append(folderDTOs, accessRequestFolderTarget{
-			ID:       f.ID,
-			ParentID: strPtr(f.ParentID),
-			Name:     f.Name,
-		})
-	}
-
-	tags := make([]string, 0, len(uniqueTags))
-	for t := range uniqueTags {
-		tags = append(tags, t)
-	}
-	sort.Strings(tags)
-
-	return ok(w, accessRequestTargetsDTO{
-		Connections: connDTOs,
-		Folders:     folderDTOs,
-		Tags:        tags,
-	})
+	return ok(w, toAccessRequestTargetsDTO(t))
 }
 
 // openapi:operation
@@ -265,7 +192,7 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p p
 		if err != nil {
 			return accessRequestDTO{}, fromService(err, req.ObjectType)
 		}
-		return s.toAccessRequestDTO(r.Context(), createdReq)
+		return s.toEnrichedAccessRequestDTO(r.Context(), createdReq)
 	})
 }
 
@@ -277,14 +204,14 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p p
 
 func (s *Server) getAccessRequest(w http.ResponseWriter, r *http.Request, p principal) error {
 	return handleOK(w, func() (accessRequestDTO, error) {
-		req, err := s.AccessRequests.Get(r.Context(), r.PathValue("id"))
+		req, err := s.AccessRequests.GetEnriched(r.Context(), r.PathValue("id"))
 		if err != nil {
 			return accessRequestDTO{}, fromService(err, "access request")
 		}
-		if !admins[p.User.Role] && req.UserID != p.User.ID {
+		if !admins[p.User.Role] && req.Request.UserID != p.User.ID {
 			return accessRequestDTO{}, errForbidden
 		}
-		return s.toAccessRequestDTO(r.Context(), req)
+		return toAccessRequestDTO(req), nil
 	})
 }
 
@@ -304,7 +231,7 @@ func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request, p 
 	if err != nil {
 		return fromService(err, "access request")
 	}
-	dto, err := s.toAccessRequestDTO(r.Context(), out)
+	dto, err := s.toEnrichedAccessRequestDTO(r.Context(), out)
 	if err != nil {
 		return err
 	}
@@ -327,7 +254,7 @@ func (s *Server) rejectAccessRequest(w http.ResponseWriter, r *http.Request, p p
 	if err != nil {
 		return fromService(err, "access request")
 	}
-	dto, err := s.toAccessRequestDTO(r.Context(), out)
+	dto, err := s.toEnrichedAccessRequestDTO(r.Context(), out)
 	if err != nil {
 		return err
 	}
@@ -346,7 +273,7 @@ func (s *Server) cancelAccessRequest(w http.ResponseWriter, r *http.Request, p p
 	if err != nil {
 		return fromService(err, "access request")
 	}
-	dto, err := s.toAccessRequestDTO(r.Context(), out)
+	dto, err := s.toEnrichedAccessRequestDTO(r.Context(), out)
 	if err != nil {
 		return err
 	}

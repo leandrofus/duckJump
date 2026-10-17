@@ -143,8 +143,7 @@ func (s *Server) doLogin(w http.ResponseWriter, r *http.Request) error {
 		if errors.Is(err, auth.ErrDisabled) {
 			reason = "user disabled"
 		}
-		s.Store.AuditTx(ctx, store.Event{Actor: store.Actor{Name: req.Username, IP: ip},
-			Action: "auth.login_failed", ObjectType: "user", Details: map[string]any{"reason": reason}})
+		_ = s.Users.RecordLoginFailure(ctx, req.Username, ip, reason)
 		return &apiError{http.StatusUnauthorized, "invalid_credentials", "invalid username or password"}
 	}
 	s.limiter.Reset(key)
@@ -163,9 +162,7 @@ func (s *Server) doLogin(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) completeLogin(r *http.Request, u db.ConfigUser, method string) {
 	ctx := r.Context()
-	s.Store.Q.TouchUserLogin(ctx, db.TouchUserLoginParams{ID: u.ID, Now: store.NullTime(store.Now())})
-	s.Store.AuditTx(ctx, store.Event{Actor: store.Actor{ID: u.ID, Name: u.Username, IP: s.clientIP(r)},
-		Action: "auth.login", ObjectType: "user", ObjectID: u.ID, Details: map[string]any{"method": method}})
+	_ = s.Users.RecordLoginSuccess(ctx, store.Actor{ID: u.ID, Name: u.Username, IP: s.clientIP(r)}, u.ID, method)
 }
 
 // openapi:operation
@@ -191,7 +188,7 @@ func (s *Server) loginTOTP(w http.ResponseWriter, r *http.Request, p principal, 
 	}
 	if !s.Auth.CheckTOTP(p.User, req.Code) {
 		s.limiter.Fail(key)
-		s.Store.AuditTx(r.Context(), store.Event{Actor: p.actor(), Action: "auth.totp_failed", ObjectType: "user", ObjectID: p.User.ID})
+		_ = s.Users.RecordTOTPFailure(r.Context(), p.actor(), p.User.ID)
 		return &apiError{http.StatusUnauthorized, "invalid_code", "invalid code"}
 	}
 	s.limiter.Reset(key)
@@ -214,7 +211,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, p principal, _ b
 		if err := s.Auth.EndSession(r.Context(), p.SessionHash); err != nil {
 			return err
 		}
-		s.Store.AuditTx(r.Context(), store.Event{Actor: p.actor(), Action: "auth.logout", ObjectType: "user", ObjectID: p.User.ID})
+		_ = s.Users.RecordLogout(r.Context(), p.actor(), p.User.ID)
 	}
 	s.clearSessionCookie(w, r)
 	return noContent(w)

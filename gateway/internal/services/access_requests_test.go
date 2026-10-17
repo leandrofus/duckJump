@@ -204,4 +204,34 @@ func TestAccessRequestService_Lifecycle(t *testing.T) {
 	if canceled.Status != "canceled" {
 		t.Fatalf("unexpected status: %s", canceled.Status)
 	}
+
+	// 10. Targets
+	targets, err := reqSvc.Targets(ctx)
+	if err != nil {
+		t.Fatalf("Targets failed: %v", err)
+	}
+	if len(targets.Connections) == 0 {
+		t.Fatalf("expected at least 1 target connection")
+	}
+
+	// 11. ListEnriched & GetEnriched
+	enrichedList, err := reqSvc.ListEnriched(ctx, u.ID, "")
+	if err != nil {
+		t.Fatalf("ListEnriched failed: %v", err)
+	}
+	if len(enrichedList) == 0 {
+		t.Fatalf("expected at least 1 enriched request")
+	}
+	if enrichedList[0].UserUsername != u.Username {
+		t.Fatalf("expected username %s, got %s", u.Username, enrichedList[0].UserUsername)
+	}
+
+	singleEnriched, err := reqSvc.GetEnriched(ctx, req1.ID)
+	if err != nil {
+		t.Fatalf("GetEnriched failed: %v", err)
+	}
+	if singleEnriched.Request.ID != req1.ID {
+		t.Fatalf("ID mismatch: %s vs %s", singleEnriched.Request.ID, req1.ID)
+	}
 }
+

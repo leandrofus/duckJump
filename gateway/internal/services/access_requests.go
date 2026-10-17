@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -399,3 +400,178 @@ func (s *AccessRequestService) Cancel(ctx context.Context, actor store.Actor, id
 	}
 	return out, nil
 }
+
+type AccessRequestTargetConnection struct {
+	ID          string
+	Name        string
+	Protocol    string
+	Environment string
+	FolderID    *string
+	Tags        []string
+}
+
+type AccessRequestTargetFolder struct {
+	ID       string
+	ParentID *string
+	Name     string
+}
+
+type AccessRequestTargets struct {
+	Connections []AccessRequestTargetConnection
+	Folders     []AccessRequestTargetFolder
+	Tags        []string
+}
+
+type EnrichedAccessRequest struct {
+	Request          db.ConfigAccessRequest
+	UserUsername     string
+	UserDisplayName  string
+	ReviewerUsername *string
+	ObjectName       string
+}
+
+func (s *AccessRequestService) Targets(ctx context.Context) (AccessRequestTargets, error) {
+	conns, err := s.store.Q.ListConnections(ctx)
+	if err != nil {
+		return AccessRequestTargets{}, err
+	}
+	allTags, err := s.store.Q.ListAllConnectionTags(ctx)
+	if err != nil {
+		return AccessRequestTargets{}, err
+	}
+	tagMap := map[string][]string{}
+	uniqueTags := map[string]bool{}
+	for _, at := range allTags {
+		tagMap[at.ConnectionID] = append(tagMap[at.ConnectionID], at.Tag)
+		uniqueTags[at.Tag] = true
+	}
+	connDTOs := make([]AccessRequestTargetConnection, 0, len(conns))
+	for _, c := range conns {
+		var fID *string
+		if c.FolderID.Valid {
+			fID = &c.FolderID.String
+		}
+		connDTOs = append(connDTOs, AccessRequestTargetConnection{
+			ID:          c.ID,
+			Name:        c.Name,
+			Protocol:    c.Protocol,
+			Environment: c.Environment,
+			FolderID:    fID,
+			Tags:        tagMap[c.ID],
+		})
+	}
+
+	folders, err := s.store.Q.ListFolders(ctx)
+	if err != nil {
+		return AccessRequestTargets{}, err
+	}
+	folderDTOs := make([]AccessRequestTargetFolder, 0, len(folders))
+	for _, f := range folders {
+		var pID *string
+		if f.ParentID.Valid {
+			pID = &f.ParentID.String
+		}
+		folderDTOs = append(folderDTOs, AccessRequestTargetFolder{
+			ID:       f.ID,
+			ParentID: pID,
+			Name:     f.Name,
+		})
+	}
+
+	tags := make([]string, 0, len(uniqueTags))
+	for t := range uniqueTags {
+		tags = append(tags, t)
+	}
+	sort.Strings(tags)
+
+	return AccessRequestTargets{
+		Connections: connDTOs,
+		Folders:     folderDTOs,
+		Tags:        tags,
+	}, nil
+}
+
+func (s *AccessRequestService) Enrich(ctx context.Context, rs []db.ConfigAccessRequest) ([]EnrichedAccessRequest, error) {
+	users, _ := s.store.Q.ListUsers(ctx)
+	userMap := make(map[string]db.ConfigUser, len(users))
+	for _, u := range users {
+		userMap[u.ID] = u
+	}
+
+	conns, _ := s.store.Q.ListConnections(ctx)
+	connMap := make(map[string]string, len(conns))
+	for _, c := range conns {
+		connMap[c.ID] = c.Name
+	}
+
+	folders, _ := s.store.Q.ListFolders(ctx)
+	folderMap := make(map[string]string, len(folders))
+	for _, f := range folders {
+		folderMap[f.ID] = f.Name
+	}
+
+	out := make([]EnrichedAccessRequest, 0, len(rs))
+	for _, r := range rs {
+		var userUsername, userDisplayName string
+		if u, ok := userMap[r.UserID]; ok {
+			userUsername = u.Username
+			userDisplayName = u.DisplayName
+			if userDisplayName == "" {
+				userDisplayName = u.Username
+			}
+		}
+
+		var reviewerUsername *string
+		if r.ReviewedBy.Valid {
+			if rev, ok := userMap[r.ReviewedBy.String]; ok {
+				name := rev.DisplayName
+				if name == "" {
+					name = rev.Username
+				}
+				reviewerUsername = &name
+			}
+		}
+
+		objectName := r.ObjectRef
+		switch r.ObjectType {
+		case "connection":
+			if name, ok := connMap[r.ObjectRef]; ok {
+				objectName = name
+			}
+		case "folder":
+			if name, ok := folderMap[r.ObjectRef]; ok {
+				objectName = name
+			}
+		}
+
+		out = append(out, EnrichedAccessRequest{
+			Request:          r,
+			UserUsername:     userUsername,
+			UserDisplayName:  userDisplayName,
+			ReviewerUsername: reviewerUsername,
+			ObjectName:       objectName,
+		})
+	}
+	return out, nil
+}
+
+func (s *AccessRequestService) ListEnriched(ctx context.Context, userID, status string) ([]EnrichedAccessRequest, error) {
+	reqs, err := s.List(ctx, userID, status)
+	if err != nil {
+		return nil, err
+	}
+	return s.Enrich(ctx, reqs)
+}
+
+func (s *AccessRequestService) GetEnriched(ctx context.Context, id string) (EnrichedAccessRequest, error) {
+	req, err := s.Get(ctx, id)
+	if err != nil {
+		return EnrichedAccessRequest{}, err
+	}
+	enriched, err := s.Enrich(ctx, []db.ConfigAccessRequest{req})
+	if err != nil {
+		return EnrichedAccessRequest{}, err
+	}
+	return enriched[0], nil
+}
+

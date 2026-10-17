@@ -96,4 +96,41 @@ func TestRecordingService_Lifecycle(t *testing.T) {
 	if rSize != size {
 		t.Fatalf("RecordingSize mismatch: %d vs %d", rSize, size)
 	}
+
+	// 7. CheckViewRecording and AuditView
+	sessSvc := NewSessionService(st)
+	sessID := store.NewID()
+	err = sessSvc.StartSession(ctx, StartSessionParams{
+		SessionID:          sessID,
+		UserID:             "user1",
+		Username:           "alice",
+		ConnectionID:       "conn1",
+		ConnectionSnapshot: `{}`,
+		Recording:          fName,
+		Actor:              adminActor,
+	})
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+
+	// Dev or auditor can view
+	sessRec, err := recSvc.CheckViewRecording(ctx, adminActor, "user1", true, false, sessID)
+	if err != nil {
+		t.Fatalf("CheckViewRecording failed: %v", err)
+	}
+	if sessRec.ID != sessID {
+		t.Fatalf("session ID mismatch: %s vs %s", sessRec.ID, sessID)
+	}
+
+	// Non-auditor without permission -> ErrForbidden
+	_, err = recSvc.CheckViewRecording(ctx, adminActor, "user1", false, false, sessID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+
+	// AuditView
+	if err := recSvc.AuditView(ctx, adminActor, sessID); err != nil {
+		t.Fatalf("AuditView failed: %v", err)
+	}
 }
+

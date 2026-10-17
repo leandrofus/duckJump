@@ -566,3 +566,42 @@ func (s *UserService) DisableTOTP(
 		})
 	})
 }
+
+func (s *UserService) RecordLoginSuccess(ctx context.Context, actor store.Actor, userID, method string) error {
+	_ = s.store.Q.TouchUserLogin(ctx, db.TouchUserLoginParams{ID: userID, Now: store.NullTime(store.Now())})
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "auth.login",
+		ObjectType: "user",
+		ObjectID:   userID,
+		Details:    map[string]any{"method": method},
+	})
+}
+
+func (s *UserService) RecordLoginFailure(ctx context.Context, username, ip, reason string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      store.Actor{Name: username, IP: ip},
+		Action:     "auth.login_failed",
+		ObjectType: "user",
+		Details:    map[string]any{"reason": reason},
+	})
+}
+
+func (s *UserService) RecordTOTPFailure(ctx context.Context, actor store.Actor, userID string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "auth.totp_failed",
+		ObjectType: "user",
+		ObjectID:   userID,
+	})
+}
+
+func (s *UserService) RecordLogout(ctx context.Context, actor store.Actor, userID string) error {
+	return s.store.AuditTx(ctx, store.Event{
+		Actor:      actor,
+		Action:     "auth.logout",
+		ObjectType: "user",
+		ObjectID:   userID,
+	})
+}
+

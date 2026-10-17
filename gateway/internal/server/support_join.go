@@ -15,7 +15,7 @@ import (
 // ServeSupportJoin serves either the public HTML landing page or JSON metadata for the support link.
 func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	sess, err := s.Store.Q.GetSupportSessionByToken(r.Context(), token)
+	sess, err := s.Support.GetStatusByToken(r.Context(), token)
 	if err != nil {
 		http.Error(w, "Enlace de asistencia no válido o expirado", http.StatusNotFound)
 		return

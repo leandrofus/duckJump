@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/leandrofus/duckjump/gateway/internal/auth"
-	"github.com/leandrofus/duckjump/gateway/internal/store"
 )
 
 const oidcCookie = "duckjump_oidc"
@@ -119,8 +118,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Warn("oidc login failed", "user", name, "reason", reason, "err", err)
 		}
-		s.Store.AuditTx(ctx, store.Event{Actor: store.Actor{Name: name, IP: ip}, Action: "auth.login_failed", ObjectType: "user",
-			Details: map[string]any{"method": "oidc", "reason": reason}})
+		_ = s.Users.RecordLoginFailure(ctx, name, ip, reason)
 		if app != nil {
 			appRedirect(w, r, app, url.Values{"error": {reason}})
 			return
