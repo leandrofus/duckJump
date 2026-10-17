@@ -29,7 +29,7 @@ help: ## Show this help
 
 build: web gateway duckjumpd rdp ## Compile everything (PROFILE=release) into dist/bin
 	@mkdir -p $(BIN)
-	cp gateway/bin/duckjump-gw gateway/bin/duckjump-agent $(BIN)/
+	cp -a gateway/bin/duckjump gateway/bin/duckjump-gw gateway/bin/duckjump-agent $(BIN)/
 	cp duckjumpd/target/$(PROFILE)/duckjumpd duckjumpd/target/$(PROFILE)/duckjump-assist duckjumpd/rdp/target/$(PROFILE)/duckjumpd-rdp $(BIN)/
 	@echo "binaries in $(BIN)/ ($(PROFILE)):" && ls -lh $(BIN) | tail -n +2
 
@@ -182,7 +182,7 @@ packages: ## rpm + deb with systemd services (duckjump, duckjump-agent) and the 
 	VERSION=$(VERSION) packaging/build.sh
 
 clean: ## Remove build outputs (keeps .dev data)
-	rm -rf $(DIST) gateway/bin/duckjump-gw gateway/bin/duckjump-agent
+	rm -rf $(DIST) gateway/bin/duckjump gateway/bin/duckjump-gw gateway/bin/duckjump-agent
 	cd duckjumpd && cargo clean
 	cd duckjumpd/rdp && cargo clean
 	cd duckjumpd/assist-app && cargo clean

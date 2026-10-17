@@ -28,5 +28,6 @@ test:
 	go test ./...
 
 build:
-	go build -o bin/duckjump-gw ./cmd/duckjump-gw
+	go build -o bin/duckjump ./cmd/duckjump-gw
+	ln -sf duckjump bin/duckjump-gw
 	CGO_ENABLED=0 go build -ldflags='-s -w' -o bin/duckjump-agent ./cmd/duckjump-agent

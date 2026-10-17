@@ -14,7 +14,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RUN=$ROOT/.dev
-GW=$ROOT/gateway/bin/duckjump-gw
+GW=${GW:-$ROOT/gateway/bin/duckjump}
 SITE=edge1
 
 if [[ ${1:-} == stop ]]; then

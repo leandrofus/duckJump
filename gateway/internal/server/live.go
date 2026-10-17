@@ -123,6 +123,7 @@ type liveSession struct {
 	controllerName string
 	shareTokens    map[string]shareTokenInfo
 	sshBuffer      *terminalBuffer
+	empty          chan struct{}
 }
 
 func (ls *liveSession) addParticipant(p *liveParticipant) {
@@ -173,6 +174,12 @@ func (ls *liveSession) removeParticipant(id string) int {
 		}
 	}
 	count := len(ls.participants)
+	if count == 0 && ls.empty != nil {
+		select {
+		case ls.empty <- struct{}{}:
+		default:
+		}
+	}
 	ls.mu.Unlock()
 
 	if count > 0 {

@@ -14,9 +14,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"text/tabwriter"
 	"time"
 
+	"github.com/leandrofus/duckjump/gateway/internal/access"
 	"github.com/leandrofus/duckjump/gateway/internal/auth"
 	"github.com/leandrofus/duckjump/gateway/internal/edge"
 	"github.com/leandrofus/duckjump/gateway/internal/envcompat"
@@ -27,59 +32,117 @@ import (
 	"github.com/leandrofus/duckjump/gateway/internal/vault"
 )
 
-const usage = `usage: duckjump-gw <command> [flags]
+var version = "0.1.0"
 
-commands:
-  serve     run the gateway
-  keygen    print a new master key for DUCKJUMP_MASTER_KEY
-  user      create a local user   (user -name admin -password ... [-role superadmin])
+const usage = `duckJump — clientless web-based access bastion for SSH, RDP and VNC
 
-  Quick-start helpers (the same as the API, audited as "cli"):
-  secret    vault a credential    (secret -name s -user root [-password x | -key-file id_ed25519])
-  site      add a site            (site -name edge1 [-direct]; prints the agent token)
-  conn      add a connection      (conn -name web1 -host 10.0.0.5 [-port 22] -secret s [-site edge1])
-  grant     grant access          (grant -user ana -conn web1 [-ttl 2h] [-upload] [-download])
-  hostkey   approve a host key    (hostkey -conn web1 [-fingerprint SHA256:...]; default: the pending one)
+Usage:
+  duckjump serve             [--listen 0.0.0.0:8080] [--allow IP,CIDR,host] ...
+                               Web UI + API + session tunnel
+  duckjump ui                Opens the UI locally (127.0.0.1:8080) and launches the browser
+  duckjump agent             --server wss://... --token ... [--allow <CIDR>]
+                               Connects this edge node outbound to the central gateway
+  duckjump install-service   [serve flags] Install systemd service (root)
 
-  Sessions and audit:
-  sessions  list open sessions
-  kill      end a live session    (kill -session ID [-reason "..."]; the gateway acts within seconds)
-  audit-seal  start the audit MAC chain on events from before it existed (once, after upgrading)
+  duckjump conn ls | add <name> --host <h> [--protocol ssh|rdp|vnc] [--secret s] | rm <name>
+  duckjump conn tag ls <name> | add <name> <tag>... | clear <name>
+  duckjump user ls | add <name> --password <p> [--role superadmin|admin|auditor|user] | rm <name> | passwd <name> | enable <name> | disable <name>
+  duckjump group ls | add <name> [--desc "..."] | rm <name> | member ls|add|rm <group> <user>
+  duckjump folder ls | add <name> [--parent <folder>] | rm <name>
+  duckjump secret ls | add <name> --user <u> [--password x | --key-file f] | rm <name>
+  duckjump site ls | add <name> [--direct] | rm <name> | token <name>
+  duckjump grant ls | add --user <u> --conn <c> [--ttl 2h] [--upload] [--download] | rm <id>
+  duckjump request ls [--status pending|approved|rejected] | approve <id> [--comment "..."] | deny <id>
+  duckjump allow ls | add <IP|CIDR|host>... | rm <entry>...
 
-  Database:
-  migrate-to-postgres  copy this SQLite database into an empty PostgreSQL one
-                       (migrate-to-postgres -to postgres://user:pass@host/db); then set DUCKJUMP_DB to it
+  duckjump session ls | kill <session-id> [--reason "..."]
+  duckjump recording ls
+  duckjump audit ls [--limit 50] [--action "..."] | verify | seal
+  duckjump hostkey --conn <c> [--fingerprint SHA256:...]
+  duckjump keygen
+  duckjump migrate-to-postgres --to postgres://...
+  duckjump version
 
-environment: DUCKJUMP_DB (default duckjump.db: a SQLite file; or postgres://… for PostgreSQL), DUCKJUMP_MASTER_KEY, DUCKJUMPD_ADDR, DUCKJUMPD_TOKEN,
-  DUCKJUMPD_TLS=1 with DUCKJUMPD_TLS_FINGERPRINT or DUCKJUMPD_CA (TLS to a duckjumpd on another host),
-  DUCKJUMP_S3_ENDPOINT, _BUCKET, _REGION, _PREFIX, _ACCESS_KEY, _SECRET_KEY[_FILE], _PATH_STYLE (recordings in S3; same as duckjumpd)
-  Secrets can also come from a file: DUCKJUMP_MASTER_KEY_FILE, DUCKJUMPD_TOKEN_FILE, or the
-  systemd credentials duckjump-master-key and duckjumpd-token (LoadCredential=).
+Environment:
+  DUCKJUMP_DB (default duckjump.db), DUCKJUMP_MASTER_KEY, DUCKJUMPD_ADDR, DUCKJUMPD_TOKEN,
+  DUCKJUMPD_TLS=1 with DUCKJUMPD_TLS_FINGERPRINT or DUCKJUMPD_CA,
+  DUCKJUMP_S3_ENDPOINT, _BUCKET, _REGION, _PREFIX, _ACCESS_KEY, _SECRET_KEY[_FILE], _PATH_STYLE.
 `
 
 var cli = store.Actor{Name: "cli"}
 
 func main() {
 	envcompat.Apply()
+	var cmd string
+	var args []string
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		if strings.HasSuffix(filepath.Base(os.Args[0]), "agent") {
+			cmd = "agent"
+			args = nil
+		} else {
+			fmt.Fprint(os.Stderr, usage)
+			os.Exit(2)
+		}
+	} else {
+		cmd, args = os.Args[1], os.Args[2:]
+		if strings.HasSuffix(filepath.Base(os.Args[0]), "agent") && strings.HasPrefix(cmd, "-") {
+			cmd = "agent"
+			args = os.Args[1:]
+		}
 	}
-	cmd, args := os.Args[1], os.Args[2:]
-	if cmd == "keygen" {
+
+	switch cmd {
+	case "version", "--version", "-v":
+		fmt.Println("duckjump", version)
+		return
+	case "help", "--help", "-h":
+		fmt.Print(usage)
+		return
+	case "keygen":
 		fmt.Println(vault.GenerateKey())
 		return
+	case "agent":
+		if err := agentCmd(args); err != nil {
+			fatal(err)
+		}
+		return
+	case "install-service":
+		if err := installService(args); err != nil {
+			fatal(err)
+		}
+		return
 	}
+
 	cmds := map[string]func(context.Context, *store.Store, []string) error{
-		"serve": serve, "user": addUser, "secret": addSecret, "site": addSite, "conn": addConn, "grant": grant,
-		"hostkey": approveKey, "sessions": listSessions, "kill": killSession, "audit-seal": auditSeal,
+		"serve":               func(ctx context.Context, st *store.Store, a []string) error { return serve(ctx, st, a, false) },
+		"ui":                  func(ctx context.Context, st *store.Store, a []string) error { return serve(ctx, st, a, true) },
+		"user":                userCmd,
+		"group":               groupCmd,
+		"folder":              folderCmd,
+		"secret":              secretCmd,
+		"site":                siteCmd,
+		"conn":                connCmd,
+		"grant":               grantCmd,
+		"request":             requestCmd,
+		"requests":            requestCmd,
+		"allow":               allowCmd,
+		"session":             sessionCmd,
+		"sessions":            listSessions,
+		"recording":           recordingCmd,
+		"recordings":          recordingCmd,
+		"audit":               auditCmd,
+		"kill":                killSession,
+		"hostkey":             approveKey,
+		"audit-seal":          auditSeal,
 		"migrate-to-postgres": migrateToPostgres,
 	}
 	run, ok := cmds[cmd]
 	if !ok {
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+
 	// Every command writes audit events, and the chain carries MACs keyed
 	// from the master key.
 	v, err := openVault()
@@ -87,19 +150,24 @@ func main() {
 		fatal(err)
 	}
 	store.SetAuditKey(v.Derive("audit-mac"))
-	st, err := store.Open(env("DUCKJUMP_DB", defaultDB()))
+	dbPath := env("DUCKJUMP_DB", defaultDB())
+	st, err := store.Open(dbPath)
 	if err != nil {
 		fatal(err)
 	}
-	defer st.Close()
+	defer func() {
+		st.Close()
+		fixDbPermissions(dbPath)
+	}()
 	if err := run(context.Background(), st, args); err != nil {
 		fatal(err)
 	}
 }
 
-func serve(ctx context.Context, st *store.Store, args []string) error {
+func serve(ctx context.Context, st *store.Store, args []string, openBrowser bool) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	listen := fs.String("listen", "127.0.0.1:8080", "HTTP listen address")
+	allowFlag := fs.String("allow", "", "allowed client IPs, CIDRs or hostnames (comma-separated). Loopback is always allowed")
 	dev := fs.Bool("dev", false, "disable user authentication (PoC only, never expose)")
 	agentListen := fs.String("agent-listen", "", "listen address for edge agents (only /agent/connect), e.g. 0.0.0.0:18443")
 	relayListen := fs.String("relay-listen", "127.0.0.1:4824", "listen address duckjumpd uses to reach edge sites")
@@ -184,7 +252,7 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 		return fmt.Errorf("DUCKJUMPD_TOKEN is required")
 	}
 	if n, err := st.Q.CountUsers(ctx); err == nil && n == 0 && !*dev {
-		slog.Warn("no users yet: create one with `duckjump-gw user -name admin -password ... -role superadmin`")
+		slog.Warn("no users yet: create one with `duckjump user add admin --password ... --role superadmin`")
 	}
 
 	hub := edge.NewHub(st.AgentSiteLookup)
@@ -220,7 +288,9 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 		slog.Info("single sign-on enabled", "issuer", *oidcIssuer, "client", *oidcClient, "roles_claim", *oidcRoles)
 	}
 	go func() {
-		for range time.Tick(10 * time.Minute) {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
 			if n, err := authSvc.PurgeExpired(context.Background()); err != nil {
 				slog.Error("purging web sessions", "err", err)
 			} else if n > 0 {
@@ -303,6 +373,29 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 		go st.ExportAudit(ctx, sinks, 2*time.Second)
 		slog.Info("exporting the audit log", "to", *auditExport)
 	}
+
+	// Build allowlist
+	dbAllow, _ := loadAllowlist(ctx, st)
+	var allowEntries []string
+	allowEntries = append(allowEntries, dbAllow...)
+	if *allowFlag != "" {
+		for _, e := range strings.Split(*allowFlag, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				if !containsStr(allowEntries, e) {
+					allowEntries = append(allowEntries, e)
+				}
+			}
+		}
+	}
+	var acl *access.List
+	if len(allowEntries) > 0 {
+		var err error
+		acl, err = access.New(allowEntries)
+		if err != nil {
+			return fmt.Errorf("allowlist: %w", err)
+		}
+	}
+
 	addrs := strings.Split(*listen, ",")
 	var listeners []net.Listener
 	for _, a := range addrs {
@@ -323,11 +416,44 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 		if tlsConf != nil {
 			l = tls.NewListener(l, tlsConf)
 		}
+		if acl != nil {
+			l = acl.Listener(l)
+		}
 		listeners = append(listeners, l)
 		slog.Info("duckjump-gw listening", "addr", addr, "tls", tlsConf != nil, "duckjumpd", srv.DaemonAddr)
 	}
 	if len(listeners) == 0 {
 		return errors.New("no listen addresses specified")
+	}
+
+	primaryAddr := addrs[0]
+	if !strings.Contains(primaryAddr, ":") {
+		primaryAddr += ":8080"
+	}
+	proto := "http"
+	if tlsConf != nil {
+		proto = "https"
+	}
+	host, port, _ := net.SplitHostPort(primaryAddr)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	uiURL := fmt.Sprintf("%s://%s", proto, net.JoinHostPort(host, port))
+	if *frontendURL != "" {
+		uiURL = *frontendURL
+	}
+
+	printBanner(uiURL, st, srv.DaemonAddr, allowEntries)
+
+	if openBrowser {
+		go func() {
+			time.Sleep(400 * time.Millisecond)
+			for _, b := range []string{"xdg-open", "open"} {
+				if exec.Command(b, uiURL).Start() == nil {
+					return
+				}
+			}
+		}()
 	}
 
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, TLSConfig: tlsConf}
@@ -340,186 +466,51 @@ func serve(ctx context.Context, st *store.Store, args []string) error {
 	return <-errCh
 }
 
-func addUser(ctx context.Context, st *store.Store, args []string) error {
-	fs := flag.NewFlagSet("user", flag.ExitOnError)
-	name := fs.String("name", "", "username")
-	password := fs.String("password", "", "password (at least 10 characters)")
-	role := fs.String("role", "user", "superadmin | admin | auditor | user")
-	fs.Parse(args)
-	if *name == "" {
-		return fmt.Errorf("need -name")
-	}
-	if err := auth.CheckPasswordPolicy(*password); err != nil {
-		return err
-	}
-	h, err := auth.HashPassword(*password)
-	if err != nil {
-		return err
-	}
-	id := store.NewID()
-	return st.Tx(ctx, func(q *db.Queries) error {
-		if err := q.CreateUser(ctx, db.CreateUserParams{ID: id, Username: strings.ToLower(*name), PasswordHash: store.NullString(h),
-			Source: "local", Role: *role, Now: store.Now()}); err != nil {
-			return store.Classify(err)
-		}
-		fmt.Printf("user %s created (%s)\n", *name, *role)
-		return store.Audit(ctx, q, store.Event{Actor: cli, Action: "user.create", ObjectType: "user", ObjectID: id,
-			Details: map[string]any{"username": *name, "role": *role}})
-	})
-}
-
-func addSecret(ctx context.Context, st *store.Store, args []string) error {
-	fs := flag.NewFlagSet("secret", flag.ExitOnError)
-	name := fs.String("name", "", "secret name")
-	user := fs.String("user", "", "remote username")
-	password := fs.String("password", "", "remote password")
-	keyFile := fs.String("key-file", "", "private key file (OpenSSH/PEM)")
-	fs.Parse(args)
-	if *name == "" || *user == "" || (*password == "") == (*keyFile == "") {
-		return fmt.Errorf("need -name, -user and exactly one of -password or -key-file")
-	}
-	v, err := openVault()
-	if err != nil {
-		return err
-	}
-	kind, plain := "password", []byte(*password)
-	if *keyFile != "" {
-		if plain, err = os.ReadFile(*keyFile); err != nil {
-			return err
-		}
-		kind = "private_key"
-	}
-	id := store.NewID()
-	return st.Tx(ctx, func(q *db.Queries) error {
-		if err := q.CreateSecret(ctx, db.CreateSecretParams{ID: id, Name: *name, Kind: kind, Username: *user,
-			Sealed: v.Seal(plain, []byte(id)), Now: store.Now()}); err != nil {
-			return store.Classify(err)
-		}
-		fmt.Printf("secret %s stored (%s)\n", *name, kind)
-		return store.Audit(ctx, q, store.Event{Actor: cli, Action: "secret.create", ObjectType: "secret", ObjectID: id,
-			Details: map[string]any{"name": *name, "kind": kind, "username": *user}})
-	})
-}
-
-func addSite(ctx context.Context, st *store.Store, args []string) error {
-	fs := flag.NewFlagSet("site", flag.ExitOnError)
-	name := fs.String("name", "", "site name")
-	direct := fs.Bool("direct", false, "hosts are reachable directly from duckjumpd (no agent)")
-	fs.Parse(args)
-	if *name == "" {
-		return fmt.Errorf("need -name")
-	}
-	kind, tok, hash := "agent", edge.NewToken(), ""
-	if *direct {
-		kind, tok = "direct", ""
+func printBanner(uiURL string, st *store.Store, daemonAddr string, allowEntries []string) {
+	fmt.Printf("\n  duckJump %s\n\n", version)
+	fmt.Printf("  UI         %s\n", uiURL)
+	fmt.Printf("  Vault      active (audit chain verified)\n")
+	if len(allowEntries) > 0 {
+		fmt.Printf("  Allowlist  loopback %s\n", strings.Join(allowEntries, " "))
 	} else {
-		hash = edge.HashToken(tok)
+		fmt.Printf("  Allowlist  loopback (open to all networks)\n")
 	}
-	id := store.NewID()
-	return st.Tx(ctx, func(q *db.Queries) error {
-		if err := q.CreateSite(ctx, db.CreateSiteParams{ID: id, Name: *name, Kind: kind, AgentTokenHash: store.NullString(hash), Now: store.Now()}); err != nil {
-			return store.Classify(err)
-		}
-		if tok != "" {
-			fmt.Printf("site %s created (agent). Agent token, shown only once:\n%s\n", *name, tok)
-		} else {
-			fmt.Printf("site %s created (direct)\n", *name)
-		}
-		return store.Audit(ctx, q, store.Event{Actor: cli, Action: "site.create", ObjectType: "site", ObjectID: id,
-			Details: map[string]any{"name": *name, "kind": kind}})
-	})
+	dbInfo := "sqlite"
+	if st.Postgres {
+		dbInfo = "postgresql"
+	}
+	fmt.Printf("  Database   %s\n", dbInfo)
+	if daemonAddr != "" {
+		fmt.Printf("  Daemon     %s\n", daemonAddr)
+	}
+	fmt.Printf("\n")
 }
 
-func addConn(ctx context.Context, st *store.Store, args []string) error {
-	fs := flag.NewFlagSet("conn", flag.ExitOnError)
-	name := fs.String("name", "", "connection name")
-	protocol := fs.String("protocol", "ssh", "ssh | rdp | vnc")
-	host := fs.String("host", "", "target host")
-	port := fs.Int("port", 22, "target port")
-	secret := fs.String("secret", "", "vaulted credential name")
-	site := fs.String("site", "", "site the host belongs to (default: reachable directly)")
-	noRecord := fs.Bool("no-record", false, "do not record sessions")
-	recInput := fs.Bool("record-input", false, "also record keystrokes")
-	hostKey := fs.String("host-key", "", "pin this server key (SHA256:...) up front instead of approving it after the first attempt")
-	fs.Parse(args)
-	if *name == "" || *host == "" {
-		return fmt.Errorf("need -name and -host")
-	}
-	p := db.CreateConnectionParams{ID: store.NewID(), Name: *name, Protocol: *protocol, Host: *host, Port: int64(*port),
-		Backend: store.BackendNative, CredentialMode: "vault", Params: "{}", Record: !*noRecord, RecordInput: *recInput, Now: store.Now()}
-	if *hostKey != "" && !strings.HasPrefix(*hostKey, "SHA256:") {
-		return fmt.Errorf("-host-key must look like SHA256:...")
-	}
-	return st.Tx(ctx, func(q *db.Queries) error {
-		if *secret != "" {
-			sec, err := q.GetSecretByName(ctx, *secret)
-			if err != nil {
-				return fmt.Errorf("secret %q: %w", *secret, store.Classify(err))
-			}
-			p.SecretID = store.NullString(sec.ID)
-		}
-		if *site != "" {
-			s, err := q.GetSiteByName(ctx, *site)
-			if err != nil {
-				return fmt.Errorf("site %q: %w", *site, store.Classify(err))
-			}
-			p.SiteID = store.NullString(s.ID)
-		}
-		if err := q.CreateConnection(ctx, p); err != nil {
-			return store.Classify(err)
-		}
-		if *hostKey != "" {
-			if _, err := q.ApproveHostKey(ctx, db.ApproveHostKeyParams{ID: p.ID, HostKey: store.NullString(*hostKey), Now: store.Now()}); err != nil {
-				return err
-			}
-		}
-		fmt.Printf("connection %s created (%s)\n", *name, p.ID)
-		return store.Audit(ctx, q, store.Event{Actor: cli, Action: "connection.create", ObjectType: "connection", ObjectID: p.ID,
-			Details: map[string]any{"name": *name, "protocol": *protocol, "host": *host, "port": *port}})
-	})
-}
-
-func grant(ctx context.Context, st *store.Store, args []string) error {
-	fs := flag.NewFlagSet("grant", flag.ExitOnError)
-	user := fs.String("user", "", "username")
-	conn := fs.String("conn", "", "connection name")
-	ttl := fs.Duration("ttl", 0, "access duration for just-in-time grants (0 = permanent)")
-	upload := fs.Bool("upload", false, "also allow sending files to the host")
-	download := fs.Bool("download", false, "also allow taking files from the host")
-	fs.Parse(args)
-	id := store.NewID()
-	return st.Tx(ctx, func(q *db.Queries) error {
-		u, err := q.GetUserByUsername(ctx, *user)
-		if err != nil {
-			return fmt.Errorf("user %q: %w", *user, store.Classify(err))
-		}
-		c, err := q.GetConnectionByName(ctx, *conn)
-		if err != nil {
-			return fmt.Errorf("connection %q: %w", *conn, store.Classify(err))
-		}
-		var exp time.Time
-		if *ttl > 0 {
-			exp = store.Now().Add(*ttl)
-		}
-		if err := q.CreatePolicy(ctx, db.CreatePolicyParams{ID: id, SubjectType: "user", SubjectID: u.ID, ObjectType: "connection",
-			ObjectRef: c.ID, CanConnect: true, CanUpload: *upload, CanDownload: *download, ExpiresAt: store.NullTime(exp), Now: store.Now()}); err != nil {
-			return err
-		}
-		fmt.Printf("granted %s -> %s\n", *user, *conn)
-		return store.Audit(ctx, q, store.Event{Actor: cli, Action: "policy.create", ObjectType: "policy", ObjectID: id,
-			Details: map[string]any{"subject": "user:" + u.ID, "object": "connection:" + c.ID, "can_connect": true,
-				"can_upload": *upload, "can_download": *download}})
-	})
-}
-
-// defaultDB is duckjump.db, or palta.db when only that one (from before
-// the rename) exists here.
+// defaultDB returns the target database. It looks first in the current
+// directory for duckjump.db (or palta.db), then in /etc/duckjump/duckjump.env,
+// then /var/lib/duckjump/duckjump.db for installed packages.
 func defaultDB() string {
-	if _, err := os.Stat("duckjump.db"); err != nil {
-		if _, err := os.Stat("palta.db"); err == nil {
-			slog.Warn("using palta.db from before the rename; rename it to duckjump.db (with its -wal/-shm files)")
-			return "palta.db"
+	if _, err := os.Stat("duckjump.db"); err == nil {
+		return "duckjump.db"
+	}
+	if _, err := os.Stat("palta.db"); err == nil {
+		slog.Warn("using palta.db from before the rename; rename it to duckjump.db (with its -wal/-shm files)")
+		return "palta.db"
+	}
+	if envBytes, err := os.ReadFile("/etc/duckjump/duckjump.env"); err == nil {
+		for _, line := range strings.Split(string(envBytes), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "DUCKJUMP_DB=") {
+				val := strings.TrimPrefix(line, "DUCKJUMP_DB=")
+				val = strings.Trim(val, `"'`)
+				if val != "" {
+					return val
+				}
+			}
 		}
+	}
+	if _, err := os.Stat("/var/lib/duckjump/duckjump.db"); err == nil {
+		return "/var/lib/duckjump/duckjump.db"
 	}
 	return "duckjump.db"
 }
@@ -570,18 +561,19 @@ func listSessions(ctx context.Context, st *store.Store, args []string) error {
 		fmt.Println("no open sessions")
 		return nil
 	}
-	fmt.Printf("%-32s  %-16s  %-24s  %-15s  %s\n", "SESSION", "USER", "CONNECTION", "FROM", "STARTED")
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "SESSION\tUSER\tCONNECTION\tFROM\tSTARTED")
 	for _, x := range rows {
 		var c struct{ Name string }
 		json.Unmarshal([]byte(x.ConnectionSnapshot), &c)
-		fmt.Printf("%-32s  %-16s  %-24s  %-15s  %s\n", x.ID, x.Username, c.Name, x.ClientIP, x.StartedAt.Local().Format(time.DateTime))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", x.ID, x.Username, c.Name, x.ClientIP, x.StartedAt.Local().Format(time.DateTime))
 	}
-	return nil
+	return tw.Flush()
 }
 
 func killSession(ctx context.Context, st *store.Store, args []string) error {
 	fs := flag.NewFlagSet("kill", flag.ExitOnError)
-	id := fs.String("session", "", "session id (see `duckjump-gw sessions`)")
+	id := fs.String("session", "", "session id (see `duckjump session ls`)")
 	reason := fs.String("reason", "", "shown to the user and audited")
 	fs.Parse(args)
 	return st.Tx(ctx, func(q *db.Queries) error {
@@ -673,7 +665,7 @@ func openVault() (*vault.Vault, error) {
 		return nil, err
 	}
 	if k == "" {
-		return nil, fmt.Errorf("DUCKJUMP_MASTER_KEY is required (generate one with: duckjump-gw keygen)")
+		return nil, fmt.Errorf("DUCKJUMP_MASTER_KEY is required (generate one with: duckjump keygen)")
 	}
 	return vault.New(k)
 }
@@ -691,6 +683,18 @@ func secretEnv(k, cred string) (string, error) {
 			f = envcompat.Credential(dir, cred)
 		}
 	}
+	if f == "" && k == "DUCKJUMP_MASTER_KEY" {
+		if _, err := os.Stat("/etc/duckjump/master.key"); err == nil {
+			f = "/etc/duckjump/master.key"
+		} else if _, err := os.Stat("master.key"); err == nil {
+			f = "master.key"
+		}
+	}
+	if f == "" && k == "DUCKJUMPD_TOKEN" {
+		if _, err := os.Stat("/etc/duckjump/duckjumpd.token"); err == nil {
+			f = "/etc/duckjump/duckjumpd.token"
+		}
+	}
 	if f == "" {
 		return "", nil
 	}
@@ -699,6 +703,30 @@ func secretEnv(k, cred string) (string, error) {
 		return "", fmt.Errorf("reading %s: %w", k, err)
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+func fixDbPermissions(dbPath string) {
+	if os.Geteuid() != 0 || strings.HasPrefix(dbPath, "postgres://") || strings.HasPrefix(dbPath, "postgresql://") {
+		return
+	}
+	dir := filepath.Dir(dbPath)
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return
+	}
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return
+	}
+	uid, gid := int(stat.Uid), int(stat.Gid)
+	if uid == 0 && gid == 0 {
+		return
+	}
+	for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		if _, err := os.Stat(p); err == nil {
+			_ = os.Chown(p, uid, gid)
+		}
+	}
 }
 
 func env(k, def string) string {

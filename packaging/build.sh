@@ -19,9 +19,10 @@ mkdir -p "$OUT" dist/packages dist/build
 echo "→ UI"
 make -s web >/dev/null
 
-echo "→ duckjump-gw, duckjump-agent (Go, static)"
+echo "→ duckjump, duckjump-agent (Go, static)"
 (cd gateway &&
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$OUT/duckjump-gw" ./cmd/duckjump-gw &&
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$OUT/duckjump" ./cmd/duckjump-gw &&
+	ln -sf duckjump "../$OUT/duckjump-gw" &&
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "../$OUT/duckjump-agent" ./cmd/duckjump-agent)
 
 echo "→ duckjumpd, duckjumpd-rdp (Rust, $RUST_IMAGE)"

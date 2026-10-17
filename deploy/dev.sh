@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RUN=$ROOT/.dev
 LISTEN=${LISTEN:-127.0.0.1:8088}
-GW=$ROOT/gateway/bin/duckjump-gw
+GW=$ROOT/gateway/bin/duckjump
 ENGINE=${ENGINE:-$(command -v docker || command -v podman || echo "")}
 
 stop() {
@@ -54,7 +54,7 @@ if command -v bun >/dev/null && [[ ! -f $ROOT/gateway/internal/server/ui/dist/in
   echo "==> Recompilando interfaz web (React + TypeScript)..."
   (cd "$ROOT/gateway" && make web)
 fi
-(cd "$ROOT/gateway" && go build -o bin/duckjump-gw ./cmd/duckjump-gw && CGO_ENABLED=0 go build -o bin/duckjump-agent ./cmd/duckjump-agent)
+(cd "$ROOT/gateway" && go build -o bin/duckjump ./cmd/duckjump-gw && ln -sf duckjump bin/duckjump-gw && CGO_ENABLED=0 go build -o bin/duckjump-agent ./cmd/duckjump-agent)
 
 if [[ -n $ENGINE ]]; then
   "$ENGINE" run -d --rm --name duckjump-sshd -p 127.0.0.1:2222:2222 \

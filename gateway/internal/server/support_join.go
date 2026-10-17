@@ -964,6 +964,7 @@ func findDistFile(name string) (string, error) {
 		"../duckjumpd/target/release/" + name,
 		"duckjumpd/target/debug/" + name,
 		"gateway/bin/" + name,
+		"/usr/libexec/duckjump/" + name,
 		"/usr/bin/" + name,
 		"/usr/local/bin/" + name,
 	}

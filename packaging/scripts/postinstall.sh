@@ -27,9 +27,12 @@ if [ -d /run/systemd/system ] && systemctl list-unit-files duckjump-paltad.servi
 	if systemctl is-enabled duckjump-paltad.service >/dev/null 2>&1; then systemctl enable duckjumpd.service >/dev/null 2>&1 || true; fi
 	systemctl disable --now duckjump-paltad.service >/dev/null 2>&1 || true
 fi
+install -d /usr/libexec/duckjump
+ln -sf /usr/bin/duckjump /usr/libexec/duckjump/duckjump-gw
+
 umask 077
 if [ ! -s /etc/duckjump/master.key ]; then
-	/usr/libexec/duckjump/duckjump-gw keygen > /etc/duckjump/master.key
+	/usr/bin/duckjump keygen > /etc/duckjump/master.key
 fi
 if [ ! -s /etc/duckjump/duckjumpd.token ]; then
 	od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > /etc/duckjump/duckjumpd.token

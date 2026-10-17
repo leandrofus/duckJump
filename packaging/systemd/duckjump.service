@@ -20,7 +20,7 @@ EnvironmentFile=-/etc/duckjump/duckjump.env
 # Vault master key and the duckjumpd secret: root-only files, read through systemd.
 LoadCredential=duckjump-master-key:/etc/duckjump/master.key
 LoadCredential=duckjumpd-token:/etc/duckjump/duckjumpd.token
-ExecStart=/usr/libexec/duckjump/duckjump-gw serve -listen ${DUCKJUMP_LISTEN} $DUCKJUMP_OPTS
+ExecStart=/usr/bin/duckjump serve -listen ${DUCKJUMP_LISTEN} $DUCKJUMP_OPTS
 Restart=on-failure
 RestartSec=3
 StateDirectory=duckjump duckjump/recordings duckjump/files

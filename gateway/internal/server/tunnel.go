@@ -100,6 +100,7 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) err
 		cancel:       cancel,
 		participants: make(map[string]*liveParticipant),
 		shareTokens:  make(map[string]shareTokenInfo),
+		empty:        make(chan struct{}, 1),
 	}
 	if !graphical(conn.Protocol) {
 		ls.sshBuffer = newTerminalBuffer(128 * 1024)
@@ -379,6 +380,9 @@ func (s *Server) runSession(ctx context.Context, ws *websocket.Conn, ls *liveSes
 		if activeCount > 0 {
 			select {
 			case reason = <-down:
+			case <-ls.empty:
+				reason = "client disconnected"
+				djtp.WriteControl(pd, djtp.Control{Type: "close"})
 			case <-ctx.Done():
 				reason = "closed"
 			}

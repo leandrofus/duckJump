@@ -464,4 +464,9 @@ func TestSharedSessionAndControlCession(t *testing.T) {
 	if readyRoot["type"] != "ready" {
 		t.Fatalf("root failed to join: %v", readyRoot)
 	}
+
+	wsRoot.CloseNow()
+	wsBob.CloseNow()
+	wsAna.CloseNow()
+	waitSessionEnd(t, e, sessionID)
 }
