@@ -38,6 +38,7 @@ type Server struct {
 	Vault       *vault.Vault
 	Auth        *auth.Service
 	Users       *services.UserService
+	Connections *services.ConnectionService
 	Hub         *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -99,6 +100,9 @@ func (s *Server) Handler() http.Handler {
 	s.limiter = auth.NewLimiter()
 	if s.Users == nil && s.Store != nil {
 		s.Users = services.NewUserService(s.Store)
+	}
+	if s.Connections == nil && s.Store != nil {
+		s.Connections = services.NewConnectionService(s.Store)
 	}
 	if s.SupportHub == nil {
 		s.SupportHub = NewSupportHub()

@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 
-	"github.com/leandrofus/duckjump/gateway/internal/store"
-	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 )
 
 // openapi:schema ConnectionRequest
@@ -90,92 +88,7 @@ type updateConnectionRequest struct {
 
 // tagIndex maps connection id -> tags, for list responses.
 func (s *Server) tagIndex(ctx context.Context) (map[string][]string, error) {
-	rows, err := s.Store.Q.ListAllConnectionTags(ctx)
-	if err != nil {
-		return nil, err
-	}
-	m := map[string][]string{}
-	for _, t := range rows {
-		m[t.ConnectionID] = append(m[t.ConnectionID], t.Tag)
-	}
-	return m, nil
-}
-
-func (s *Server) connectionDTO(ctx context.Context, q *db.Queries, c db.ConfigConnection) (connectionDTO, error) {
-	tags, err := q.ListConnectionTags(ctx, c.ID)
-	return toConnection(c, tags), err
-}
-
-// checkConnection validates a connection row and the objects it references.
-func checkConnection(ctx context.Context, q *db.Queries, c *db.ConfigConnection) error {
-	if err := validName("name", c.Name); err != nil {
-		return err
-	}
-	def, ok := protocols[c.Protocol]
-	if !ok {
-		return badRequest("protocol must be ssh, rdp, vnc, tcp, http or https")
-	}
-	if c.Port == 0 && def > 0 {
-		c.Port = def
-	}
-	if c.Port < 1 || c.Port > 65535 {
-		return badRequest("port out of range")
-	}
-	if c.Host == "" {
-		return badRequest("host is required")
-	}
-	if c.Backend != store.BackendNative && c.Backend != "guacd" {
-		return badRequest("backend must be duckjumpd or guacd")
-	}
-	if c.CredentialMode != "vault" && c.CredentialMode != "prompt" {
-		return badRequest("credential_mode must be vault or prompt")
-	}
-	if !json.Valid([]byte(c.Params)) || len(c.Params) == 0 || c.Params[0] != '{' {
-		return badRequest("params must be a JSON object")
-	}
-	if c.FolderID.Valid {
-		if _, err := q.GetFolder(ctx, c.FolderID.String); err != nil {
-			return fromStore(err, "folder")
-		}
-	}
-	if c.SiteID.Valid {
-		if _, err := q.GetSite(ctx, c.SiteID.String); err != nil {
-			return fromStore(err, "site")
-		}
-	}
-	if c.SecretID.Valid {
-		if _, err := q.GetSecret(ctx, c.SecretID.String); err != nil {
-			return fromStore(err, "secret")
-		}
-	}
-	return nil
-}
-
-func setTags(ctx context.Context, q *db.Queries, id string, tags []string) error {
-	if err := q.ClearConnectionTags(ctx, id); err != nil {
-		return err
-	}
-	for _, t := range tags {
-		if err := q.AddConnectionTag(ctx, db.AddConnectionTagParams{ConnectionID: id, Tag: t}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
-// optID is the id a nullable PATCH field sets ("" for null).
-func optID(o opt[string]) string {
-	if o.Null {
-		return ""
-	}
-	return o.V
+	return s.Connections.TagIndex(ctx)
 }
 
 // openapi:operation
@@ -185,20 +98,17 @@ func optID(o opt[string]) string {
 //   '200': { description: The whole catalog, schema: '[]Connection' }
 
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx := r.Context()
-	cs, err := s.Store.Q.ListConnections(ctx)
-	if err != nil {
-		return err
-	}
-	tags, err := s.tagIndex(ctx)
-	if err != nil {
-		return err
-	}
-	out := make([]connectionDTO, 0, len(cs))
-	for _, c := range cs {
-		out = append(out, toConnection(c, tags[c.ID]))
-	}
-	return ok(w, out)
+	return handleOK(w, func() ([]connectionDTO, error) {
+		cs, tags, err := s.Connections.ListWithTags(r.Context())
+		if err != nil {
+			return nil, fromService(err, "connection")
+		}
+		out := make([]connectionDTO, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, toConnection(c, tags[c.ID]))
+		}
+		return out, nil
+	})
 }
 
 // openapi:operation
@@ -210,62 +120,30 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request, p princ
 //   '409': Error
 
 func (s *Server) createConnection(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req connectionRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	tags, err := validTags(req.Tags)
-	if err != nil {
-		return err
-	}
-	c := db.ConfigConnection{
-		ID: store.NewID(), Name: req.Name, Protocol: req.Protocol, Host: req.Host, Port: req.Port,
-		FolderID: store.NullString(deref(req.FolderID)), SiteID: store.NullString(deref(req.SiteID)),
-		Environment: req.Environment, Description: req.Description, Backend: req.Backend,
-		CredentialMode: req.CredentialMode, SecretID: store.NullString(deref(req.SecretID)),
-		Params: string(req.Params), Record: req.Record == nil || *req.Record, RecordInput: req.RecordInput,
-	}
-	if c.Backend == "" {
-		c.Backend = store.BackendNative
-	}
-	if c.CredentialMode == "" {
-		c.CredentialMode = "vault"
-	}
-	if c.Params == "" || c.Params == "null" {
-		c.Params = "{}"
-	}
-	ctx := r.Context()
-	var out connectionDTO
-	err = s.tx(ctx, func(q *db.Queries) error {
-		if err := checkConnection(ctx, q, &c); err != nil {
-			return err
-		}
-		if err := q.CreateConnection(ctx, db.CreateConnectionParams{
-			ID: c.ID, Name: c.Name, Protocol: c.Protocol, Host: c.Host, Port: c.Port, FolderID: c.FolderID,
-			SiteID: c.SiteID, Environment: c.Environment, Description: c.Description, Backend: c.Backend,
-			CredentialMode: c.CredentialMode, SecretID: c.SecretID, Params: c.Params, Record: c.Record,
-			RecordInput: c.RecordInput, Now: store.Now(),
-		}); err != nil {
-			return fromStore(err, "connection")
-		}
-		if err := setTags(ctx, q, c.ID, tags); err != nil {
-			return err
-		}
-		if err := store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.create", ObjectType: "connection", ObjectID: c.ID,
-			Details: map[string]any{"name": c.Name, "protocol": c.Protocol, "host": c.Host, "port": c.Port}}); err != nil {
-			return err
-		}
-		row, err := q.GetConnection(ctx, c.ID)
+	return handleCreated(w, r, func(req connectionRequest) (connectionDTO, error) {
+		res, err := s.Connections.Create(r.Context(), services.CreateConnectionParams{
+			Name:           req.Name,
+			Protocol:       req.Protocol,
+			Host:           req.Host,
+			Port:           req.Port,
+			FolderID:       req.FolderID,
+			SiteID:         req.SiteID,
+			Environment:    req.Environment,
+			Description:    req.Description,
+			Tags:           req.Tags,
+			Backend:        req.Backend,
+			CredentialMode: req.CredentialMode,
+			SecretID:       req.SecretID,
+			Params:         string(req.Params),
+			Record:         req.Record,
+			RecordInput:    req.RecordInput,
+			Actor:          p.actor(),
+		})
 		if err != nil {
-			return err
+			return connectionDTO{}, fromService(err, "connection")
 		}
-		out, err = s.connectionDTO(ctx, q, row)
-		return err
+		return toConnection(res.Connection, res.Tags), nil
 	})
-	if err != nil {
-		return err
-	}
-	return created(w, out)
 }
 
 // openapi:operation
@@ -275,16 +153,13 @@ func (s *Server) createConnection(w http.ResponseWriter, r *http.Request, p prin
 //   '200': { description: The connection, schema: Connection }
 
 func (s *Server) getConnection(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx := r.Context()
-	c, err := s.Store.Q.GetConnection(ctx, r.PathValue("id"))
-	if err != nil {
-		return fromStore(err, "connection")
-	}
-	out, err := s.connectionDTO(ctx, s.Store.Q, c)
-	if err != nil {
-		return err
-	}
-	return ok(w, out)
+	return handleOK(w, func() (connectionDTO, error) {
+		res, err := s.Connections.Get(r.Context(), r.PathValue("id"))
+		if err != nil {
+			return connectionDTO{}, fromService(err, "connection")
+		}
+		return toConnection(res.Connection, res.Tags), nil
+	})
 }
 
 // openapi:operation
@@ -296,84 +171,53 @@ func (s *Server) getConnection(w http.ResponseWriter, r *http.Request, p princip
 //   '409': Error
 
 func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req updateConnectionRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	ctx, id := r.Context(), r.PathValue("id")
-	var out connectionDTO
-	err := s.tx(ctx, func(q *db.Queries) error {
-		c, err := q.GetConnection(ctx, id)
-		if err != nil {
-			return fromStore(err, "connection")
+	return handleAction(w, r, func(req updateConnectionRequest) (connectionDTO, error) {
+		var paramsStr *string
+		if req.Params.Set {
+			str := string(req.Params.V)
+			paramsStr = &str
 		}
-		changed := []string{}
-		set := func(name string, present bool, apply func()) {
-			if present {
-				apply()
-				changed = append(changed, name)
-			}
+		var folderID *string
+		if req.FolderID.Set && !req.FolderID.Null {
+			folderID = &req.FolderID.V
 		}
-		set("name", req.Name.Set, func() { c.Name = req.Name.V })
-		set("protocol", req.Protocol.Set, func() { c.Protocol = req.Protocol.V })
-		set("host", req.Host.Set, func() {
-			if req.Host.V != c.Host {
-				c.HostKey = store.NullString("") // a different host has a different key
-			}
-			c.Host = req.Host.V
+		var siteID *string
+		if req.SiteID.Set && !req.SiteID.Null {
+			siteID = &req.SiteID.V
+		}
+		var secretID *string
+		if req.SecretID.Set && !req.SecretID.Null {
+			secretID = &req.SecretID.V
+		}
+
+		res, err := s.Connections.Update(r.Context(), services.UpdateConnectionParams{
+			ID:             r.PathValue("id"),
+			Name:           req.Name.Ptr(),
+			Protocol:       req.Protocol.Ptr(),
+			Host:           req.Host.Ptr(),
+			Port:           req.Port.Ptr(),
+			FolderID:       folderID,
+			FolderIDSet:    req.FolderID.Set,
+			SiteID:         siteID,
+			SiteIDSet:      req.SiteID.Set,
+			Environment:    req.Environment.Ptr(),
+			Description:    req.Description.Ptr(),
+			Tags:           req.Tags.Ptr(),
+			Backend:        req.Backend.Ptr(),
+			CredentialMode: req.CredentialMode.Ptr(),
+			SecretID:       secretID,
+			SecretIDSet:    req.SecretID.Set,
+			Params:         paramsStr,
+			ParamsNull:     req.Params.Null,
+			Record:         req.Record.Ptr(),
+			RecordInput:    req.RecordInput.Ptr(),
+			Actor:          p.actor(),
 		})
-		set("port", req.Port.Set, func() { c.Port = req.Port.V })
-		set("folder_id", req.FolderID.Set, func() { c.FolderID = store.NullString(optID(req.FolderID)) })
-		set("site_id", req.SiteID.Set, func() { c.SiteID = store.NullString(optID(req.SiteID)) })
-		set("environment", req.Environment.Set, func() { c.Environment = req.Environment.V })
-		set("description", req.Description.Set, func() { c.Description = req.Description.V })
-		set("backend", req.Backend.Set, func() { c.Backend = req.Backend.V })
-		set("credential_mode", req.CredentialMode.Set, func() { c.CredentialMode = req.CredentialMode.V })
-		set("secret_id", req.SecretID.Set, func() { c.SecretID = store.NullString(optID(req.SecretID)) })
-		set("params", req.Params.Set, func() {
-			c.Params = string(req.Params.V)
-			if req.Params.Null {
-				c.Params = "{}"
-			}
-		})
-		set("record", req.Record.Set, func() { c.Record = req.Record.V })
-		set("record_input", req.RecordInput.Set, func() { c.RecordInput = req.RecordInput.V })
-		if err := checkConnection(ctx, q, &c); err != nil {
-			return err
-		}
-		if err := q.UpdateConnection(ctx, db.UpdateConnectionParams{
-			ID: id, Name: c.Name, Protocol: c.Protocol, Host: c.Host, Port: c.Port, FolderID: c.FolderID,
-			SiteID: c.SiteID, Environment: c.Environment, Description: c.Description, Backend: c.Backend,
-			CredentialMode: c.CredentialMode, SecretID: c.SecretID, Params: c.Params, Record: c.Record,
-			RecordInput: c.RecordInput, HostKey: c.HostKey, Now: store.Now(),
-		}); err != nil {
-			return fromStore(err, "connection")
-		}
-		if req.Tags.Set {
-			tags, err := validTags(req.Tags.V)
-			if err != nil {
-				return err
-			}
-			if err := setTags(ctx, q, id, tags); err != nil {
-				return err
-			}
-			changed = append(changed, "tags")
-		}
-		if err := store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.update", ObjectType: "connection", ObjectID: id,
-			Details: map[string]any{"name": c.Name, "changed": changed}}); err != nil {
-			return err
-		}
-		row, err := q.GetConnection(ctx, id)
 		if err != nil {
-			return err
+			return connectionDTO{}, fromService(err, "connection")
 		}
-		out, err = s.connectionDTO(ctx, q, row)
-		return err
+		return toConnection(res.Connection, res.Tags), nil
 	})
-	if err != nil {
-		return err
-	}
-	return ok(w, out)
 }
 
 // openapi:operation
@@ -384,25 +228,10 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request, p prin
 //   '204': { description: Deleted }
 
 func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx, id := r.Context(), r.PathValue("id")
-	err := s.tx(ctx, func(q *db.Queries) error {
-		c, err := q.GetConnection(ctx, id)
-		if err != nil {
-			return fromStore(err, "connection")
-		}
-		if err := q.DeletePoliciesForObject(ctx, db.DeletePoliciesForObjectParams{ObjectType: "connection", ObjectRef: id}); err != nil {
-			return err
-		}
-		if _, err := q.DeleteConnection(ctx, id); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.delete", ObjectType: "connection", ObjectID: id,
-			Details: map[string]any{"name": c.Name}})
+	return handleCommand(w, func() error {
+		err := s.Connections.Delete(r.Context(), p.actor(), r.PathValue("id"))
+		return fromService(err, "connection")
 	})
-	if err != nil {
-		return err
-	}
-	return noContent(w)
 }
 
 // openapi:operation
@@ -415,29 +244,10 @@ func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request, p prin
 //   '204': { description: Host key cleared }
 
 func (s *Server) clearHostKey(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx, id := r.Context(), r.PathValue("id")
-	err := s.tx(ctx, func(q *db.Queries) error {
-		c, err := q.GetConnection(ctx, id)
-		if err != nil {
-			return fromStore(err, "connection")
-		}
-		old := c.HostKey.String
-		c.HostKey = store.NullString("")
-		if err := q.UpdateConnection(ctx, db.UpdateConnectionParams{
-			ID: id, Name: c.Name, Protocol: c.Protocol, Host: c.Host, Port: c.Port, FolderID: c.FolderID,
-			SiteID: c.SiteID, Environment: c.Environment, Description: c.Description, Backend: c.Backend,
-			CredentialMode: c.CredentialMode, SecretID: c.SecretID, Params: c.Params, Record: c.Record,
-			RecordInput: c.RecordInput, HostKey: c.HostKey, Now: store.Now(),
-		}); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.host_key_cleared", ObjectType: "connection", ObjectID: id,
-			Details: map[string]any{"name": c.Name, "previous": old}})
+	return handleCommand(w, func() error {
+		err := s.Connections.ClearHostKey(r.Context(), p.actor(), r.PathValue("id"))
+		return fromService(err, "connection")
 	})
-	if err != nil {
-		return err
-	}
-	return noContent(w)
 }
 
 // openapi:schema ApproveHostKeyRequest
@@ -463,28 +273,12 @@ type approveHostKeyRequest struct {
 //   '204': { description: Host key pinned }
 
 func (s *Server) approveHostKey(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req approveHostKeyRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	fp := strings.TrimSpace(req.Fingerprint)
-	if !strings.HasPrefix(fp, "SHA256:") || len(fp) < 20 || len(fp) > 200 {
-		return badRequest("fingerprint must look like SHA256:...")
-	}
-	ctx, id := r.Context(), r.PathValue("id")
-	err := s.tx(ctx, func(q *db.Queries) error {
-		c, err := q.GetConnection(ctx, id)
-		if err != nil {
-			return fromStore(err, "connection")
-		}
-		if _, err := q.ApproveHostKey(ctx, db.ApproveHostKeyParams{ID: id, HostKey: store.NullString(fp), Now: store.Now()}); err != nil {
+	return handleCommand(w, func() error {
+		var req approveHostKeyRequest
+		if err := decode(r, &req); err != nil {
 			return err
 		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "connection.host_key_approved", ObjectType: "connection", ObjectID: id,
-			Details: map[string]any{"name": c.Name, "fingerprint": fp, "previous": c.HostKey.String, "was_pending": c.HostKeyPending.String == fp}})
+		err := s.Connections.ApproveHostKey(r.Context(), p.actor(), r.PathValue("id"), req.Fingerprint)
+		return fromService(err, "connection")
 	})
-	if err != nil {
-		return err
-	}
-	return noContent(w)
 }

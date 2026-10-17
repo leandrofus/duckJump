@@ -77,6 +77,24 @@ func fromService(err error, what string) error {
 		return conflict("%s", err.Error())
 	case errors.Is(err, services.ErrNotLocalUser):
 		return conflict("%s", err.Error())
+	case errors.Is(err, services.ErrNameInvalid):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrProtocolInvalid):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrPortOutOfRange):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrHostRequired):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrBackendInvalid):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrCredentialModeInvalid):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrParamsNotJSONObject):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrInvalidTag):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrInvalidFingerprint):
+		return badRequest("%s", err.Error())
 	default:
 		return fromStore(err, what)
 	}

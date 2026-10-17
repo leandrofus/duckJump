@@ -145,8 +145,10 @@ func userCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // connCmd handles `conn [ls | add | rm | tag]`.
 func connCmd(ctx context.Context, st *store.Store, args []string) error {
+	connSvc := services.NewConnectionService(st)
+
 	if len(args) == 0 || args[0] == "ls" {
-		conns, err := st.Q.ListConnections(ctx)
+		conns, err := connSvc.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -162,12 +164,7 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 				siteMap[s.ID] = s.Name
 			}
 		}
-		tagMap := make(map[string][]string)
-		if allTags, err := st.Q.ListAllConnectionTags(ctx); err == nil {
-			for _, t := range allTags {
-				tagMap[t.ConnectionID] = append(tagMap[t.ConnectionID], t.Tag)
-			}
-		}
+		tagMap, _ := connSvc.TagIndex(ctx)
 		tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 		fmt.Fprintln(tw, "NAME\tPROTOCOL\tHOST:PORT\tSECRET\tSITE\tTAGS\tRECORD")
 		for _, c := range conns {
@@ -229,100 +226,83 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 		if *name == "" || *host == "" {
 			return fmt.Errorf("need name and host: duckjump conn add <name> --host <host>")
 		}
-		targetPort := int64(*port)
-		if targetPort == 0 {
-			switch *protocol {
-			case "ssh":
-				targetPort = 22
-			case "rdp":
-				targetPort = 3389
-			case "vnc":
-				targetPort = 5900
-			case "http":
-				targetPort = 80
-			case "https":
-				targetPort = 443
+		if *hostKey != "" && !strings.HasPrefix(*hostKey, "SHA256:") {
+			return fmt.Errorf("-host-key must look like SHA256:...")
+		}
+
+		var secretID *string
+		if *secret != "" {
+			sec, err := st.Q.GetSecretByName(ctx, *secret)
+			if err != nil {
+				return fmt.Errorf("secret %q: %w", *secret, store.Classify(err))
+			}
+			secretID = &sec.ID
+		}
+		var siteID *string
+		if *site != "" {
+			s, err := st.Q.GetSiteByName(ctx, *site)
+			if err != nil {
+				return fmt.Errorf("site %q: %w", *site, store.Classify(err))
+			}
+			siteID = &s.ID
+		}
+		var folderID *string
+		if *folder != "" {
+			folders, err := st.Q.ListFolders(ctx)
+			if err == nil {
+				for _, f := range folders {
+					if f.Name == *folder {
+						folderID = &f.ID
+						break
+					}
+				}
+			}
+			if folderID == nil {
+				return fmt.Errorf("folder %q not found", *folder)
 			}
 		}
+
 		paramsMap := map[string]any{}
 		if *vhost != "" {
 			paramsMap["virtual_host"] = *vhost
 		}
 		paramsBytes, _ := json.Marshal(paramsMap)
-		p := db.CreateConnectionParams{
-			ID: store.NewID(), Name: *name, Protocol: *protocol, Host: *host, Port: targetPort,
-			Backend: store.BackendNative, CredentialMode: "vault", Params: string(paramsBytes), Record: !*noRecord, RecordInput: *recInput, Now: store.Now(),
-		}
-		if *hostKey != "" && !strings.HasPrefix(*hostKey, "SHA256:") {
-			return fmt.Errorf("-host-key must look like SHA256:...")
-		}
-		return st.Tx(ctx, func(q *db.Queries) error {
-			if *secret != "" {
-				sec, err := q.GetSecretByName(ctx, *secret)
-				if err != nil {
-					return fmt.Errorf("secret %q: %w", *secret, store.Classify(err))
-				}
-				p.SecretID = store.NullString(sec.ID)
-			}
-			if *site != "" {
-				s, err := q.GetSiteByName(ctx, *site)
-				if err != nil {
-					return fmt.Errorf("site %q: %w", *site, store.Classify(err))
-				}
-				p.SiteID = store.NullString(s.ID)
-			}
-			if *folder != "" {
-				folders, err := q.ListFolders(ctx)
-				if err == nil {
-					for _, f := range folders {
-						if f.Name == *folder {
-							p.FolderID = store.NullString(f.ID)
-							break
-						}
-					}
-				}
-				if !p.FolderID.Valid {
-					return fmt.Errorf("folder %q not found", *folder)
-				}
-			}
-			if err := q.CreateConnection(ctx, p); err != nil {
-				return store.Classify(err)
-			}
-			if *hostKey != "" {
-				if _, err := q.ApproveHostKey(ctx, db.ApproveHostKeyParams{ID: p.ID, HostKey: store.NullString(*hostKey), Now: store.Now()}); err != nil {
-					return err
-				}
-			}
-			fmt.Printf("connection %s created (%s)\n", *name, p.ID)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "connection.create", ObjectType: "connection", ObjectID: p.ID,
-				Details: map[string]any{"name": *name, "protocol": *protocol, "host": *host, "port": *port},
-			})
+		record := !*noRecord
+
+		res, err := connSvc.Create(ctx, services.CreateConnectionParams{
+			Name:           *name,
+			Protocol:       *protocol,
+			Host:           *host,
+			Port:           int64(*port),
+			FolderID:       folderID,
+			SiteID:         siteID,
+			SecretID:       secretID,
+			Params:         string(paramsBytes),
+			Record:         &record,
+			RecordInput:    *recInput,
+			HostKey:        *hostKey,
+			Actor:          cli,
 		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("connection %s created (%s)\n", res.Connection.Name, res.Connection.ID)
+		return nil
 
 	case "rm":
 		if len(rest) < 1 {
 			return fmt.Errorf("usage: duckjump conn rm <name>")
 		}
 		name := rest[0]
-		return st.Tx(ctx, func(q *db.Queries) error {
-			c, err := q.GetConnectionByName(ctx, name)
-			if err != nil {
-				return fmt.Errorf("connection %q: %w", name, store.Classify(err))
-			}
-			n, err := q.DeleteConnection(ctx, c.ID)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return fmt.Errorf("connection %q not found", name)
-			}
-			fmt.Printf("connection %s deleted\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "connection.delete", ObjectType: "connection", ObjectID: c.ID,
-				Details: map[string]any{"name": name},
-			})
-		})
+		c, err := connSvc.GetByName(ctx, name)
+		if err != nil {
+			return fmt.Errorf("connection %q: %w", name, err)
+		}
+		if err := connSvc.Delete(ctx, cli, c.ID); err != nil {
+			return err
+		}
+		fmt.Printf("connection %s deleted\n", name)
+		return nil
 
 	case "tag":
 		if len(rest) < 2 {
@@ -330,13 +310,13 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 		}
 		tagAction := rest[0]
 		connName := rest[1]
-		c, err := st.Q.GetConnectionByName(ctx, connName)
+		c, err := connSvc.GetByName(ctx, connName)
 		if err != nil {
-			return fmt.Errorf("connection %q: %w", connName, store.Classify(err))
+			return fmt.Errorf("connection %q: %w", connName, err)
 		}
 		switch tagAction {
 		case "ls":
-			tags, err := st.Q.ListConnectionTags(ctx, c.ID)
+			tags, err := connSvc.ListTags(ctx, c.ID)
 			if err != nil {
 				return err
 			}
@@ -348,30 +328,17 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 			if len(rest) < 3 {
 				return fmt.Errorf("usage: duckjump conn tag add <conn> <tag>...")
 			}
-			return st.Tx(ctx, func(q *db.Queries) error {
-				for _, t := range rest[2:] {
-					t = strings.TrimSpace(t)
-					if t != "" {
-						_ = q.AddConnectionTag(ctx, db.AddConnectionTagParams{ConnectionID: c.ID, Tag: t})
-					}
-				}
-				fmt.Printf("tags added to %s: %s\n", connName, strings.Join(rest[2:], ", "))
-				return store.Audit(ctx, q, store.Event{
-					Actor: cli, Action: "connection.tag_add", ObjectType: "connection", ObjectID: c.ID,
-					Details: map[string]any{"name": connName, "tags": rest[2:]},
-				})
-			})
+			if err := connSvc.AddTags(ctx, cli, c.ID, rest[2:]); err != nil {
+				return err
+			}
+			fmt.Printf("tags added to %s: %s\n", connName, strings.Join(rest[2:], ", "))
+			return nil
 		case "clear", "rm":
-			return st.Tx(ctx, func(q *db.Queries) error {
-				if err := q.ClearConnectionTags(ctx, c.ID); err != nil {
-					return err
-				}
-				fmt.Printf("tags cleared for %s\n", connName)
-				return store.Audit(ctx, q, store.Event{
-					Actor: cli, Action: "connection.tag_clear", ObjectType: "connection", ObjectID: c.ID,
-					Details: map[string]any{"name": connName},
-				})
-			})
+			if err := connSvc.ClearTags(ctx, cli, c.ID); err != nil {
+				return err
+			}
+			fmt.Printf("tags cleared for %s\n", connName)
+			return nil
 		default:
 			return fmt.Errorf("usage: duckjump conn tag [ls <conn> | add <conn> <tag>... | clear <conn>]")
 		}
