@@ -110,15 +110,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           pre=; case $VERSION in *-*) pre=--prerelease ;; esac
-          files="dist/*.rpm dist/*.deb dist/*.tar.gz dist/duckjump-linux-* dist/duckjump-darwin-* dist/duckjump-windows-* dist/duckjump-agent-* dist/SHA256SUMS"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; uploading artifacts..."
-            gh release upload "$TAG" $files --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "duckJump $VERSION" $pre || true
-          else
-            gh release create "$TAG" $files --repo "$GITHUB_REPOSITORY" \
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
               --title "duckJump $VERSION" --generate-notes --verify-tag $pre
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "duckJump $VERSION" $pre || true
           fi
+          cd dist
+          files=$(ls -1 *.rpm *.deb *.tar.gz duckjump-* SHA256SUMS 2>/dev/null | sort -u)
+          gh release upload "$TAG" $files --repo "$GITHUB_REPOSITORY" --clobber
 
   msi:
     # Windows installer (service + Start menu shortcut) and duckjump-assist agent,
@@ -207,14 +207,16 @@ jobs:
             "duckjump-assist-app-setup.exe",
             "duckjump-assist-app.msi"
           )
+          $toUpload = @()
           foreach ($f in $extraFiles) {
             if (Test-Path "dist/$f") {
               $lines += "$((Get-FileHash "dist/$f" -Algorithm SHA256).Hash.ToLower())  $f"
+              $toUpload += "dist/$f"
             }
           }
           [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", ($lines -join "`n") + "`n")
-          $uploadList = Get-ChildItem dist/* | Where-Object { $_.Name -match '(duckjump.*|\.rpm|\.deb|\.tar\.gz|SHA256SUMS)' }
-          gh release upload $tag $uploadList.FullName --repo $env:GITHUB_REPOSITORY --clobber
+          $toUpload += "dist/SHA256SUMS"
+          gh release upload $tag $toUpload --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   site:
