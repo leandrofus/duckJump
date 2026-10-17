@@ -47,7 +47,7 @@ func (s *Server) ServeSupportJoin(w http.ResponseWriter, r *http.Request) {
 
 	accept := r.Header.Get("Accept")
 	if strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html") {
-		dto := s.toSupportSessionDTO(sess)
+		dto := s.toSupportSessionDTO(sess, r)
 		_ = ok(w, map[string]any{
 			"session":             dto,
 			"agent_server":        agentServerWS,

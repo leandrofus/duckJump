@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -260,8 +261,22 @@ func (h *SupportHub) NotifyVerified(id string) {
 	}
 }
 
-func (s *Server) toSupportSessionDTO(r db.ConfigSupportSession) supportSessionDTO {
-	joinURL := fmt.Sprintf("%s/support/join/%s", strings.TrimRight(s.FrontendURL, "/"), r.Token)
+func (s *Server) toSupportSessionDTO(r db.ConfigSupportSession, req ...*http.Request) supportSessionDTO {
+	baseURL := strings.TrimRight(s.FrontendURL, "/")
+	if len(req) > 0 && req[0] != nil {
+		_, _, b, _ := s.siteURLs(req[0])
+		if b != "" {
+			baseURL = b
+		}
+	}
+	if baseURL == "" {
+		host, _ := os.Hostname()
+		if host == "" {
+			host = "localhost"
+		}
+		baseURL = "https://" + host
+	}
+	joinURL := fmt.Sprintf("%s/support/join/%s", baseURL, r.Token)
 	return supportSessionDTO{
 		ID:             r.ID,
 		Token:          r.Token,
@@ -301,7 +316,7 @@ func (s *Server) createSupportSession(w http.ResponseWriter, r *http.Request, p 
 		if err != nil {
 			return supportSessionDTO{}, fromService(err, "support_session")
 		}
-		return s.toSupportSessionDTO(sess), nil
+		return s.toSupportSessionDTO(sess, r), nil
 	})
 }
 
@@ -352,7 +367,7 @@ func (s *Server) requestSupportSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dto := s.toSupportSessionDTO(sess)
+	dto := s.toSupportSessionDTO(sess, r)
 	dto.TotpSecret = code
 	dto.VerificationCode = code
 
@@ -434,7 +449,7 @@ func (s *Server) listSupportSessions(w http.ResponseWriter, r *http.Request, p p
 
 	out := make([]supportSessionDTO, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, s.toSupportSessionDTO(row))
+		out = append(out, s.toSupportSessionDTO(row, r))
 	}
 	return ok(w, out)
 }
@@ -451,7 +466,7 @@ func (s *Server) getSupportSession(w http.ResponseWriter, r *http.Request, p pri
 		if err != nil {
 			return supportSessionDTO{}, fromService(err, "support_session")
 		}
-		return s.toSupportSessionDTO(sess), nil
+		return s.toSupportSessionDTO(sess, r), nil
 	})
 }
 
@@ -469,7 +484,7 @@ func (s *Server) verifySupportTOTP(w http.ResponseWriter, r *http.Request, p pri
 		if err != nil {
 			return supportSessionDTO{}, fromService(err, "support_session")
 		}
-		return s.toSupportSessionDTO(updated), nil
+		return s.toSupportSessionDTO(updated, r), nil
 	})
 }
 
@@ -485,7 +500,7 @@ func (s *Server) endSupportSession(w http.ResponseWriter, r *http.Request, p pri
 		if err != nil {
 			return supportSessionDTO{}, fromService(err, "support_session")
 		}
-		return s.toSupportSessionDTO(updated), nil
+		return s.toSupportSessionDTO(updated, r), nil
 	})
 }
 

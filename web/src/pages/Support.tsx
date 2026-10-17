@@ -31,6 +31,14 @@ function StatusBadge({ status }: { status: string }) {
   }
 }
 
+function formatJoinUrl(url?: string): string {
+  if (!url) return ''
+  if (url.startsWith('/')) {
+    return `${window.location.origin}${url}`
+  }
+  return url
+}
+
 export function CreateSupportDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (s: SupportSession) => void }) {
   const [targetName, setTargetName] = useState('')
   const [reason, setReason] = useState('')
@@ -64,7 +72,7 @@ export function CreateSupportDialog({ onClose, onCreated }: { onClose: () => voi
 
   const copyLink = () => {
     if (!created) return
-    copy(created.join_url)
+    copy(formatJoinUrl(created.join_url))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
     toast.ok(t('Link copied to clipboard'))
@@ -81,7 +89,7 @@ export function CreateSupportDialog({ onClose, onCreated }: { onClose: () => voi
             <input
               type="text"
               readOnly
-              value={created.join_url}
+              value={formatJoinUrl(created.join_url)}
               style={{ flex: 1, padding: '8px 12px', borderRadius: 4, border: '1px solid var(--border)' }}
             />
             <button className="btn btn-primary" onClick={copyLink} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -441,7 +449,7 @@ export function Support({ id: _id }: { id?: string }) {
   }, [sessions, filter, statusFilter])
 
   const copyLink = (s: SupportSession) => {
-    copy(s.join_url)
+    copy(formatJoinUrl(s.join_url))
     toast.ok(t('Link copied to clipboard'))
   }
 
