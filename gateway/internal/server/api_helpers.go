@@ -113,7 +113,15 @@ func fromService(err error, what string) error {
 		return conflict("%s", err.Error())
 	case errors.Is(err, services.ErrMembershipNotFound):
 		return notFound("membership")
+	case errors.Is(err, services.ErrFolderInsideItself):
+		return conflict("%s", err.Error())
+	case errors.Is(err, services.ErrParentFolderNotFound):
+		return notFound("parent folder")
 	default:
+		var notEmptyErr *services.FolderNotEmptyError
+		if errors.As(err, &notEmptyErr) {
+			return conflict("%s", notEmptyErr.Error())
+		}
 		return fromStore(err, what)
 	}
 }

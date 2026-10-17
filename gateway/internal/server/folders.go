@@ -2,10 +2,8 @@ package server
 
 import (
 	"net/http"
-	"slices"
 
-	"github.com/leandrofus/duckjump/gateway/internal/store"
-	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 )
 
 // openapi:schema FolderRequest
@@ -41,15 +39,17 @@ type updateFolderRequest struct {
 //   '200': { description: Folders, schema: '[]Folder' }
 
 func (s *Server) listFolders(w http.ResponseWriter, r *http.Request, p principal) error {
-	fs, err := s.Store.Q.ListFolders(r.Context())
-	if err != nil {
-		return err
-	}
-	out := make([]folderDTO, 0, len(fs))
-	for _, f := range fs {
-		out = append(out, toFolder(f))
-	}
-	return ok(w, out)
+	return handleOK(w, func() ([]folderDTO, error) {
+		fs, err := s.Folders.List(r.Context())
+		if err != nil {
+			return nil, fromService(err, "folder")
+		}
+		out := make([]folderDTO, 0, len(fs))
+		for _, f := range fs {
+			out = append(out, toFolder(f))
+		}
+		return out, nil
+	})
 }
 
 // openapi:operation
@@ -61,38 +61,17 @@ func (s *Server) listFolders(w http.ResponseWriter, r *http.Request, p principal
 //   '409': Error
 
 func (s *Server) createFolder(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req folderRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	if err := validName("name", req.Name); err != nil {
-		return err
-	}
-	ctx, id := r.Context(), store.NewID()
-	parent := ""
-	if req.ParentID != nil {
-		parent = *req.ParentID
-	}
-	err := s.tx(ctx, func(q *db.Queries) error {
-		if parent != "" {
-			if _, err := q.GetFolder(ctx, parent); err != nil {
-				return fromStore(err, "parent folder")
-			}
+	return handleCreated(w, r, func(req folderRequest) (folderDTO, error) {
+		f, err := s.Folders.Create(r.Context(), services.CreateFolderParams{
+			Name:     req.Name,
+			ParentID: req.ParentID,
+			Actor:    p.actor(),
+		})
+		if err != nil {
+			return folderDTO{}, fromService(err, "folder")
 		}
-		if err := q.CreateFolder(ctx, db.CreateFolderParams{ID: id, ParentID: store.NullString(parent), Name: req.Name, Now: store.Now()}); err != nil {
-			return fromStore(err, "folder")
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "folder.create", ObjectType: "folder", ObjectID: id,
-			Details: map[string]any{"name": req.Name, "parent_id": parent}})
+		return toFolder(f), nil
 	})
-	if err != nil {
-		return err
-	}
-	f, err := s.Store.Q.GetFolder(ctx, id)
-	if err != nil {
-		return err
-	}
-	return created(w, toFolder(f))
 }
 
 // openapi:operation
@@ -104,55 +83,24 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request, p principa
 //   '409': Error
 
 func (s *Server) updateFolder(w http.ResponseWriter, r *http.Request, p principal) error {
-	var req updateFolderRequest
-	if err := decode(r, &req); err != nil {
-		return err
-	}
-	ctx, id := r.Context(), r.PathValue("id")
-	var out db.ConfigFolder
-	err := s.tx(ctx, func(q *db.Queries) error {
-		f, err := q.GetFolder(ctx, id)
+	return handleAction(w, r, func(req updateFolderRequest) (folderDTO, error) {
+		var parentID *string
+		if req.ParentID.Set && !req.ParentID.Null {
+			parentID = &req.ParentID.V
+		}
+
+		f, err := s.Folders.Update(r.Context(), services.UpdateFolderParams{
+			ID:          r.PathValue("id"),
+			Name:        req.Name.Ptr(),
+			ParentID:    parentID,
+			ParentIDSet: req.ParentID.Set,
+			Actor:       p.actor(),
+		})
 		if err != nil {
-			return fromStore(err, "folder")
+			return folderDTO{}, fromService(err, "folder")
 		}
-		if req.Name.Set {
-			if err := validName("name", req.Name.V); err != nil {
-				return err
-			}
-			f.Name = req.Name.V
-		}
-		if req.ParentID.Set {
-			if req.ParentID.Null || req.ParentID.V == "" {
-				f.ParentID = store.NullString("")
-			} else {
-				if _, err := q.GetFolder(ctx, req.ParentID.V); err != nil {
-					return fromStore(err, "parent folder")
-				}
-				// A folder cannot move under itself or its descendants.
-				sub, err := q.FolderSubtree(ctx, id)
-				if err != nil {
-					return err
-				}
-				if slices.Contains(sub, req.ParentID.V) {
-					return conflict("a folder cannot be moved inside itself")
-				}
-				f.ParentID = store.NullString(req.ParentID.V)
-			}
-		}
-		if err := q.UpdateFolder(ctx, db.UpdateFolderParams{ID: id, ParentID: f.ParentID, Name: f.Name}); err != nil {
-			return fromStore(err, "folder")
-		}
-		if err := store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "folder.update", ObjectType: "folder", ObjectID: id,
-			Details: map[string]any{"name": f.Name, "parent_id": f.ParentID.String}}); err != nil {
-			return err
-		}
-		out = f
-		return nil
+		return toFolder(f), nil
 	})
-	if err != nil {
-		return err
-	}
-	return ok(w, toFolder(out))
 }
 
 // openapi:operation
@@ -164,30 +112,8 @@ func (s *Server) updateFolder(w http.ResponseWriter, r *http.Request, p principa
 //   '409': Error
 
 func (s *Server) deleteFolder(w http.ResponseWriter, r *http.Request, p principal) error {
-	ctx, id := r.Context(), r.PathValue("id")
-	err := s.tx(ctx, func(q *db.Queries) error {
-		f, err := q.GetFolder(ctx, id)
-		if err != nil {
-			return fromStore(err, "folder")
-		}
-		n, err := q.CountFolderChildren(ctx, id)
-		if err != nil {
-			return err
-		}
-		if n.Folders > 0 || n.Connections > 0 {
-			return conflict("folder is not empty (%d folders, %d connections)", n.Folders, n.Connections)
-		}
-		if err := q.DeletePoliciesForObject(ctx, db.DeletePoliciesForObjectParams{ObjectType: "folder", ObjectRef: id}); err != nil {
-			return err
-		}
-		if _, err := q.DeleteFolder(ctx, id); err != nil {
-			return fromStore(err, "folder")
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "folder.delete", ObjectType: "folder", ObjectID: id,
-			Details: map[string]any{"name": f.Name}})
+	return handleCommand(w, func() error {
+		err := s.Folders.Delete(r.Context(), p.actor(), r.PathValue("id"))
+		return fromService(err, "folder")
 	})
-	if err != nil {
-		return err
-	}
-	return noContent(w)
 }

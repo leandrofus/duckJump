@@ -798,8 +798,10 @@ func groupCmd(ctx context.Context, st *store.Store, args []string) error {
 
 // folderCmd handles `folder [ls | add | rm]`.
 func folderCmd(ctx context.Context, st *store.Store, args []string) error {
+	fldSvc := services.NewFolderService(st)
+
 	if len(args) == 0 || args[0] == "ls" {
-		folders, err := st.Q.ListFolders(ctx)
+		folders, err := fldSvc.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -835,66 +837,39 @@ func folderCmd(ctx context.Context, st *store.Store, args []string) error {
 		if name == "" {
 			return fmt.Errorf("usage: duckjump folder add <name> [--parent <parent>]")
 		}
-		var parentID string
+		var parentID *string
 		if *parentName != "" {
-			folders, _ := st.Q.ListFolders(ctx)
-			for _, f := range folders {
-				if f.Name == *parentName {
-					parentID = f.ID
-					break
-				}
-			}
-			if parentID == "" {
+			parent, err := fldSvc.GetByName(ctx, *parentName)
+			if err != nil {
 				return fmt.Errorf("parent folder %q not found", *parentName)
 			}
+			parentID = &parent.ID
 		}
-		id := store.NewID()
-		return st.Tx(ctx, func(q *db.Queries) error {
-			if err := q.CreateFolder(ctx, db.CreateFolderParams{
-				ID: id, ParentID: store.NullString(parentID), Name: name, Now: store.Now(),
-			}); err != nil {
-				return store.Classify(err)
-			}
-			fmt.Printf("folder %s created\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "folder.create", ObjectType: "folder", ObjectID: id,
-				Details: map[string]any{"name": name},
-			})
+		f, err := fldSvc.Create(ctx, services.CreateFolderParams{
+			Name:     name,
+			ParentID: parentID,
+			Actor:    cli,
 		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("folder %s created\n", f.Name)
+		return nil
 
 	case "rm":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: duckjump folder rm <name>")
 		}
 		name := args[1]
-		folders, err := st.Q.ListFolders(ctx)
+		f, err := fldSvc.GetByName(ctx, name)
 		if err != nil {
+			return fmt.Errorf("folder %q: %w", name, err)
+		}
+		if err := fldSvc.Delete(ctx, cli, f.ID); err != nil {
 			return err
 		}
-		var fID string
-		for _, f := range folders {
-			if f.Name == name {
-				fID = f.ID
-				break
-			}
-		}
-		if fID == "" {
-			return fmt.Errorf("folder %q not found", name)
-		}
-		return st.Tx(ctx, func(q *db.Queries) error {
-			n, err := q.DeleteFolder(ctx, fID)
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return fmt.Errorf("folder %q not found", name)
-			}
-			fmt.Printf("folder %s deleted\n", name)
-			return store.Audit(ctx, q, store.Event{
-				Actor: cli, Action: "folder.delete", ObjectType: "folder", ObjectID: fID,
-				Details: map[string]any{"name": name},
-			})
-		})
+		fmt.Printf("folder %s deleted\n", name)
+		return nil
 
 	default:
 		return fmt.Errorf("usage: duckjump folder [ls | add <name> [--parent <p>] | rm <name>]")
