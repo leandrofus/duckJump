@@ -1,5 +1,6 @@
 ---
 import Header from './Header.astro';
+import { getLatestTag } from '../release';
 
 interface Props {
   lang?: 'en' | 'es';
@@ -8,6 +9,7 @@ interface Props {
 const { lang = 'en' } = Astro.props;
 const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
 const isEs = lang === 'es';
+const latestTag = await getLatestTag();
 ---
 
 <div class="hero">
@@ -15,9 +17,9 @@ const isEs = lang === 'es';
 
   <div class="wrap hero-in">
     <div class="hero-text">
-      <a class="pill" href="https://github.com/leandrofus/duckJump/releases" target="_blank" rel="noopener noreferrer">
+      <a class="pill" href={`https://github.com/leandrofus/duckJump/releases/tag/${latestTag}`} target="_blank" rel="noopener noreferrer" data-release-pill>
         <span class="dot"></span>
-        {isEs ? 'Última versión' : 'Latest release'} <strong>v0.1.0</strong>
+        {isEs ? 'Última versión' : 'Latest release'} <strong data-release-version>{latestTag}</strong>
       </a>
 
       <h1>
@@ -65,3 +67,26 @@ const isEs = lang === 'es';
     <path class="w2" d="M0 80 C 240 46 420 108 720 80 S 1200 50 1440 76 V120 H0 Z"></path>
   </svg>
 </div>
+
+<script>
+  (function updateLatestRelease() {
+    fetch('https://api.github.com/repos/leandrofus/duckJump/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data || !data.tag_name) return;
+        const tag = data.tag_name;
+        const pill = document.querySelector('[data-release-pill]');
+        const versionEl = document.querySelector('[data-release-version]');
+        if (versionEl && versionEl.textContent !== tag) {
+          versionEl.textContent = tag;
+        }
+        if (pill instanceof HTMLAnchorElement) {
+          pill.href = `https://github.com/leandrofus/duckJump/releases/tag/${tag}`;
+        }
+      })
+      .catch(() => {});
+  })();
+</script>
+
