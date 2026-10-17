@@ -1,11 +1,11 @@
 -- name: CreateAccessRequest :exec
 INSERT INTO config_access_requests (
     id, user_id, object_type, object_ref, ticket,
-    can_connect, can_view_recordings, can_upload, can_download,
+    can_connect, can_view_recordings, can_upload, can_download, can_forward,
     reason, starts_at, ends_at, status, created_at
 ) VALUES (
     @id, @user_id, @object_type, @object_ref, @ticket,
-    @can_connect, @can_view_recordings, @can_upload, @can_download,
+    @can_connect, @can_view_recordings, @can_upload, @can_download, @can_forward,
     @reason, @starts_at, @ends_at, 'pending', @now
 );
 

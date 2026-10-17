@@ -28,6 +28,8 @@ components:
           type: boolean
         can_download:
           type: boolean
+        can_forward:
+          type: boolean
         can_upload:
           type: boolean
         can_view_recordings:
@@ -107,6 +109,7 @@ components:
         - can_view_recordings
         - can_upload
         - can_download
+        - can_forward
         - reason
         - starts_at
         - ends_at
@@ -513,6 +516,9 @@ components:
         can_download:
           default: false
           type: boolean
+        can_forward:
+          default: false
+          type: boolean
         can_upload:
           default: false
           type: boolean
@@ -828,6 +834,8 @@ components:
           type: boolean
         can_download:
           type: boolean
+        can_forward:
+          type: boolean
         can_upload:
           type: boolean
         can_view_recordings:
@@ -881,6 +889,7 @@ components:
         - can_view_recordings
         - can_upload
         - can_download
+        - can_forward
         - expires_at
         - description
         - created_by
@@ -895,6 +904,10 @@ components:
         can_download:
           default: false
           description: Take files from the host into the user's file tray (and on to their computer).
+          type: boolean
+        can_forward:
+          default: false
+          description: Allow TCP port forwarding to the host.
           type: boolean
         can_upload:
           default: false
@@ -950,6 +963,9 @@ components:
         can_download:
           description: May take files from this host into the tray.
           type: boolean
+        can_forward:
+          description: May establish a TCP port-forwarding tunnel to this host.
+          type: boolean
         can_upload:
           description: May send files from the tray to this host.
           type: boolean
@@ -977,6 +993,7 @@ components:
             - ssh
             - rdp
             - vnc
+            - tcp
           type: string
         record:
           description: Sessions are recorded; the UI tells the user.
@@ -997,6 +1014,7 @@ components:
         - credentials
         - can_upload
         - can_download
+        - can_forward
       type: object
     RecordingSettings:
       properties:
@@ -1609,6 +1627,8 @@ components:
         can_connect:
           type: boolean
         can_download:
+          type: boolean
+        can_forward:
           type: boolean
         can_upload:
           type: boolean
@@ -3286,6 +3306,54 @@ paths:
       summary: Send a file from my tray into a host
       tags:
         - files
+      x-duckjump-roles:
+        - admin
+        - auditor
+        - superadmin
+        - user
+  /connections/{id}/forward:
+    get:
+      description: |-
+        Upgrades to a WebSocket carrying binary TCP streams to the destination. Destination is the connection's host:port, optionally overridden with a port whitelisted in connection params.
+
+        Roles: admin, auditor, superadmin, user.
+      operationId: forwardTunnel
+      parameters:
+        - description: Connection ID or name
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Target port, if allowed by connection allow_ports.
+          in: query
+          name: port
+          schema:
+            type: integer
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Open a TCP port-forwarding tunnel (WebSocket)
+      tags:
+        - sessions
       x-duckjump-roles:
         - admin
         - auditor

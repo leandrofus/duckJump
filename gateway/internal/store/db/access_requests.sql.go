@@ -65,12 +65,12 @@ func (q *Queries) CountPendingAccessRequests(ctx context.Context) (int64, error)
 const createAccessRequest = `-- name: CreateAccessRequest :exec
 INSERT INTO config_access_requests (
     id, user_id, object_type, object_ref, ticket,
-    can_connect, can_view_recordings, can_upload, can_download,
+    can_connect, can_view_recordings, can_upload, can_download, can_forward,
     reason, starts_at, ends_at, status, created_at
 ) VALUES (
     $1, $2, $3, $4, $5,
-    $6, $7, $8, $9,
-    $10, $11, $12, 'pending', $13
+    $6, $7, $8, $9, $10,
+    $11, $12, $13, 'pending', $14
 )
 `
 
@@ -84,6 +84,7 @@ type CreateAccessRequestParams struct {
 	CanViewRecordings bool
 	CanUpload         bool
 	CanDownload       bool
+	CanForward        bool
 	Reason            string
 	StartsAt          time.Time
 	EndsAt            time.Time
@@ -101,6 +102,7 @@ func (q *Queries) CreateAccessRequest(ctx context.Context, arg CreateAccessReque
 		arg.CanViewRecordings,
 		arg.CanUpload,
 		arg.CanDownload,
+		arg.CanForward,
 		arg.Reason,
 		arg.StartsAt,
 		arg.EndsAt,
@@ -110,7 +112,7 @@ func (q *Queries) CreateAccessRequest(ctx context.Context, arg CreateAccessReque
 }
 
 const getAccessRequest = `-- name: GetAccessRequest :one
-SELECT id, user_id, object_type, object_ref, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewed_at, review_comment, created_policy_id, created_at FROM config_access_requests WHERE id = $1
+SELECT id, user_id, object_type, object_ref, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewed_at, review_comment, created_policy_id, created_at, can_forward FROM config_access_requests WHERE id = $1
 `
 
 func (q *Queries) GetAccessRequest(ctx context.Context, id string) (ConfigAccessRequest, error) {
@@ -135,12 +137,13 @@ func (q *Queries) GetAccessRequest(ctx context.Context, id string) (ConfigAccess
 		&i.ReviewComment,
 		&i.CreatedPolicyID,
 		&i.CreatedAt,
+		&i.CanForward,
 	)
 	return i, err
 }
 
 const listAccessRequests = `-- name: ListAccessRequests :many
-SELECT id, user_id, object_type, object_ref, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewed_at, review_comment, created_policy_id, created_at FROM config_access_requests
+SELECT id, user_id, object_type, object_ref, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewed_at, review_comment, created_policy_id, created_at, can_forward FROM config_access_requests
 WHERE (CAST($1 AS TEXT) = '' OR user_id = $1)
   AND (CAST($2 AS TEXT) = '' OR status = $2)
 ORDER BY created_at DESC
@@ -179,6 +182,7 @@ func (q *Queries) ListAccessRequests(ctx context.Context, arg ListAccessRequests
 			&i.ReviewComment,
 			&i.CreatedPolicyID,
 			&i.CreatedAt,
+			&i.CanForward,
 		); err != nil {
 			return nil, err
 		}
@@ -194,7 +198,7 @@ func (q *Queries) ListAccessRequests(ctx context.Context, arg ListAccessRequests
 }
 
 const listPendingAccessRequestsForUserAndObject = `-- name: ListPendingAccessRequestsForUserAndObject :many
-SELECT id, user_id, object_type, object_ref, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewed_at, review_comment, created_policy_id, created_at FROM config_access_requests
+SELECT id, user_id, object_type, object_ref, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewed_at, review_comment, created_policy_id, created_at, can_forward FROM config_access_requests
 WHERE user_id = $1
   AND object_type = $2
   AND object_ref = $3
@@ -235,6 +239,7 @@ func (q *Queries) ListPendingAccessRequestsForUserAndObject(ctx context.Context,
 			&i.ReviewComment,
 			&i.CreatedPolicyID,
 			&i.CreatedAt,
+			&i.CanForward,
 		); err != nil {
 			return nil, err
 		}

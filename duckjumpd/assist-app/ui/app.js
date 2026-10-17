@@ -13,6 +13,7 @@ const prefs = {
 let identity = null;
 let providers = null;
 let connectedServer = null; // normalized URL of the gateway we are signed in to (or about to)
+let currentUser = null;
 let mfaPending = false;
 let timer = null;
 let verifiedAt = 0;
@@ -52,14 +53,20 @@ function formatCode(raw) {
 // ---- tabs ----
 
 function selectTab(name) {
-  for (const t of ["request", "join"]) {
+  for (const t of ["request", "join", "forward"]) {
     $(`tab-${t}`).setAttribute("aria-selected", String(t === name));
     $(`panel-${t}`).hidden = t !== name;
   }
   clearError();
+  if (name === "forward") {
+    updateForwardPanel();
+  }
 }
 $("tab-request").addEventListener("click", () => selectTab("request"));
 $("tab-join").addEventListener("click", () => selectTab("join"));
+$("tab-forward").addEventListener("click", () => selectTab("forward"));
+$("forward-go-login").addEventListener("click", () => selectTab("request"));
+$("forward-refresh-btn").addEventListener("click", () => loadForwardConnections());
 
 // ---- server and sign-in ----
 
@@ -123,6 +130,7 @@ async function connectServer() {
 $("server").addEventListener("change", connectServer);
 
 function signedIn(user) {
+  currentUser = user;
   mfaPending = false;
   $("password").value = "";
   $("totp").value = "";
@@ -130,6 +138,9 @@ function signedIn(user) {
   $("request-form").hidden = false;
   $("whoami").textContent = `Sesión iniciada como ${user.display_name || user.username}`;
   $("reason").focus();
+  if (!$("panel-forward").hidden) {
+    updateForwardPanel();
+  }
 }
 
 $("login-form").addEventListener("submit", async (ev) => {
@@ -161,10 +172,18 @@ $("login-form").addEventListener("submit", async (ev) => {
 });
 
 $("logout-btn").addEventListener("click", async () => {
+  currentUser = null;
+  if (statsPollingTimer) {
+    clearInterval(statsPollingTimer);
+    statsPollingTimer = null;
+  }
   await invoke("logout").catch(() => {});
   $("request-form").hidden = true;
   $("login-form").hidden = false;
   onAccountChange();
+  if (!$("panel-forward").hidden) {
+    updateForwardPanel();
+  }
 });
 
 $("request-form").addEventListener("submit", async (ev) => {
@@ -356,3 +375,234 @@ $("invite-deny").addEventListener("click", () => {
     $("server").focus();
   }
 })();
+
+// ---- TCP Forwarding ----
+
+let statsPollingTimer = null;
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+async function updateForwardPanel() {
+  clearError();
+  if (!currentUser) {
+    $("forward-signed-out").hidden = false;
+    $("forward-signed-in").hidden = true;
+    return;
+  }
+  $("forward-signed-out").hidden = true;
+  $("forward-signed-in").hidden = false;
+  await loadForwardConnections();
+}
+
+async function loadForwardConnections() {
+  try {
+    const conns = await invoke("list_forward_connections");
+    const forwardable = (conns || []).filter(c => c.protocol === "tcp" || c.can_forward);
+    renderForwardList(forwardable);
+    await refreshForwardStats();
+  } catch (e) {
+    showError(e);
+  }
+}
+
+function renderForwardList(conns) {
+  const container = $("forward-list");
+  container.innerHTML = "";
+  if (!conns || conns.length === 0) {
+    $("forward-empty").hidden = false;
+    return;
+  }
+  $("forward-empty").hidden = true;
+
+  for (const c of conns) {
+    const card = document.createElement("article");
+    card.className = "forward-card";
+    card.id = `forward-card-${c.id}`;
+
+    let defaultPort = 5432;
+    const lowerName = c.name.toLowerCase();
+    if (lowerName.includes("mysql") || lowerName.includes("3306")) defaultPort = 3306;
+    else if (lowerName.includes("redis") || lowerName.includes("6379")) defaultPort = 6379;
+    else if (lowerName.includes("mongo") || lowerName.includes("27017")) defaultPort = 27017;
+    else if (c.protocol === "ssh" || lowerName.includes("2222")) defaultPort = 2222;
+
+    card.innerHTML = `
+      <div class="forward-info">
+        <div class="forward-title">
+          <strong>${escapeHtml(c.name)}</strong>
+          <span class="badge protocol">${escapeHtml(c.protocol.toUpperCase())}</span>
+          <span class="badge status" id="forward-status-badge-${c.id}">Inactivo</span>
+        </div>
+        <div class="forward-desc hint">${escapeHtml(c.description || c.environment || "Sin descripción")}${c.folder_path ? ` · ${escapeHtml(c.folder_path)}` : ""}</div>
+      </div>
+      <div class="forward-controls">
+        <label class="field-inline">
+          <span>Puerto local:</span>
+          <input type="number" id="forward-port-${c.id}" min="1024" max="65535" value="${defaultPort}">
+        </label>
+        <button type="button" class="primary forward-toggle-btn" id="forward-toggle-${c.id}">Iniciar Túnel</button>
+      </div>
+      <div class="forward-active-info" id="forward-active-info-${c.id}" hidden>
+        <p class="forward-address">
+          <span>Escuchando en:</span>
+          <code id="forward-addr-${c.id}">127.0.0.1:${defaultPort}</code>
+          <button type="button" class="link" id="forward-copy-${c.id}">Copiar</button>
+        </p>
+        <p class="forward-traffic hint" id="forward-traffic-${c.id}">↑ 0 B · ↓ 0 B · 0 clientes</p>
+      </div>
+    `;
+
+    container.appendChild(card);
+
+    const toggleBtn = $(`forward-toggle-${c.id}`);
+    const portInput = $(`forward-port-${c.id}`);
+    const copyBtn = $(`forward-copy-${c.id}`);
+
+    toggleBtn.addEventListener("click", async () => {
+      const isRunning = toggleBtn.getAttribute("data-running") === "true";
+      if (isRunning) {
+        await stopForwardTunnel(c.id);
+      } else {
+        await startForwardTunnel(c.id, portInput.value);
+      }
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      const addr = $(`forward-addr-${c.id}`).textContent;
+      try {
+        await navigator.clipboard.writeText(addr);
+        copyBtn.textContent = "Copiado ✓";
+      } catch {
+        copyBtn.textContent = "Error al copiar";
+      }
+      setTimeout(() => { copyBtn.textContent = "Copiar"; }, 1600);
+    });
+  }
+}
+
+async function startForwardTunnel(connId, localPort) {
+  clearError();
+  const toggleBtn = $(`forward-toggle-${connId}`);
+  await busy(toggleBtn, async () => {
+    try {
+      const stats = await invoke("start_tcp_forward", {
+        connection: connId,
+        localPort: parseInt(localPort, 10),
+        remotePort: null,
+      });
+      updateCardRunningState(connId, stats);
+      startStatsPolling();
+    } catch (e) {
+      showError(e);
+    }
+  });
+}
+
+async function stopForwardTunnel(connId) {
+  clearError();
+  const toggleBtn = $(`forward-toggle-${connId}`);
+  await busy(toggleBtn, async () => {
+    try {
+      await invoke("stop_tcp_forward", { connection: connId });
+      updateCardStoppedState(connId);
+    } catch (e) {
+      showError(e);
+    }
+  });
+}
+
+function updateCardRunningState(connId, stats) {
+  const card = $(`forward-card-${connId}`);
+  if (!card) return;
+  card.classList.add("active");
+  const badge = $(`forward-status-badge-${connId}`);
+  if (badge) {
+    badge.textContent = "Activo";
+    badge.className = "badge status running";
+  }
+
+  const btn = $(`forward-toggle-${connId}`);
+  if (btn) {
+    btn.textContent = "Detener";
+    btn.className = "secondary";
+    btn.setAttribute("data-running", "true");
+  }
+
+  const portInput = $(`forward-port-${connId}`);
+  if (portInput) portInput.disabled = true;
+
+  const info = $(`forward-active-info-${connId}`);
+  if (info) info.hidden = false;
+
+  const addrEl = $(`forward-addr-${connId}`);
+  if (addrEl) addrEl.textContent = `127.0.0.1:${stats.local_port}`;
+
+  const trafficEl = $(`forward-traffic-${connId}`);
+  if (trafficEl) {
+    trafficEl.textContent = `↑ ${formatBytes(stats.bytes_sent)} · ↓ ${formatBytes(stats.bytes_received)} · ${stats.active_clients} cliente${stats.active_clients === 1 ? '' : 's'}`;
+  }
+}
+
+function updateCardStoppedState(connId) {
+  const card = $(`forward-card-${connId}`);
+  if (!card) return;
+  card.classList.remove("active");
+  const badge = $(`forward-status-badge-${connId}`);
+  if (badge) {
+    badge.textContent = "Inactivo";
+    badge.className = "badge status";
+  }
+
+  const btn = $(`forward-toggle-${connId}`);
+  if (btn) {
+    btn.textContent = "Iniciar Túnel";
+    btn.className = "primary";
+    btn.setAttribute("data-running", "false");
+  }
+
+  const portInput = $(`forward-port-${connId}`);
+  if (portInput) portInput.disabled = false;
+
+  const info = $(`forward-active-info-${connId}`);
+  if (info) info.hidden = true;
+}
+
+function startStatsPolling() {
+  if (statsPollingTimer) return;
+  statsPollingTimer = setInterval(refreshForwardStats, 1500);
+}
+
+async function refreshForwardStats() {
+  try {
+    const list = await invoke("get_forward_stats");
+    let hasRunning = false;
+    for (const st of list || []) {
+      if (st.running) {
+        hasRunning = true;
+        updateCardRunningState(st.connection, st);
+      } else {
+        updateCardStoppedState(st.connection);
+      }
+    }
+    if (!hasRunning && statsPollingTimer) {
+      clearInterval(statsPollingTimer);
+      statsPollingTimer = null;
+    }
+  } catch {
+    // ignore polling error
+  }
+}
+
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}

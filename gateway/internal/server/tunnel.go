@@ -67,6 +67,9 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, p principal) err
 			return errForbidden
 		}
 	}
+	if conn.Protocol == "tcp" {
+		return s.forwardTunnel(w, r, p)
+	}
 	if conn.Backend != store.BackendNative {
 		return &apiError{http.StatusNotImplemented, "not_implemented", "the guacd backend is not implemented yet"}
 	}

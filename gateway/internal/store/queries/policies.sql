@@ -1,10 +1,10 @@
 -- name: CreatePolicy :exec
 INSERT INTO config_policies (
     id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings,
-    can_upload, can_download, starts_at, expires_at, description, created_by, created_at
+    can_upload, can_download, can_forward, starts_at, expires_at, description, created_by, created_at
 ) VALUES (
     @id, @subject_type, @subject_id, @object_type, @object_ref, @can_connect, @can_view_recordings,
-    @can_upload, @can_download, @starts_at, @expires_at, @description, @created_by, @now
+    @can_upload, @can_download, @can_forward, @starts_at, @expires_at, @description, @created_by, @now
 );
 
 -- name: GetPolicy :one
@@ -19,7 +19,7 @@ ORDER BY created_at;
 -- name: UpdatePolicy :exec
 UPDATE config_policies
 SET can_connect = @can_connect, can_view_recordings = @can_view_recordings,
-    can_upload = @can_upload, can_download = @can_download,
+    can_upload = @can_upload, can_download = @can_download, can_forward = @can_forward,
     starts_at = @starts_at, expires_at = @expires_at, description = @description
 WHERE id = @id;
 
@@ -44,7 +44,7 @@ WITH RECURSIVE
     grants AS (
         SELECT p.object_type, p.object_ref FROM config_policies p
         JOIN subj ON p.subject_type = subj.type AND p.subject_id = subj.id
-        WHERE p.can_connect
+        WHERE (p.can_connect OR p.can_forward)
           AND (p.starts_at IS NULL OR julianday(p.starts_at) <= julianday(CAST(@now AS TEXT)))
           AND (p.expires_at IS NULL OR julianday(p.expires_at) > julianday(CAST(@now AS TEXT)))
     ),

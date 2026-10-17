@@ -3,10 +3,12 @@
 //! loopback redirect), and reading who is logged in on this workstation.
 
 pub mod api;
+pub mod forward;
 pub mod identity;
 pub mod invite;
 pub mod sso;
 
-pub use api::{ApiError, AuthProviders, Gateway, LoginOutcome, SupportRequest, SupportSession, SupportStatus, User};
+pub use api::{ApiError, AuthProviders, Gateway, LoginOutcome, PortalConnection, SupportRequest, SupportSession, SupportStatus, User};
+pub use forward::{start_forward, ForwardConfig, ForwardHandle, ForwardStats};
 pub use identity::{AccountType, Identity};
 pub use invite::Invite;

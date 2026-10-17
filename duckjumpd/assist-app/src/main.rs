@@ -17,7 +17,10 @@ use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
 use duckjump_assist::{run_session, CancellationToken, SessionConfig};
-use duckjump_assist_client::{identity, invite, sso, AccountType, AuthProviders, Gateway, Identity, Invite, LoginOutcome, SupportRequest, SupportSession, User};
+use duckjump_assist_client::{
+    identity, invite, sso, AccountType, AuthProviders, ForwardConfig, ForwardHandle, ForwardStats,
+    Gateway, Identity, Invite, LoginOutcome, PortalConnection, SupportRequest, SupportSession, User,
+};
 
 /// How often the gateway is asked whether the session still stands.
 const STATUS_EVERY: Duration = Duration::from_secs(3);
@@ -37,6 +40,7 @@ struct Active {
 struct AppState {
     gw: Mutex<Option<Gateway>>,
     active: Mutex<Option<Active>>,
+    forwards: Mutex<std::collections::HashMap<String, ForwardHandle>>,
     /// The last app link, until the window takes it (it may arrive before
     /// the window listens).
     pending_invite: std::sync::Mutex<Option<Invite>>,
@@ -127,6 +131,10 @@ async fn login_sso(state: State<'_, AppState>) -> CmdResult<User> {
 async fn logout(state: State<'_, AppState>) -> CmdResult<()> {
     if let Some(gw) = state.gw.lock().await.as_ref() {
         let _ = gw.logout().await;
+    }
+    let mut forwards = state.forwards.lock().await;
+    for (_, handle) in forwards.drain() {
+        handle.stop();
     }
     Ok(())
 }
@@ -229,6 +237,61 @@ async fn stop_session(state: State<'_, AppState>) -> CmdResult<()> {
     Ok(())
 }
 
+#[tauri::command]
+async fn list_forward_connections(state: State<'_, AppState>) -> CmdResult<Vec<PortalConnection>> {
+    let gw = state.gateway().await?;
+    gw.portal_connections().await.map_err(msg)
+}
+
+#[tauri::command]
+async fn start_tcp_forward(
+    state: State<'_, AppState>,
+    connection: String,
+    local_port: u16,
+    remote_port: Option<u16>,
+) -> CmdResult<ForwardStats> {
+    let gw = state.gateway().await?;
+    let token = gw.session_token().ok_or_else(|| "inicie sesión primero para abrir un túnel TCP".to_string())?;
+    let mut forwards = state.forwards.lock().await;
+    if forwards.contains_key(&connection) {
+        return Err(format!("el túnel para '{connection}' ya está activo"));
+    }
+    let cfg = ForwardConfig {
+        server_url: gw.server(),
+        token,
+        connection_id_or_name: connection.clone(),
+        local_bind: "127.0.0.1".into(),
+        local_port,
+        remote_port,
+    };
+    let handle = duckjump_assist_client::start_forward(cfg).await?;
+    let stats = handle.stats();
+    forwards.insert(connection, handle);
+    Ok(stats)
+}
+
+#[tauri::command]
+async fn stop_tcp_forward(state: State<'_, AppState>, connection: String) -> CmdResult<()> {
+    let mut forwards = state.forwards.lock().await;
+    if let Some(handle) = forwards.remove(&connection) {
+        handle.stop();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_forward_stats(state: State<'_, AppState>) -> CmdResult<Vec<ForwardStats>> {
+    let mut forwards = state.forwards.lock().await;
+    let mut list = Vec::new();
+    forwards.retain(|_, handle| {
+        let st = handle.stats();
+        let running = st.running;
+        list.push(st);
+        running
+    });
+    Ok(list)
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(duckjump_assist::DEFAULT_LOG_FILTER)))
@@ -278,6 +341,10 @@ fn main() {
             request_support,
             start_session,
             stop_session,
+            list_forward_connections,
+            start_tcp_forward,
+            stop_tcp_forward,
+            get_forward_stats,
         ])
         .on_window_event(|window, event| {
             // Closing the window is a stop too.
@@ -286,6 +353,10 @@ fn main() {
                 let active = tauri::async_runtime::block_on(state.active.lock()).take();
                 if let Some(a) = active {
                     a.cancel.cancel();
+                }
+                let mut forwards = tauri::async_runtime::block_on(state.forwards.lock());
+                for (_, handle) in forwards.drain() {
+                    handle.stop();
                 }
             }
         })

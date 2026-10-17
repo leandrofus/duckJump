@@ -60,6 +60,7 @@ export function RequestAccessDialog({ onClose, defaultTarget }: { onClose: () =>
   const [recordings, setRecordings] = useState(false)
   const [upload, setUpload] = useState(false)
   const [download, setDownload] = useState(false)
+  const [forward, setForward] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -115,6 +116,7 @@ export function RequestAccessDialog({ onClose, defaultTarget }: { onClose: () =>
         can_view_recordings: recordings,
         can_upload: upload,
         can_download: download,
+        can_forward: forward,
       }
       await api.post('/access-requests', payload)
       invalidate('/access-requests')
@@ -212,6 +214,7 @@ export function RequestAccessDialog({ onClose, defaultTarget }: { onClose: () =>
             <label><input type="checkbox" checked={recordings} onChange={(e) => setRecordings(e.target.checked)} /> {t('View recordings')}</label>
             <label><input type="checkbox" checked={upload} onChange={(e) => setUpload(e.target.checked)} /> {t('Upload files')}</label>
             <label><input type="checkbox" checked={download} onChange={(e) => setDownload(e.target.checked)} /> {t('Download files')}</label>
+            <label><input type="checkbox" checked={forward} onChange={(e) => setForward(e.target.checked)} /> {t('Port forward (TCP)')}</label>
           </div>
         </Field>
       </div>

@@ -231,7 +231,7 @@ func toConnection(c db.ConfigConnection, tags []string) connectionDTO {
 
 // openapi:schema Policy
 // type: object
-// required: [id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, can_upload, can_download, expires_at, description, created_by, created_at]
+// required: [id, subject_type, subject_id, object_type, object_ref, can_connect, can_view_recordings, can_upload, can_download, can_forward, expires_at, description, created_by, created_at]
 // properties:
 //   id: { type: string, format: uuid }
 //   subject_type: { type: string, enum: [user, group] }
@@ -242,6 +242,7 @@ func toConnection(c db.ConfigConnection, tags []string) connectionDTO {
 //   can_view_recordings: { type: boolean }
 //   can_upload: { type: boolean }
 //   can_download: { type: boolean }
+//   can_forward: { type: boolean }
 //   starts_at: { type: [string, 'null'], format: date-time }
 //   expires_at: { type: [string, 'null'], format: date-time }
 //   description: { type: string }
@@ -258,6 +259,7 @@ type policyDTO struct {
 	CanViewRecordings bool       `json:"can_view_recordings"`
 	CanUpload         bool       `json:"can_upload"`
 	CanDownload       bool       `json:"can_download"`
+	CanForward        bool       `json:"can_forward"`
 	StartsAt          *time.Time `json:"starts_at"`
 	ExpiresAt         *time.Time `json:"expires_at"`
 	Description       string     `json:"description"`
@@ -267,7 +269,7 @@ type policyDTO struct {
 
 func toPolicy(p db.ConfigPolicy) policyDTO {
 	return policyDTO{p.ID, p.SubjectType, p.SubjectID, p.ObjectType, p.ObjectRef, p.CanConnect, p.CanViewRecordings,
-		p.CanUpload, p.CanDownload, timePtr(p.StartsAt), timePtr(p.ExpiresAt), p.Description, strPtr(p.CreatedBy), p.CreatedAt.UTC()}
+		p.CanUpload, p.CanDownload, p.CanForward, timePtr(p.StartsAt), timePtr(p.ExpiresAt), p.Description, strPtr(p.CreatedBy), p.CreatedAt.UTC()}
 }
 
 // openapi:schema AuditEvent
@@ -363,7 +365,7 @@ var (
 	reUsername = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	reTag      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
 	roles      = map[string]bool{"superadmin": true, "admin": true, "auditor": true, "user": true}
-	protocols  = map[string]int64{"ssh": 22, "rdp": 3389, "vnc": 5900}
+	protocols  = map[string]int64{"ssh": 22, "rdp": 3389, "vnc": 5900, "tcp": 0}
 )
 
 func validName(field, v string) error {
@@ -474,7 +476,7 @@ type accessRequestTargetsDTO struct {
 
 // openapi:schema AccessRequest
 // type: object
-// required: [id, user_id, user_username, user_display_name, object_type, object_ref, object_name, ticket, can_connect, can_view_recordings, can_upload, can_download, reason, starts_at, ends_at, status, reviewed_by, reviewer_username, reviewed_at, review_comment, created_policy_id, created_at]
+// required: [id, user_id, user_username, user_display_name, object_type, object_ref, object_name, ticket, can_connect, can_view_recordings, can_upload, can_download, can_forward, reason, starts_at, ends_at, status, reviewed_by, reviewer_username, reviewed_at, review_comment, created_policy_id, created_at]
 // properties:
 //   id: { type: string, format: uuid }
 //   user_id: { type: string, format: uuid }
@@ -488,6 +490,7 @@ type accessRequestTargetsDTO struct {
 //   can_view_recordings: { type: boolean }
 //   can_upload: { type: boolean }
 //   can_download: { type: boolean }
+//   can_forward: { type: boolean }
 //   reason: { type: string }
 //   starts_at: { type: string, format: date-time }
 //   ends_at: { type: string, format: date-time }
@@ -512,6 +515,7 @@ type accessRequestDTO struct {
 	CanViewRecordings bool       `json:"can_view_recordings"`
 	CanUpload         bool       `json:"can_upload"`
 	CanDownload       bool       `json:"can_download"`
+	CanForward        bool       `json:"can_forward"`
 	Reason            string     `json:"reason"`
 	StartsAt          time.Time  `json:"starts_at"`
 	EndsAt            time.Time  `json:"ends_at"`

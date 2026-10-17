@@ -75,6 +75,30 @@ pub struct User {
     pub role: String,
 }
 
+/// A connection available to the user in the portal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PortalConnection {
+    pub id: String,
+    pub name: String,
+    pub protocol: String,
+    pub environment: String,
+    pub description: String,
+    #[serde(default)]
+    pub folder_path: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub record: bool,
+    #[serde(default)]
+    pub credentials: String,
+    #[serde(default)]
+    pub can_upload: bool,
+    #[serde(default)]
+    pub can_download: bool,
+    #[serde(default)]
+    pub can_forward: bool,
+}
+
 /// The answer to a password login: a user, or a TOTP step to go.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LoginOutcome {
@@ -150,6 +174,7 @@ pub struct Gateway {
     base: Url,
     http: reqwest::Client,
     jar: Arc<Jar>,
+    session_token: Arc<std::sync::RwLock<Option<String>>>,
 }
 
 /// Accepts "gw:8088", "http://gw:8088/" or "https://gw"; the path is dropped.
@@ -182,7 +207,7 @@ impl Gateway {
             .user_agent(concat!("duckjump-assist-app/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Gateway { base, http, jar })
+        Ok(Gateway { base, http, jar, session_token: Arc::new(std::sync::RwLock::new(None)) })
     }
 
     /// The server URL without the trailing slash, as the agent wants it.
@@ -194,8 +219,14 @@ impl Gateway {
         self.base.join(path.trim_start_matches('/')).expect("relative path")
     }
 
+    /// Current session token if authenticated.
+    pub fn session_token(&self) -> Option<String> {
+        self.session_token.read().unwrap().clone()
+    }
+
     /// Uses a session token obtained elsewhere (single sign-on).
     pub fn set_session(&self, token: &str) {
+        *self.session_token.write().unwrap() = Some(token.to_string());
         self.jar.add_cookie_str(&format!("{SESSION_COOKIE}={token}; Path=/"), &self.base);
     }
 
@@ -235,11 +266,25 @@ impl Gateway {
     }
 
     pub async fn login(&self, username: &str, password: &str) -> Result<LoginOutcome> {
-        self.post("/api/v1/auth/login", &serde_json::json!({"username": username, "password": password})).await
+        let req = self.http.post(self.url("/api/v1/auth/login")).header(CSRF_HEADER, "1").json(&serde_json::json!({"username": username, "password": password}));
+        let resp = Self::check(req.send().await?).await?;
+        for c in resp.cookies() {
+            if c.name() == SESSION_COOKIE {
+                *self.session_token.write().unwrap() = Some(c.value().to_string());
+            }
+        }
+        Ok(resp.json().await?)
     }
 
     pub async fn login_totp(&self, code: &str) -> Result<User> {
-        let out: LoginOutcome = self.post("/api/v1/auth/totp", &serde_json::json!({"code": code})).await?;
+        let req = self.http.post(self.url("/api/v1/auth/totp")).header(CSRF_HEADER, "1").json(&serde_json::json!({"code": code}));
+        let resp = Self::check(req.send().await?).await?;
+        for c in resp.cookies() {
+            if c.name() == SESSION_COOKIE {
+                *self.session_token.write().unwrap() = Some(c.value().to_string());
+            }
+        }
+        let out: LoginOutcome = resp.json().await?;
         out.user.ok_or_else(|| ApiError { status: 0, code: "mfa".into(), message: "el servidor no completó el inicio de sesión".into() })
     }
 
@@ -254,6 +299,7 @@ impl Gateway {
     }
 
     pub async fn logout(&self) -> Result<()> {
+        *self.session_token.write().unwrap() = None;
         self.post_empty("/api/v1/auth/logout").await
     }
 
@@ -262,6 +308,11 @@ impl Gateway {
         let t: AppToken = self.post("/api/v1/auth/oidc/token", &serde_json::json!({"code": code, "code_verifier": verifier})).await?;
         self.set_session(&t.token);
         Ok(t.user)
+    }
+
+    /// Fetches all connections available to the current user in the portal.
+    pub async fn portal_connections(&self) -> Result<Vec<PortalConnection>> {
+        self.get("/api/v1/portal/connections").await
     }
 
     pub async fn request_support(&self, req: &SupportRequest) -> Result<SupportSession> {

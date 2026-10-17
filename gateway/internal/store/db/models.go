@@ -90,6 +90,7 @@ type ConfigAccessRequest struct {
 	ReviewComment     string
 	CreatedPolicyID   sql.NullString
 	CreatedAt         time.Time
+	CanForward        bool
 }
 
 type ConfigConnection struct {
@@ -154,6 +155,7 @@ type ConfigPolicy struct {
 	CanUpload         bool
 	CanDownload       bool
 	StartsAt          sql.NullTime
+	CanForward        bool
 }
 
 type ConfigSecret struct {

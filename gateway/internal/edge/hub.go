@@ -206,6 +206,19 @@ func (h *Hub) redeem(id string) (ticket, bool) {
 	return t, ok && time.Now().Before(t.expires)
 }
 
+// Dial opens a stream to host:port through the site's connected agents.
+func (h *Hub) Dial(site string, host string, port int, session string) (net.Conn, error) {
+	tk, err := h.Ticket(site, host, port, session)
+	if err != nil {
+		return nil, err
+	}
+	t, ok := h.redeem(tk)
+	if !ok {
+		return nil, ErrNoAgent
+	}
+	return h.dial(t)
+}
+
 // dial opens a stream to host:port through one of the site's agents,
 // round-robin across those connected.
 func (h *Hub) dial(t ticket) (net.Conn, error) {

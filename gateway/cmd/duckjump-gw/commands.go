@@ -243,7 +243,7 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 	case "add":
 		fs := flag.NewFlagSet("conn add", flag.ExitOnError)
 		name := fs.String("name", "", "connection name")
-		protocol := fs.String("protocol", "ssh", "ssh | rdp | vnc")
+		protocol := fs.String("protocol", "ssh", "ssh | rdp | vnc | tcp")
 		host := fs.String("host", "", "target host")
 		port := fs.Int("port", 22, "target port")
 		secret := fs.String("secret", "", "vaulted credential name")
@@ -643,6 +643,9 @@ func grantCmd(ctx context.Context, st *store.Store, args []string) error {
 			if p.CanDownload {
 				perms = append(perms, "download")
 			}
+			if p.CanForward {
+				perms = append(perms, "forward")
+			}
 			exp := "permanent"
 			if p.ExpiresAt.Valid {
 				exp = p.ExpiresAt.Time.Local().Format(time.DateTime)
@@ -667,6 +670,7 @@ func grantCmd(ctx context.Context, st *store.Store, args []string) error {
 		ttl := fs.Duration("ttl", 0, "access duration (0 = permanent)")
 		upload := fs.Bool("upload", false, "allow sending files to host")
 		download := fs.Bool("download", false, "allow taking files from host")
+		forward := fs.Bool("forward", false, "allow port forwarding to host")
 		fs.Parse(rest)
 		if *user == "" || *conn == "" {
 			return fmt.Errorf("need --user and --conn: duckjump grant add --user <u> --conn <c>")
@@ -687,7 +691,7 @@ func grantCmd(ctx context.Context, st *store.Store, args []string) error {
 			}
 			if err := q.CreatePolicy(ctx, db.CreatePolicyParams{
 				ID: id, SubjectType: "user", SubjectID: u.ID, ObjectType: "connection",
-				ObjectRef: c.ID, CanConnect: true, CanUpload: *upload, CanDownload: *download,
+				ObjectRef: c.ID, CanConnect: true, CanUpload: *upload, CanDownload: *download, CanForward: *forward,
 				ExpiresAt: store.NullTime(exp), Now: store.Now(),
 			}); err != nil {
 				return err
@@ -697,7 +701,7 @@ func grantCmd(ctx context.Context, st *store.Store, args []string) error {
 				Actor: cli, Action: "policy.create", ObjectType: "policy", ObjectID: id,
 				Details: map[string]any{
 					"subject": "user:" + u.ID, "object": "connection:" + c.ID, "can_connect": true,
-					"can_upload": *upload, "can_download": *download,
+					"can_upload": *upload, "can_download": *download, "can_forward": *forward,
 				},
 			})
 		})

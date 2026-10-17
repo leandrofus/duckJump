@@ -23,6 +23,7 @@
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-request" aria-selected="true" aria-controls="panel-request">Solicitar soporte</button>
       <button role="tab" id="tab-join" aria-selected="false" aria-controls="panel-join">Unirse con código</button>
+      <button role="tab" id="tab-forward" aria-selected="false" aria-controls="panel-forward">Túneles TCP</button>
     </div>
 
     <section id="panel-request" role="tabpanel" aria-labelledby="tab-request">
@@ -85,6 +86,26 @@
         </label>
         <button type="submit" class="primary">Conectar</button>
       </form>
+    </section>
+
+    <section id="panel-forward" role="tabpanel" aria-labelledby="tab-forward" hidden>
+      <div id="forward-signed-out" class="stack">
+        <p class="hint">Para abrir túneles TCP a bases de datos o servicios internos, primero inicie sesión en la pestaña «Solicitar soporte».</p>
+        <button id="forward-go-login" type="button" class="secondary">Ir a iniciar sesión</button>
+      </div>
+
+      <div id="forward-signed-in" class="stack" hidden>
+        <div class="forward-header">
+          <p class="hint">Túneles seguros hacia bases de datos y servicios internos (psql, DBeaver, APIs).</p>
+          <button id="forward-refresh-btn" type="button" class="link">↻ Actualizar</button>
+        </div>
+
+        <div id="forward-empty" class="hint center" hidden>
+          No hay conexiones disponibles para port-forwarding en este servidor.
+        </div>
+
+        <div id="forward-list" class="stack forward-list"></div>
+      </div>
     </section>
 
     <p id="error" class="error" role="alert" hidden></p>

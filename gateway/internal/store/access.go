@@ -60,6 +60,12 @@ func (s *Store) CanDownload(ctx context.Context, userID, connID string) (bool, e
 	return s.anyGrant(ctx, userID, connID, func(p db.ConfigPolicy) bool { return p.CanDownload })
 }
 
+// CanForward reports whether any unexpired grant on the connection allows
+// port forwarding to it.
+func (s *Store) CanForward(ctx context.Context, userID, connID string) (bool, error) {
+	return s.anyGrant(ctx, userID, connID, func(p db.ConfigPolicy) bool { return p.CanForward || p.CanConnect })
+}
+
 func (s *Store) anyGrant(ctx context.Context, userID, connID string, ok func(db.ConfigPolicy) bool) (bool, error) {
 	ps, err := s.Grants(ctx, userID, connID)
 	if err != nil {

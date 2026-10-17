@@ -143,6 +143,7 @@ func (s *Server) Handler() http.Handler {
 	// Portal: what the caller may open.
 	mux.Handle("GET /api/v1/portal/connections", s.authed(anyRole, s.portalConnections))
 	mux.Handle("GET /api/v1/connections/{id}/session", s.authed(anyRole, s.tunnel))
+	mux.Handle("GET /api/v1/connections/{id}/forward", s.authed(anyRole, s.forwardTunnel))
 	mux.Handle("GET /api/v1/sessions/{id}/join", s.authed(anyRole, s.joinSessionEndpoint))
 	mux.Handle("POST /api/v1/sessions/{id}/share", s.authed(anyRole, s.createSessionShare))
 	mux.Handle("GET /api/v1/sessions/{id}/share", s.authed(anyRole, s.getSessionShare))
@@ -350,11 +351,22 @@ func (s *Server) resolve(r *http.Request) (principal, bool, error) {
 	if s.Dev {
 		return principal{User: db.ConfigUser{Username: "dev", Role: "superadmin"}, IP: ip, Dev: true}, false, nil
 	}
-	c, err := r.Cookie(sessionCookie)
-	if err != nil {
+	tok := ""
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		tok = c.Value
+	}
+	if tok == "" {
+		if authHdr := r.Header.Get("Authorization"); strings.HasPrefix(authHdr, "Bearer ") {
+			tok = strings.TrimPrefix(authHdr, "Bearer ")
+		}
+	}
+	if tok == "" {
+		tok = r.URL.Query().Get("token")
+	}
+	if tok == "" {
 		return principal{}, false, errUnauthorized
 	}
-	sess, err := s.Auth.Session(r.Context(), c.Value)
+	sess, err := s.Auth.Session(r.Context(), tok)
 	if err != nil {
 		return principal{}, false, errUnauthorized
 	}

@@ -183,3 +183,37 @@ button.link { background: none; border: 0; color: var(--primary); font: inherit;
 }
 .invite .error { text-align: left; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+
+/* ---- TCP Forwarding ---- */
+.forward-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.forward-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.forward-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.forward-card.active { border-color: var(--ok); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 30%, transparent); }
+.forward-info { display: flex; flex-direction: column; gap: 4px; }
+.forward-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge {
+  font-size: .72rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.badge.protocol { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
+.badge.status { background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); }
+.badge.status.running { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.forward-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.field-inline { display: flex; align-items: center; gap: 8px; font-size: .88rem; font-weight: 600; }
+.field-inline input { width: 96px; padding: 6px 8px; text-align: center; font-variant-numeric: tabular-nums; }
+.forward-active-info { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px dashed var(--border); font-size: .85rem; flex-wrap: wrap; gap: 6px; }
+.forward-address { margin: 0; display: flex; align-items: center; gap: 6px; }
+.forward-address code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-weight: 700; color: var(--brand); }
+.forward-traffic { margin: 0; font-variant-numeric: tabular-nums; }

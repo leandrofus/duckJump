@@ -113,9 +113,9 @@ func checkConnection(ctx context.Context, q *db.Queries, c *db.ConfigConnection)
 	}
 	def, ok := protocols[c.Protocol]
 	if !ok {
-		return badRequest("protocol must be ssh, rdp or vnc")
+		return badRequest("protocol must be ssh, rdp, vnc or tcp")
 	}
-	if c.Port == 0 {
+	if c.Port == 0 && def > 0 {
 		c.Port = def
 	}
 	if c.Port < 1 || c.Port > 65535 {

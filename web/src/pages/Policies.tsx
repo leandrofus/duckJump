@@ -68,6 +68,7 @@ function Perms({ p }: { p: Policy }) {
       {p.can_view_recordings && <Tag>{t('recordings')}</Tag>}
       {p.can_upload && <Tag>{t('upload files')}</Tag>}
       {p.can_download && <Tag tone="warn">{t('download files')}</Tag>}
+      {p.can_forward && <Tag tone="ok">{t('port forward')}</Tag>}
     </span>
   )
 }
@@ -185,6 +186,7 @@ export function PolicyDialog({ subject, object, onClose }: { subject?: Subject; 
   const [recordings, setRecordings] = useState(false)
   const [upload, setUpload] = useState(false)
   const [download, setDownload] = useState(false)
+  const [forward, setForward] = useState(false)
   const [ttl, setTTL] = useState(0)
   const [desc, setDesc] = useState('')
   const [busy, setBusy] = useState(false)
@@ -194,7 +196,7 @@ export function PolicyDialog({ subject, object, onClose }: { subject?: Subject; 
     try {
       await api.post('/policies', {
         subject_type: subj.type, subject_id: subj.id, object_type: obj.type, object_ref: obj.ref,
-        can_connect: connect, can_view_recordings: recordings, can_upload: upload, can_download: download, description: desc.trim(), ...(ttl ? { ttl_seconds: ttl } : {}),
+        can_connect: connect, can_view_recordings: recordings, can_upload: upload, can_download: download, can_forward: forward, description: desc.trim(), ...(ttl ? { ttl_seconds: ttl } : {}),
       })
       invalidate('/policies', '/access', '/portal')
       toast.ok(t('Access granted'))
@@ -207,7 +209,7 @@ export function PolicyDialog({ subject, object, onClose }: { subject?: Subject; 
   }
   return (
     <Modal wide title={t('Grant access')} icon={<ShieldCheck size={18} />} onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>{t('Cancel')}</button><button className="btn btn-primary" disabled={busy || !subj.id || !obj.ref || (!connect && !recordings && !upload && !download)} onClick={save}>{t('Grant')}</button></>}>
+      footer={<><button className="btn" onClick={onClose}>{t('Cancel')}</button><button className="btn btn-primary" disabled={busy || !subj.id || !obj.ref || (!connect && !recordings && !upload && !download && !forward)} onClick={save}>{t('Grant')}</button></>}>
       <div className="grid-2">
         <Field label={t('Who')}>
           <div className="seg seg-text">
@@ -258,6 +260,7 @@ export function PolicyDialog({ subject, object, onClose }: { subject?: Subject; 
             <label className="check"><input type="checkbox" checked={recordings} onChange={(e) => setRecordings(e.target.checked)} /> {t('Watch its session recordings')}</label>
             <label className="check"><input type="checkbox" checked={upload} onChange={(e) => setUpload(e.target.checked)} /> {t('Send files to the host')}</label>
             <label className="check"><input type="checkbox" checked={download} onChange={(e) => setDownload(e.target.checked)} /> {t('Take files from the host')}</label>
+            <label className="check"><input type="checkbox" checked={forward} onChange={(e) => setForward(e.target.checked)} /> {t('Port forward (TCP)')}</label>
           </div>
         </Field>
         <Field label={t('Duration')} span help={t('Temporary access expires on its own (just-in-time).')}>
@@ -277,23 +280,25 @@ function EditPolicyDialog({ policy, onClose }: { policy: Policy; onClose: () => 
   const [recordings, setRecordings] = useState(policy.can_view_recordings)
   const [upload, setUpload] = useState(policy.can_upload)
   const [download, setDownload] = useState(policy.can_download)
+  const [forward, setForward] = useState(policy.can_forward)
   const [exp, setExp] = useState(policy.expires_at ? toLocalInput(policy.expires_at) : '')
   const [desc, setDesc] = useState(policy.description)
   const save = () =>
     api
-      .patch(`/policies/${policy.id}`, { can_connect: connect, can_view_recordings: recordings, can_upload: upload, can_download: download, description: desc, expires_at: exp ? new Date(exp).toISOString() : null })
+      .patch(`/policies/${policy.id}`, { can_connect: connect, can_view_recordings: recordings, can_upload: upload, can_download: download, can_forward: forward, description: desc, expires_at: exp ? new Date(exp).toISOString() : null })
       .then(() => (invalidate('/policies', '/access', '/portal'), onClose()), toast.err)
   const s = names.subject(policy)
   const o = names.object(policy)
   return (
     <Modal title={t('Edit access')} onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>{t('Cancel')}</button><button className="btn btn-primary" disabled={!connect && !recordings && !upload && !download} onClick={save}>{t('Save')}</button></>}>
+      footer={<><button className="btn" onClick={onClose}>{t('Cancel')}</button><button className="btn btn-primary" disabled={!connect && !recordings && !upload && !download && !forward} onClick={save}>{t('Save')}</button></>}>
       <p className="row gap">{s.icon} <strong>{s.name}</strong> → {o.icon} {o.name}</p>
       <div className="row gap wrap">
         <label className="check"><input type="checkbox" checked={connect} onChange={(e) => setConnect(e.target.checked)} /> {t('Open sessions')}</label>
         <label className="check"><input type="checkbox" checked={recordings} onChange={(e) => setRecordings(e.target.checked)} /> {t('Watch its session recordings')}</label>
         <label className="check"><input type="checkbox" checked={upload} onChange={(e) => setUpload(e.target.checked)} /> {t('Send files to the host')}</label>
         <label className="check"><input type="checkbox" checked={download} onChange={(e) => setDownload(e.target.checked)} /> {t('Take files from the host')}</label>
+        <label className="check"><input type="checkbox" checked={forward} onChange={(e) => setForward(e.target.checked)} /> {t('Port forward (TCP)')}</label>
       </div>
       <Field label={t('Expires')} help={t('Empty: permanent.')}>
         <div className="row gap">

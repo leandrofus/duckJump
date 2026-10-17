@@ -657,6 +657,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{id}/forward": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open a TCP port-forwarding tunnel (WebSocket)
+         * @description Upgrades to a WebSocket carrying binary TCP streams to the destination. Destination is the connection's host:port, optionally overridden with a port whitelisted in connection params.
+         *
+         *     Roles: admin, auditor, superadmin, user.
+         */
+        get: operations["forwardTunnel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{id}/host-key": {
         parameters: {
             query?: never;
@@ -1601,6 +1623,7 @@ export interface components {
         AccessRequest: {
             can_connect: boolean;
             can_download: boolean;
+            can_forward: boolean;
             can_upload: boolean;
             can_view_recordings: boolean;
             /** Format: date-time */
@@ -1807,6 +1830,8 @@ export interface components {
             /** @default false */
             can_download: boolean;
             /** @default false */
+            can_forward: boolean;
+            /** @default false */
             can_upload: boolean;
             /** @default false */
             can_view_recordings: boolean;
@@ -1953,6 +1978,7 @@ export interface components {
         Policy: {
             can_connect: boolean;
             can_download: boolean;
+            can_forward: boolean;
             can_upload: boolean;
             can_view_recordings: boolean;
             /** Format: date-time */
@@ -1982,6 +2008,11 @@ export interface components {
              * @default false
              */
             can_download: boolean;
+            /**
+             * @description Allow TCP port forwarding to the host.
+             * @default false
+             */
+            can_forward: boolean;
             /**
              * @description Send files from the user's file tray to the host.
              * @default false
@@ -2017,6 +2048,8 @@ export interface components {
         PortalConnection: {
             /** @description May take files from this host into the tray. */
             can_download: boolean;
+            /** @description May establish a TCP port-forwarding tunnel to this host. */
+            can_forward: boolean;
             /** @description May send files from the tray to this host. */
             can_upload: boolean;
             /**
@@ -2032,7 +2065,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            protocol: "ssh" | "rdp" | "vnc";
+            protocol: "ssh" | "rdp" | "vnc" | "tcp";
             /** @description Sessions are recorded; the UI tells the user. */
             record: boolean;
             tags: string[];
@@ -2317,6 +2350,7 @@ export interface components {
         UpdatePolicyRequest: {
             can_connect?: boolean;
             can_download?: boolean;
+            can_forward?: boolean;
             can_upload?: boolean;
             can_view_recordings?: boolean;
             description?: string;
@@ -4196,6 +4230,57 @@ export interface operations {
             };
             /** @description Error 422 */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    forwardTunnel: {
+        parameters: {
+            query?: {
+                /** @description Target port, if allowed by connection allow_ports. */
+                port?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Connection ID or name */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching to the WebSocket protocol */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -54,6 +54,7 @@ Usage:
   duckjump grant ls | add --user <u> --conn <c> [--ttl 2h] [--upload] [--download] | rm <id>
   duckjump request ls [--status pending|approved|rejected] | approve <id> [--comment "..."] | deny <id>
   duckjump allow ls | add <IP|CIDR|host>... | rm <entry>...
+  duckjump forward <name> <local-port>[:<remote-port>] [--server URL] [--token TOKEN]
 
   duckjump session ls | kill <session-id> [--reason "..."]
   duckjump recording ls
@@ -111,6 +112,20 @@ func main() {
 			fatal(err)
 		}
 		return
+	case "forward":
+		var st *store.Store
+		if v, err := openVault(); err == nil {
+			store.SetAuditKey(v.Derive("audit-mac"))
+			dbPath := env("DUCKJUMP_DB", defaultDB())
+			if s, err := store.Open(dbPath); err == nil {
+				st = s
+				defer st.Close()
+			}
+		}
+		if err := forwardCmd(context.Background(), st, args); err != nil {
+			fatal(err)
+		}
+		return
 	}
 
 	cmds := map[string]func(context.Context, *store.Store, []string) error{
@@ -126,6 +141,7 @@ func main() {
 		"request":             requestCmd,
 		"requests":            requestCmd,
 		"allow":               allowCmd,
+		"forward":             forwardCmd,
 		"session":             sessionCmd,
 		"sessions":            listSessions,
 		"recording":           recordingCmd,

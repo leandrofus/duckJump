@@ -24,6 +24,7 @@ import (
 //   can_view_recordings: { type: boolean, default: false }
 //   can_upload: { type: boolean, default: false }
 //   can_download: { type: boolean, default: false }
+//   can_forward: { type: boolean, default: false }
 //   reason: { type: string }
 //   starts_at: { type: string, format: date-time }
 //   ends_at: { type: string, format: date-time }
@@ -36,6 +37,7 @@ type createAccessRequest struct {
 	CanViewRecordings bool      `json:"can_view_recordings"`
 	CanUpload         bool      `json:"can_upload"`
 	CanDownload       bool      `json:"can_download"`
+	CanForward        bool      `json:"can_forward"`
 	Reason            string    `json:"reason"`
 	StartsAt          time.Time `json:"starts_at"`
 	EndsAt            time.Time `json:"ends_at"`
@@ -125,6 +127,7 @@ func (s *Server) toAccessRequestDTOs(ctx context.Context, rs []db.ConfigAccessRe
 			CanViewRecordings: r.CanViewRecordings,
 			CanUpload:         r.CanUpload,
 			CanDownload:       r.CanDownload,
+			CanForward:        r.CanForward,
 			Reason:            r.Reason,
 			StartsAt:          r.StartsAt.UTC(),
 			EndsAt:            r.EndsAt.UTC(),
@@ -272,7 +275,7 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p p
 		return badRequest("ends_at cannot be in the past")
 	}
 	canConnect := req.CanConnect == nil || *req.CanConnect
-	if !canConnect && !req.CanViewRecordings && !req.CanUpload && !req.CanDownload {
+	if !canConnect && !req.CanViewRecordings && !req.CanUpload && !req.CanDownload && !req.CanForward {
 		return badRequest("an access request must ask for at least one permission")
 	}
 
@@ -311,6 +314,7 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p p
 			CanViewRecordings: req.CanViewRecordings,
 			CanUpload:         req.CanUpload,
 			CanDownload:       req.CanDownload,
+			CanForward:        req.CanForward,
 			Reason:            reason,
 			StartsAt:          req.StartsAt.UTC(),
 			EndsAt:            req.EndsAt.UTC(),
@@ -329,6 +333,7 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request, p p
 			"can_view_recordings": req.CanViewRecordings,
 			"can_upload":          req.CanUpload,
 			"can_download":        req.CanDownload,
+			"can_forward":         req.CanForward,
 		}
 		if err := store.Audit(ctx, q, store.Event{
 			Actor:      p.actor(),
@@ -449,6 +454,7 @@ func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request, p 
 				CanViewRecordings: req.CanViewRecordings,
 				CanUpload:         req.CanUpload,
 				CanDownload:       req.CanDownload,
+				CanForward:        req.CanForward,
 				StartsAt:          store.NullTime(req.StartsAt),
 				ExpiresAt:         store.NullTime(req.EndsAt),
 				Description:       desc,
@@ -466,6 +472,7 @@ func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request, p 
 				CanViewRecordings: req.CanViewRecordings,
 				CanUpload:         req.CanUpload,
 				CanDownload:       req.CanDownload,
+				CanForward:        req.CanForward,
 				StartsAt:          store.NullTime(req.StartsAt),
 				ExpiresAt:         store.NullTime(req.EndsAt),
 				Description:       desc,
