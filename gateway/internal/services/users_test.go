@@ -219,5 +219,19 @@ func TestUserService_SelfService(t *testing.T) {
 	if len(groups) != 0 {
 		t.Fatalf("expected 0 groups for new user, got %d", len(groups))
 	}
+
+	// 11. ListUserAccess
+	access, err := svc.ListUserAccess(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("ListUserAccess failed: %v", err)
+	}
+	if len(access) != 0 {
+		t.Fatalf("expected 0 access entries for user without grants, got %d", len(access))
+	}
+
+	_, err = svc.ListUserAccess(ctx, "non-existent-user-id")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for non-existent user, got %v", err)
+	}
 }
 

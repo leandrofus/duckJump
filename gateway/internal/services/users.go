@@ -380,7 +380,51 @@ func (s *UserService) isLastSuperadmin(ctx context.Context, q *db.Queries, u db.
 }
 
 func (s *UserService) ListUserGroups(ctx context.Context, userID string) ([]db.ConfigGroup, error) {
+	if _, err := s.Get(ctx, userID); err != nil {
+		return nil, err
+	}
 	return s.store.Q.ListUserGroups(ctx, userID)
+}
+
+type UserAccessEntry struct {
+	Connection db.ConfigConnection
+	Tags       []string
+	Grants     []db.ConfigPolicy
+}
+
+func (s *UserService) ListUserAccess(ctx context.Context, userID string) ([]UserAccessEntry, error) {
+	if _, err := s.Get(ctx, userID); err != nil {
+		return nil, err
+	}
+	conns, err := s.store.GrantedConnections(ctx, userID)
+	if err != nil {
+		return nil, store.Classify(err)
+	}
+	rows, err := s.store.Q.ListAllConnectionTags(ctx)
+	if err != nil {
+		return nil, store.Classify(err)
+	}
+	tagMap := make(map[string][]string)
+	for _, r := range rows {
+		tagMap[r.ConnectionID] = append(tagMap[r.ConnectionID], r.Tag)
+	}
+	out := make([]UserAccessEntry, 0, len(conns))
+	for _, c := range conns {
+		ps, err := s.store.Grants(ctx, userID, c.ID)
+		if err != nil {
+			return nil, store.Classify(err)
+		}
+		t := tagMap[c.ID]
+		if t == nil {
+			t = []string{}
+		}
+		out = append(out, UserAccessEntry{
+			Connection: c,
+			Tags:       t,
+			Grants:     ps,
+		})
+	}
+	return out, nil
 }
 
 func (s *UserService) ChangePassword(

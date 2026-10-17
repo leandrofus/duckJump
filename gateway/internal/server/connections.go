@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 
@@ -84,11 +83,6 @@ type updateConnectionRequest struct {
 	Params         opt[json.RawMessage] `json:"params"`
 	Record         opt[bool]            `json:"record"`
 	RecordInput    opt[bool]            `json:"record_input"`
-}
-
-// tagIndex maps connection id -> tags, for list responses.
-func (s *Server) tagIndex(ctx context.Context) (map[string][]string, error) {
-	return s.Connections.TagIndex(ctx)
 }
 
 // openapi:operation

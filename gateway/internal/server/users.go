@@ -204,12 +204,9 @@ func (s *Server) resetTOTP(w http.ResponseWriter, r *http.Request, p principal) 
 func (s *Server) userGroups(w http.ResponseWriter, r *http.Request, p principal) error {
 	return handleOK(w, func() ([]groupDTO, error) {
 		ctx, id := r.Context(), r.PathValue("id")
-		if _, err := s.Users.Get(ctx, id); err != nil {
-			return nil, fromService(err, "user")
-		}
-		gs, err := s.Store.Q.ListUserGroups(ctx, id)
+		gs, err := s.Users.ListUserGroups(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, fromService(err, "user")
 		}
 		out := make([]groupDTO, 0, len(gs))
 		for _, g := range gs {
@@ -243,28 +240,20 @@ type accessEntry struct {
 func (s *Server) userAccess(w http.ResponseWriter, r *http.Request, p principal) error {
 	return handleOK(w, func() ([]accessEntry, error) {
 		ctx, id := r.Context(), r.PathValue("id")
-		if _, err := s.Users.Get(ctx, id); err != nil {
+		entries, err := s.Users.ListUserAccess(ctx, id)
+		if err != nil {
 			return nil, fromService(err, "user")
 		}
-		conns, err := s.Store.GrantedConnections(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		tags, err := s.tagIndex(ctx)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]accessEntry, 0, len(conns))
-		for _, c := range conns {
-			ps, err := s.Store.Grants(ctx, id, c.ID)
-			if err != nil {
-				return nil, err
+		out := make([]accessEntry, 0, len(entries))
+		for _, e := range entries {
+			grants := make([]policyDTO, 0, len(e.Grants))
+			for _, p := range e.Grants {
+				grants = append(grants, toPolicy(p))
 			}
-			e := accessEntry{Connection: toConnection(c, tags[c.ID]), Grants: []policyDTO{}}
-			for _, p := range ps {
-				e.Grants = append(e.Grants, toPolicy(p))
-			}
-			out = append(out, e)
+			out = append(out, accessEntry{
+				Connection: toConnection(e.Connection, e.Tags),
+				Grants:     grants,
+			})
 		}
 		return out, nil
 	})
