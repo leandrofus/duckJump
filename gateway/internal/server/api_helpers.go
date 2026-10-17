@@ -138,8 +138,18 @@ func fromService(err error, what string) error {
 		errors.Is(err, services.ErrAccessRequestEndsAtInPast),
 		errors.Is(err, services.ErrAccessRequestNoPermissions),
 		errors.Is(err, services.ErrAccessRequestEndInPast),
-		errors.Is(err, services.ErrRetentionDaysInvalid):
+		errors.Is(err, services.ErrRetentionDaysInvalid),
+		errors.Is(err, services.ErrSIEMEndpointRequired),
+		errors.Is(err, services.ErrInvalidFileName):
 		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrFilesNotConfigured):
+		return &apiError{http.StatusNotImplemented, "not_configured", "file transfer is not configured on this gateway (-files)"}
+	case errors.Is(err, services.ErrFileTooLarge):
+		return &apiError{http.StatusRequestEntityTooLarge, "too_large", err.Error()}
+	case errors.Is(err, services.ErrFileForbidden):
+		return &apiError{http.StatusForbidden, "forbidden", err.Error()}
+	case errors.Is(err, services.ErrFileNotFound):
+		return notFound("file")
 	default:
 		var notEmptyErr *services.FolderNotEmptyError
 		if errors.As(err, &notEmptyErr) {
@@ -148,6 +158,10 @@ func fromService(err error, what string) error {
 		var notPendingErr *services.AccessRequestNotPendingError
 		if errors.As(err, &notPendingErr) {
 			return conflict("%s", notPendingErr.Error())
+		}
+		var fileDelErr *services.FileDeletedError
+		if errors.As(err, &fileDelErr) {
+			return &apiError{http.StatusGone, "deleted", fileDelErr.Error()}
 		}
 		return fromStore(err, what)
 	}

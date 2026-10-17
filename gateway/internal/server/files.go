@@ -11,13 +11,12 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/leandrofus/duckjump/gateway/internal/djtp"
+	"github.com/leandrofus/duckjump/gateway/internal/services"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
@@ -37,17 +36,11 @@ const (
 )
 
 func (s *Server) fileMaxSize() int64 {
-	if s.FileMaxSize > 0 {
-		return s.FileMaxSize
-	}
-	return DefaultFileMaxSize
+	return s.FileSvc.MaxSize()
 }
 
 func (s *Server) fileTTL() time.Duration {
-	if s.FileTTL > 0 {
-		return s.FileTTL
-	}
-	return DefaultFileTTL
+	return s.FileSvc.TTL()
 }
 
 var errNoFiles = &apiError{http.StatusNotImplemented, "not_configured", "file transfer is not configured on this gateway (-files)"}
@@ -91,68 +84,26 @@ func toTrayFile(f db.AuditFile) trayFileDTO {
 
 // cleanName keeps a file's base name, without control characters.
 func cleanName(n string) (string, error) {
-	n = path.Base(strings.ReplaceAll(n, `\`, "/"))
-	n = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, n)
-	if n == "" || n == "." || n == "/" || n == ".." || len(n) > 255 {
+	name, err := (&services.FileService{}).CleanName(n)
+	if err != nil {
 		return "", badRequest("invalid file name")
 	}
-	return n, nil
+	return name, nil
 }
 
 // spool copies r (at most max bytes) into a temporary file, hashing it.
 func (s *Server) spool(r io.Reader, max int64) (tmp string, size int64, sum string, err error) {
-	f, err := os.CreateTemp(s.Files.TempDir(), "up-*")
-	if err != nil {
-		return "", 0, "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	size, err = io.Copy(io.MultiWriter(f, h), io.LimitReader(r, max+1))
-	if err == nil && size > max {
-		err = &apiError{http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("files are limited to %d bytes", max)}
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	if err != nil {
-		os.Remove(f.Name())
-		return "", 0, "", err
-	}
-	return f.Name(), size, hex.EncodeToString(h.Sum(nil)), nil
+	return s.FileSvc.Spool(r, max)
 }
 
 // keep stores a spooled file in the tray and records it, audited.
 func (s *Server) keep(ctx context.Context, p principal, name, tmp string, size int64, sum, origin string, conn *db.ConfigConnection,
 	remotePath, action string) (db.AuditFile, error) {
-	id := store.NewID()
-	if err := s.Files.Put(ctx, id, tmp, size); err != nil {
-		os.Remove(tmp)
-		return db.AuditFile{}, fmt.Errorf("storing the file: %w", err)
-	}
-	now := store.Now()
-	f := db.AuditFile{ID: id, OwnerID: p.User.ID, OwnerName: p.User.Username, Name: name, Size: size, Sha256: sum, StorageKey: id,
-		Origin: origin, RemotePath: remotePath, CreatedAt: now, ExpiresAt: now.Add(s.fileTTL())}
-	details := map[string]any{"file_id": id, "name": name, "size": size, "sha256": sum}
+	var connID, connName string
 	if conn != nil {
-		f.ConnectionID = store.NullString(conn.ID)
-		details["connection_id"], details["connection"], details["path"] = conn.ID, conn.Name, remotePath
+		connID, connName = conn.ID, conn.Name
 	}
-	err := s.tx(ctx, func(q *db.Queries) error {
-		if err := q.CreateFile(ctx, db.CreateFileParams{ID: f.ID, OwnerID: f.OwnerID, OwnerName: f.OwnerName, Name: name, Size: size,
-			Sha256: sum, StorageKey: id, Origin: origin, ConnectionID: f.ConnectionID, RemotePath: remotePath, Now: now, ExpiresAt: f.ExpiresAt}); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: action, ObjectType: "file", ObjectID: id, Details: details})
-	})
-	if err != nil {
-		s.Files.Delete(context.WithoutCancel(ctx), id)
-	}
-	return f, err
+	return s.FileSvc.Keep(ctx, p.actor(), p.User.ID, p.User.Username, name, tmp, size, sum, origin, connID, connName, remotePath, action)
 }
 
 // ---- the tray ----
@@ -165,9 +116,9 @@ func (s *Server) keep(ctx context.Context, p principal, name, tmp string, size i
 //   '200': { description: Files, schema: '[]TrayFile' }
 
 func (s *Server) listTray(w http.ResponseWriter, r *http.Request, p principal) error {
-	rows, err := s.Store.Q.ListUserFiles(r.Context(), p.User.ID)
+	rows, err := s.FileSvc.ListUserFiles(r.Context(), p.User.ID)
 	if err != nil {
-		return err
+		return fromService(err, "file")
 	}
 	out := make([]trayFileDTO, 0, len(rows))
 	for _, f := range rows {
@@ -189,38 +140,18 @@ func (s *Server) listTray(w http.ResponseWriter, r *http.Request, p principal) e
 //   '413': Error
 
 func (s *Server) uploadToTray(w http.ResponseWriter, r *http.Request, p principal) error {
-	if s.Files == nil {
-		return errNoFiles
-	}
-	name, err := cleanName(r.URL.Query().Get("name"))
+	f, err := s.FileSvc.UploadToTray(r.Context(), p.actor(), p.User.ID, p.User.Username, r.URL.Query().Get("name"), r.Body, r.ContentLength)
 	if err != nil {
-		return err
-	}
-	if r.ContentLength > s.fileMaxSize() {
-		return &apiError{http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("files are limited to %d bytes", s.fileMaxSize())}
-	}
-	tmp, size, sum, err := s.spool(r.Body, s.fileMaxSize())
-	if err != nil {
-		return err
-	}
-	f, err := s.keep(r.Context(), p, name, tmp, size, sum, "upload", nil, "", "file.upload")
-	if err != nil {
-		return err
+		return fromService(err, "file")
 	}
 	return created(w, toTrayFile(f))
 }
 
 // trayFile loads a file of the caller's tray (content still kept).
 func (s *Server) trayFile(ctx context.Context, p principal, id string) (db.AuditFile, error) {
-	f, err := s.Store.Q.GetFile(ctx, id)
+	f, err := s.FileSvc.GetTrayFile(ctx, p.User.ID, id)
 	if err != nil {
-		return f, fromStore(err, "file")
-	}
-	if f.OwnerID != p.User.ID {
-		return f, notFound("file")
-	}
-	if f.DeletedAt.Valid {
-		return f, &apiError{http.StatusGone, "deleted", "the file was deleted (" + f.DeleteReason.String + ")"}
+		return f, fromService(err, "file")
 	}
 	return f, nil
 }
@@ -246,32 +177,11 @@ func serveFile(w http.ResponseWriter, f db.AuditFile, body io.Reader) {
 //   '410': Error
 
 func (s *Server) downloadFromTray(w http.ResponseWriter, r *http.Request, p principal) error {
-	if s.Files == nil {
-		return errNoFiles
-	}
-	ctx := r.Context()
-	f, err := s.trayFile(ctx, p, r.PathValue("id"))
+	f, body, err := s.FileSvc.DownloadFromTray(r.Context(), p.actor(), p.User.ID, p.Dev, r.PathValue("id"))
 	if err != nil {
-		return err
-	}
-	if f.Origin == "host" && !p.Dev {
-		allowed, err := s.Store.CanDownload(ctx, p.User.ID, f.ConnectionID.String)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return &apiError{http.StatusForbidden, "forbidden", "you may no longer download files from the host this one came from"}
-		}
-	}
-	body, err := s.Files.Open(ctx, f.StorageKey)
-	if err != nil {
-		return err
+		return fromService(err, "file")
 	}
 	defer body.Close()
-	if err := s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "file.download", ObjectType: "file", ObjectID: f.ID,
-		Details: map[string]any{"name": f.Name, "size": f.Size, "sha256": f.Sha256}}); err != nil {
-		return err
-	}
 	serveFile(w, f, body)
 	return nil
 }
@@ -284,51 +194,19 @@ func (s *Server) downloadFromTray(w http.ResponseWriter, r *http.Request, p prin
 //   '204': { description: Deleted }
 
 func (s *Server) deleteFromTray(w http.ResponseWriter, r *http.Request, p principal) error {
-	if s.Files == nil {
-		return errNoFiles
-	}
-	ctx := r.Context()
-	f, err := s.trayFile(ctx, p, r.PathValue("id"))
-	if err != nil {
-		return err
-	}
-	if err := s.removeFile(ctx, f, p.actor(), "deleted by its owner"); err != nil {
-		return err
+	if err := s.FileSvc.DeleteFromTray(r.Context(), p.actor(), p.User.ID, r.PathValue("id")); err != nil {
+		return fromService(err, "file")
 	}
 	return noContent(w)
 }
 
 func (s *Server) removeFile(ctx context.Context, f db.AuditFile, actor store.Actor, reason string) error {
-	if err := s.Files.Delete(ctx, f.StorageKey); err != nil {
-		return fmt.Errorf("deleting %s: %w", f.ID, err)
-	}
-	return s.tx(ctx, func(q *db.Queries) error {
-		if _, err := q.MarkFileDeleted(ctx, db.MarkFileDeletedParams{ID: f.ID, Reason: reason, Now: store.NullTime(store.Now())}); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: actor, Action: "file.delete", ObjectType: "file", ObjectID: f.ID,
-			Details: map[string]any{"name": f.Name, "reason": reason}})
-	})
+	return s.FileSvc.RemoveFile(ctx, f, actor, reason)
 }
 
 // PurgeFiles deletes the content of expired files (records stay).
 func (s *Server) PurgeFiles(ctx context.Context) (int, error) {
-	if s.Files == nil {
-		return 0, nil
-	}
-	n := 0
-	for {
-		rows, err := s.Store.Q.ExpiredFiles(ctx, db.ExpiredFilesParams{Now: store.TS(store.Now()), Lim: 200})
-		if err != nil || len(rows) == 0 {
-			return n, err
-		}
-		for _, f := range rows {
-			if err := s.removeFile(ctx, f, store.Actor{Name: "retention"}, "expired"); err != nil {
-				return n, err
-			}
-			n++
-		}
-	}
+	return s.FileSvc.PurgeFiles(ctx)
 }
 
 // ---- hosts ----
@@ -759,9 +637,9 @@ func (s *Server) listFilesAudit(w http.ResponseWriter, r *http.Request, p princi
 	if err != nil {
 		return err
 	}
-	rows, err := s.Store.Q.ListFiles(r.Context(), db.ListFilesParams{OwnerID: r.URL.Query().Get("owner_id"), Lim: lim})
+	rows, err := s.FileSvc.ListFilesAudit(r.Context(), r.URL.Query().Get("owner_id"), lim)
 	if err != nil {
-		return err
+		return fromService(err, "file")
 	}
 	out := make([]trayFileDTO, 0, len(rows))
 	for _, f := range rows {
@@ -779,26 +657,11 @@ func (s *Server) listFilesAudit(w http.ResponseWriter, r *http.Request, p princi
 //   '410': Error
 
 func (s *Server) downloadFileAudit(w http.ResponseWriter, r *http.Request, p principal) error {
-	if s.Files == nil {
-		return errNoFiles
-	}
-	ctx := r.Context()
-	f, err := s.Store.Q.GetFile(ctx, r.PathValue("id"))
+	f, body, err := s.FileSvc.DownloadFileAudit(r.Context(), p.actor(), r.PathValue("id"))
 	if err != nil {
-		return fromStore(err, "file")
-	}
-	if f.DeletedAt.Valid {
-		return &apiError{http.StatusGone, "deleted", "the file was deleted (" + f.DeleteReason.String + ")"}
-	}
-	body, err := s.Files.Open(ctx, f.StorageKey)
-	if err != nil {
-		return err
+		return fromService(err, "file")
 	}
 	defer body.Close()
-	if err := s.Store.AuditTx(ctx, store.Event{Actor: p.actor(), Action: "file.view", ObjectType: "file", ObjectID: f.ID,
-		Details: map[string]any{"name": f.Name, "owner": f.OwnerName}}); err != nil {
-		return err
-	}
 	serveFile(w, f, body)
 	return nil
 }

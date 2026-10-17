@@ -48,6 +48,8 @@ type Server struct {
 	Audit          *services.AuditService
 	Sessions       *services.SessionService
 	Recordings     *services.RecordingService
+	SIEM           *services.SIEMService
+	FileSvc        *services.FileService
 	Hub            *edge.Hub
 	SupportHub  *SupportHub
 	DaemonAddr  string
@@ -101,8 +103,6 @@ type Server struct {
 	checkMu    sync.Mutex
 	nodeOnce   sync.Once
 	nodeName   string
-	siemNotify chan struct{}
-	siemMu     sync.Mutex
 }
 
 func (s *Server) Handler() http.Handler {
@@ -145,6 +145,21 @@ func (s *Server) Handler() http.Handler {
 				return nil
 			}
 			return s.Objects
+		})
+	}
+	if s.SIEM == nil && s.Store != nil {
+		s.SIEM = services.NewSIEMService(s.Store)
+	}
+	if s.FileSvc == nil && s.Store != nil {
+		s.FileSvc = services.NewFileServiceWithFuncs(s.Store, func() services.FileStore {
+			if s.Files == nil {
+				return nil
+			}
+			return s.Files
+		}, func() int64 {
+			return s.FileMaxSize
+		}, func() time.Duration {
+			return s.FileTTL
 		})
 	}
 	if s.SupportHub == nil {
