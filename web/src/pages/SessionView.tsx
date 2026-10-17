@@ -1,11 +1,12 @@
 import { t } from '../i18n'
 import { useEffect, useState } from 'react'
-import { ChevronRight, FolderInput, Users } from 'lucide-react'
+import { ChevronRight, FolderInput, Users, Globe, ArrowLeftRight, RotateCw, ExternalLink, Copy } from 'lucide-react'
 import { FilesPanel } from '../components/FilesPanel'
 import type { PortalConnection } from '../lib/api'
 import { useResource } from '../lib/store'
 import { usePref } from '../lib/prefs'
 import { href, useRoute } from '../lib/router'
+import { copy } from '../lib/format'
 import { getMe, isAdmin } from '../lib/session'
 import { api, enc } from '../lib/api'
 import { confirm, toast } from '../ui/overlays'
@@ -126,6 +127,64 @@ export function SessionView({ id }: { id: string }) {
       )}
       {c?.credentials === 'prompt' && !creds && !joinSessionId ? (
         <div className="terminal session-terminal waiting">{!ask && <button className="btn btn-primary" onClick={() => setAsk({})}>{t('Enter credentials')}</button>}</div>
+      ) : c?.protocol === 'http' || c?.protocol === 'https' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 48px)', width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)' }}>
+            <span className="pill pill-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Globe size={13} /> {c.protocol.toUpperCase()}
+            </span>
+            {c.virtual_host && (
+              <span className="pill pill-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                Host: <code>{c.virtual_host}</code>
+              </span>
+            )}
+            <span className="muted small ellipsis" style={{ flex: 1 }}>
+              {location.origin}/api/v1/connections/{c.id}/http/
+            </span>
+            <button className="btn btn-sm" onClick={() => {
+              const ifr = document.getElementById('web-session-frame') as HTMLIFrameElement
+              if (ifr) ifr.src = ifr.src
+            }}>
+              <RotateCw size={13} /> {t('Reload')}
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={() => window.open(`/api/v1/connections/${c.id}/http/`, '_blank')}>
+              <ExternalLink size={13} /> {t('Open in new window')}
+            </button>
+          </div>
+          <iframe
+            id="web-session-frame"
+            src={`/api/v1/connections/${c.id}/http/`}
+            style={{ width: '100%', height: '100%', border: 'none', flex: 1, background: '#fff' }}
+            title={c.name}
+          />
+        </div>
+      ) : c?.protocol === 'tcp' ? (
+        <div style={{ padding: '2rem', maxWidth: 640, margin: '3rem auto', background: 'var(--bg-panel)', borderRadius: 8, border: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+            <div className="conn-icon proto-tcp" style={{ width: 44, height: 44, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <ArrowLeftRight size={24} />
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '1.25rem' }}>{c.name}</h2>
+              <span className="muted small">Túnel TCP / Port Forwarding</span>
+            </div>
+          </div>
+          <p className="muted" style={{ marginBottom: 16, lineHeight: 1.5 }}>
+            {t('Esta conexión es un servicio TCP nativo (base de datos, broker o API interna). Inicia el reenvío de puertos local ejecutando en tu terminal:')}
+          </p>
+          <div style={{ background: 'var(--bg-subtle, #1a1a1a)', padding: '12px 16px', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: 'monospace', marginBottom: 16 }}>
+            <code>duckjump forward {c.name} 5432</code>
+            <button className="btn btn-sm" onClick={() => {
+              copy(`duckjump forward ${c.name} 5432`)
+              toast.ok(t('Comando copiado al portapapeles'))
+            }}>
+              <Copy size={13} /> {t('Copiar')}
+            </button>
+          </div>
+          <p className="help">
+            💡 {t('O inicia este túnel gráficamente desde la aplicación de escritorio DuckJump en la pestaña «Túneles TCP / HTTP».')}
+          </p>
+        </div>
       ) : c?.protocol === 'vnc' || c?.protocol === 'rdp' ? (
         <RemoteSession
           key={attempt}

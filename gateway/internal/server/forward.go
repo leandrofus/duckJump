@@ -251,8 +251,12 @@ func (s *Server) forwardTunnel(w http.ResponseWriter, r *http.Request, p princip
 
 	isHTTP := conn.Protocol == "http" || conn.Protocol == "https" || vhost != ""
 	if isHTTP {
+		protoScheme := "http"
+		if conn.Protocol == "https" {
+			protoScheme = "https"
+		}
 		go func() {
-			errc <- proxyHTTPStream(ctx, wsConn, target, vhost, &sent, &recv, log)
+			errc <- proxyHTTPStream(ctx, wsConn, target, vhost, protoScheme, &sent, &recv, log)
 		}()
 	} else {
 		go func() {
@@ -329,7 +333,7 @@ func copyBidirectional(ctx context.Context, wsConn, target net.Conn, sent, recv 
 	}
 }
 
-func proxyHTTPStream(ctx context.Context, wsConn, target net.Conn, vhost string, sent, recv *atomic.Int64, log *slog.Logger) error {
+func proxyHTTPStream(ctx context.Context, wsConn, target net.Conn, vhost, scheme string, sent, recv *atomic.Int64, log *slog.Logger) error {
 	br := bufio.NewReader(wsConn)
 	tr := bufio.NewReader(target)
 
@@ -363,7 +367,7 @@ func proxyHTTPStream(ctx context.Context, wsConn, target net.Conn, vhost string,
 			req.Header.Set("X-Forwarded-For", "127.0.0.1")
 		}
 		if req.Header.Get("X-Forwarded-Proto") == "" {
-			req.Header.Set("X-Forwarded-Proto", "http")
+			req.Header.Set("X-Forwarded-Proto", scheme)
 		}
 
 		isWebSocket := strings.EqualFold(req.Header.Get("Upgrade"), "websocket")
@@ -380,10 +384,20 @@ func proxyHTTPStream(ctx context.Context, wsConn, target net.Conn, vhost string,
 
 		// Rewrite redirect Location header back to origHost so the client browser stays on the local address
 		if loc := resp.Header.Get("Location"); loc != "" && origHost != "" && vhost != "" {
-			if strings.HasPrefix(loc, "http://"+vhost) {
-				resp.Header.Set("Location", "http://"+origHost+strings.TrimPrefix(loc, "http://"+vhost))
-			} else if strings.HasPrefix(loc, "https://"+vhost) {
-				resp.Header.Set("Location", "http://"+origHost+strings.TrimPrefix(loc, "https://"+vhost))
+			vhostBare := vhost
+			if h, _, err := net.SplitHostPort(vhost); err == nil {
+				vhostBare = h
+			}
+			for _, pfx := range []string{
+				"http://" + vhost,
+				"https://" + vhost,
+				"http://" + vhostBare,
+				"https://" + vhostBare,
+			} {
+				if strings.HasPrefix(loc, pfx) {
+					resp.Header.Set("Location", "http://"+origHost+strings.TrimPrefix(loc, pfx))
+					break
+				}
 			}
 		}
 
@@ -518,10 +532,22 @@ func (s *Server) httpProxy(w http.ResponseWriter, r *http.Request, p principal) 
 		if loc := resp.Header.Get("Location"); loc != "" {
 			if strings.HasPrefix(loc, "/") {
 				resp.Header.Set("Location", prefix+loc)
-			} else if strings.HasPrefix(loc, "http://"+vhost) {
-				resp.Header.Set("Location", prefix+strings.TrimPrefix(loc, "http://"+vhost))
-			} else if strings.HasPrefix(loc, "https://"+vhost) {
-				resp.Header.Set("Location", prefix+strings.TrimPrefix(loc, "https://"+vhost))
+			} else {
+				vhostBare := vhost
+				if h, _, err := net.SplitHostPort(vhost); err == nil {
+					vhostBare = h
+				}
+				for _, pfx := range []string{
+					"http://" + vhost,
+					"https://" + vhost,
+					"http://" + vhostBare,
+					"https://" + vhostBare,
+				} {
+					if strings.HasPrefix(loc, pfx) {
+						resp.Header.Set("Location", prefix+strings.TrimPrefix(loc, pfx))
+						break
+					}
+				}
 			}
 		}
 		return nil

@@ -1,6 +1,6 @@
 import { t } from '../i18n'
 import { useMemo, useState } from 'react'
-import { MonitorSmartphone, Search, X, Star, TerminalSquare, Monitor, MonitorPlay, LayoutGrid, LayoutList, Copy, Ticket } from 'lucide-react'
+import { MonitorSmartphone, Search, X, Star, TerminalSquare, Monitor, MonitorPlay, LayoutGrid, LayoutList, Copy, Ticket, Globe, ArrowLeftRight } from 'lucide-react'
 import type { PortalConnection } from '../lib/api'
 import { useResource } from '../lib/store'
 import { usePref } from '../lib/prefs'
@@ -15,7 +15,7 @@ import { openSession } from '../App'
 import type { Recent } from '../App'
 
 export function protoIcon(p: string) {
-  return p === 'rdp' ? Monitor : p === 'vnc' ? MonitorPlay : TerminalSquare
+  return p === 'rdp' ? Monitor : p === 'vnc' ? MonitorPlay : (p === 'http' || p === 'https') ? Globe : p === 'tcp' ? ArrowLeftRight : TerminalSquare
 }
 
 export function ProtoTag({ p }: { p: string }) {
@@ -39,7 +39,9 @@ export function Portal() {
     setFavs(isFav(c) ? favs.filter((f) => f.id !== c.id) : [...favs, { id: c.id, name: c.name, protocol: c.protocol }])
   const actions = (c: PortalConnection): MenuEntry[] => [
     { header: c.name },
-    { label: t('Connect'), icon: <TerminalSquare size={14} />, onClick: () => openSession(c) },
+    (c.protocol === 'http' || c.protocol === 'https')
+      ? { label: t('Open in browser'), icon: <Globe size={14} />, onClick: () => window.open(`/api/v1/connections/${c.id}/http/`, '_blank') }
+      : { label: t('Connect'), icon: <TerminalSquare size={14} />, onClick: () => openSession(c) },
     { label: t('Connect in a new tab'), onClick: () => window.open(href('session', c.id), '_blank') },
     'sep',
     { label: isFav(c) ? t('Remove from favorites') : t('Add to favorites'), icon: <Star size={14} />, onClick: () => toggleFav(c) },
@@ -132,8 +134,11 @@ export function Portal() {
                   { key: 'name', label: t('Name'), sort: (c) => c.name, render: (c) => <strong>{c.name}</strong> },
                   { key: 'proto', label: t('Protocol'), sort: (c) => c.protocol, render: (c) => <ProtoTag p={c.protocol} /> },
                   { key: 'env', label: t('Environment'), sort: (c) => c.environment, render: (c) => c.environment || <span className="muted">—</span> },
-                  { key: 'tags', label: t('Tags'), render: (c) => <span className="tags">{c.tags.map((x) => <Tag key={x}>{x}</Tag>)}</span> },
-                  { key: 'go', label: '', width: 110, render: (c) => <button className="btn btn-sm" onClick={() => openSession(c)}><TerminalSquare size={13} /> {t('Connect')}</button> },
+                  { key: 'go', label: '', width: 110, render: (c) => (
+                    <button className="btn btn-sm" onClick={() => openSession(c)}>
+                      {c.protocol === 'http' || c.protocol === 'https' ? <><Globe size={13} /> {t('Open')}</> : <><TerminalSquare size={13} /> {t('Connect')}</>}
+                    </button>
+                  ) },
                 ]}
               />
             )}

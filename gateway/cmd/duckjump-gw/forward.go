@@ -176,6 +176,9 @@ func forwardCmd(ctx context.Context, st *store.Store, args []string) error {
 		fmt.Printf(" [vhost: %s]", *vhost)
 	}
 	fmt.Printf("\n Gateway URL:  %s\n", rawServer)
+	if *vhost != "" || remotePort == 80 || remotePort == 443 || localPort == 8080 {
+		fmt.Printf(" Browser URL:  http://%s/\n", listenAddr)
+	}
 	fmt.Printf(" Ready to accept connections. Press Ctrl+C to terminate.\n\n")
 
 	sigCh := make(chan os.Signal, 1)
