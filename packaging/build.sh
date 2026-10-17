@@ -9,6 +9,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 : "${VERSION:=0.1.0}"
+: "${ARCH:=amd64}"
 : "${MAINTAINER:=DuckJump <duckjump@localhost>}"
 : "${RUST_IMAGE:=docker.io/library/rust:1.91-bullseye}"
 NFPM_VERSION=v2.43.0
@@ -50,7 +51,7 @@ NFPM=dist/build/nfpm
 [ -x "$NFPM" ] || GOBIN="$PWD/dist/build" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@$NFPM_VERSION"
 for cfg in packaging/nfpm-duckjump.yaml packaging/nfpm-agent.yaml; do
 	for fmt in rpm deb; do
-		VERSION=$VERSION MAINTAINER=$MAINTAINER "$NFPM" package -f "$cfg" -p "$fmt" -t dist/packages/
+		VERSION=$VERSION ARCH=$ARCH MAINTAINER=$MAINTAINER "$NFPM" package -f "$cfg" -p "$fmt" -t dist/packages/
 	done
 done
 ls -lh dist/packages

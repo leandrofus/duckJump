@@ -1,32 +1,30 @@
-# After ci passes on a version tag (v1.2.3, v1.2.3-rc1): build the rpm/deb
-# packages and a tarball, and publish them as a GitHub release. The tests are
-# not run again. workflow_run only fires for this file as it is on main.
 name: release
 
+# Runs on a tag like v0.2.0: builds the rpm/deb packages (amd64, arm64), the static
+# binaries for Linux (amd64/arm64), macOS (amd64/arm64), Windows (amd64), and the
+# Windows MSI, and attaches them to the GitHub release, plus version-less "latest"
+# copies of the packages for stable installation links.
 on:
-  workflow_run:
-    workflows: [ci]
-    types: [completed]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  actions: write # to rebuild the site with the new release
+
+concurrency:
+  group: release-${{ github.ref }}
 
 jobs:
-  build:
-    # For a tag push, head_branch is the tag name; ci runs on no branch but main.
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      startsWith(github.event.workflow_run.head_branch, 'v')
+  release:
+    # a manual run on a branch must not publish anything without a tag
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    env:
-      TAG: ${{ github.event.workflow_run.head_branch }}
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: gateway/go.mod
@@ -35,39 +33,157 @@ jobs:
         with:
           bun-version: 1.2.23
 
-      - name: Version from the tag
-        run: echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      - name: Version from tag or repository
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          if [ -z "$ref" ] || [ "$ref" = "main" ]; then
+            ref=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          fi
+          echo "TAG=$ref" >> "$GITHUB_ENV"
+          echo "VERSION=${ref#v}" >> "$GITHUB_ENV"
+
+      - name: Web UI
+        run: make web
+
+      - name: Go tests
+        run: make test-go
 
       # UI, static Go binaries, Rust built in a Debian 11 container (glibc 2.31),
       # then rpm + deb with nfpm. Binaries land in dist/pkg, packages in dist/packages.
-      - name: Packages
+      - name: Packages (rpm + deb)
         run: make packages VERSION="$VERSION"
 
-      # Tarball from the same portable binaries as the packages (not `make dist`,
-      # which would link the Rust binaries against the runner's newer glibc).
-      - name: Tarball and checksums
+      # Static binaries for all platforms (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64)
+      - name: Static multi-platform binaries
+        run: make dist VERSION="$TAG"
+
+      # Tarball from the portable binaries + version-less latest package aliases
+      - name: Latest aliases & tarball
         run: |
-          name=duckjump-$VERSION-linux-amd64
+          # Copy deb and rpm into dist/
+          cp dist/packages/* dist/ 2>/dev/null || true
+
+          # Create tarball from pkg binaries
+          name="duckjump-$VERSION-linux-amd64"
           mkdir -p "dist/$name"
-          cp dist/pkg/* README.md LICENSE ROADMAP.md "dist/$name/"
-          tar -C dist -czf "dist/packages/$name.tar.gz" "$name"
-          cd dist/packages && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          cp -r dist/pkg/* README.md LICENSE ROADMAP.md "dist/$name/" 2>/dev/null || true
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+
+          # Version-less copies of the packages
+          cd dist
+          for f in duckjump-*.rpm; do
+            [ -f "$f" ] || continue
+            case "$f" in *-latest.*) continue ;; esac
+            arch=${f%.rpm}; arch=${arch##*.}
+            pkg_name=${f%%-*}
+            cp "$f" "${pkg_name}-latest.$arch.rpm"
+          done
+          for f in duckjump_*.deb; do
+            [ -f "$f" ] || continue
+            case "$f" in *_latest_*) continue ;; esac
+            arch=${f##*_}; arch=${arch%.deb}
+            pkg_name=${f%%_*}
+            cp "$f" "${pkg_name}_latest_$arch.deb"
+          done
+          ls -l *-latest.* *_latest_* || true
+
+      - name: Checksums
+        run: |
+          cd dist && sha256sum duckjump* > SHA256SUMS && cat SHA256SUMS
 
       - uses: actions/upload-artifact@v4
         with:
           name: duckjump-${{ env.VERSION }}
-          path: dist/packages/*
+          path: |
+            dist/*.rpm
+            dist/*.deb
+            dist/*.tar.gz
+            dist/duckjump-linux-*
+            dist/duckjump-darwin-*
+            dist/duckjump-windows-*
+            dist/duckjump-agent-*
+            dist/SHA256SUMS
 
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           pre=; case $VERSION in *-*) pre=--prerelease ;; esac
+          files="dist/*.rpm dist/*.deb dist/*.tar.gz dist/duckjump-linux-* dist/duckjump-darwin-* dist/duckjump-windows-* dist/duckjump-agent-* dist/SHA256SUMS"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; uploading packages..."
-            gh release upload "$TAG" dist/packages/* --repo "$GITHUB_REPOSITORY" --clobber
+            echo "Release $TAG already exists; uploading artifacts..."
+            gh release upload "$TAG" $files --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "duckJump $VERSION" $pre || true
           else
-            gh release create "$TAG" dist/packages/* --repo "$GITHUB_REPOSITORY" \
+            gh release create "$TAG" $files --repo "$GITHUB_REPOSITORY" \
               --title "duckJump $VERSION" --generate-notes --verify-tag $pre
           fi
+
+  msi:
+    # Windows installer (service + Start menu shortcut), built with
+    # WiX on Windows and added to the release made above
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - name: Web UI
+        shell: pwsh
+        run: |
+          cd web
+          bun install --frozen-lockfile
+          bun run build
+      - name: MSI
+        shell: pwsh
+        run: |
+          $v = "$env:GITHUB_REF_NAME".TrimStart('v')
+          if (-not $v -or $v -eq "main") {
+            $v = (git describe --tags --abbrev=0 2>$null).TrimStart('v')
+            if (-not $v) { $v = "0.1.0" }
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          cd gateway
+          go build -trimpath -ldflags "-s -w -X main.version=$env:GITHUB_REF_NAME" -o ../dist/duckjump.exe ./cmd/duckjump-gw
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cd ..
+          ./packaging/windows/build-msi.ps1 -Version $v -Exe dist/duckjump.exe -Out "dist/duckjump-$v-x64.msi"
+          Copy-Item "dist/duckjump-$v-x64.msi" dist/duckjump-latest-x64.msi
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if (-not $tag -or $tag -eq "main") {
+            $tag = (git describe --tags --abbrev=0 2>$null)
+            if (-not $tag) { $tag = "v0.1.0" }
+          }
+          $v = $tag.TrimStart('v')
+          gh release download $tag -p SHA256SUMS -D sums --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $lines = Get-Content sums/SHA256SUMS | Where-Object { $_ -notmatch '\.msi$' }
+          foreach ($f in "duckjump-$v-x64.msi", 'duckjump-latest-x64.msi') {
+            $lines += "$((Get-FileHash "dist/$f" -Algorithm SHA256).Hash.ToLower())  $f"
+          }
+          [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", ($lines -join "`n") + "`n")
+          gh release upload $tag "dist/duckjump-$v-x64.msi" dist/duckjump-latest-x64.msi dist/SHA256SUMS --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+  site:
+    needs: [release, msi]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rebuild the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # releases made with GITHUB_TOKEN do not trigger other workflows
+        run: gh workflow run deploy-pages.yml --ref main

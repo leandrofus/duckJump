@@ -53,7 +53,8 @@ export function Login({ mfa, onDone }: { mfa: boolean; onDone: () => void }) {
   return (
     <div className="login">
       <form className="login-card" onSubmit={submit}>
-        <img className="login-logo" src="/duckjump-logo.svg" alt="DuckJump" />
+        <img className="login-logo login-logo-dark" src="/duckjump-logo.svg" alt="DuckJump" />
+        <img className="login-logo login-logo-light" src="/duckjump-logo-light.svg" alt="DuckJump" />
         {step === 'password' ? (
           <>
             <p className="muted">{t('Sign in to the access bastion.')}</p>

@@ -170,13 +170,18 @@ generate: ## Regenerate sqlc code, the OpenAPI spec and the UI's API types
 
 # ---- release ----
 
-dist: build ## Release tarball: dist/duckjump-<version>-linux-amd64.tar.gz
-	@rm -rf $(DIST)/duckjump-$(VERSION)
-	@mkdir -p $(DIST)/duckjump-$(VERSION)
-	cp $(BIN)/* README.md $(DIST)/duckjump-$(VERSION)/
-	tar -C $(DIST) -czf $(DIST)/duckjump-$(VERSION)-linux-amd64.tar.gz duckjump-$(VERSION)
-	@rm -rf $(DIST)/duckjump-$(VERSION)
-	@ls -lh $(DIST)/duckjump-$(VERSION)-linux-amd64.tar.gz
+PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+
+dist: web ## Build static standalone binaries for all platforms in dist/
+	@mkdir -p $(DIST)
+	@for p in $(PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; ext=; [ $$os = windows ] && ext=.exe; \
+		echo "→ $$os/$$arch"; \
+		(cd gateway && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o "../$(DIST)/duckjump-$$os-$$arch$$ext" ./cmd/duckjump-gw) || exit 1; \
+		(cd gateway && CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o "../$(DIST)/duckjump-agent-$$os-$$arch$$ext" ./cmd/duckjump-agent) || exit 1; \
+	done
+	@cd $(DIST) && sha256sum duckjump-* > SHA256SUMS 2>/dev/null || true
+	@ls -lh $(DIST)/duckjump-*
 
 packages: ## rpm + deb with systemd services (duckjump, duckjump-agent) and the assist CLI and app in dist/packages; needs podman or docker
 	VERSION=$(VERSION) packaging/build.sh

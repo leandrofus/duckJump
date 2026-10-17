@@ -9,69 +9,126 @@ const isEs = lang === 'es';
 
 <div id="install" class="install-wrap">
   <div class="wrap install">
-    <div class="panel">
-      
+    <div class="panel" data-install>
+      <h2>{isEs ? "Instálalo" : "Install it"}</h2>
+      <p>
+        {isEs
+          ? "Bastión de acceso sin clientes para SSH, RDP y VNC. El paquete deja el servicio en https://<host>:8443."
+          : "Clientless PAM access bastion for SSH, RDP and VNC. The package sets up the services on https://<host>:8443."
+        }
+      </p>
+
       <!-- System Selector Tabs -->
-      <div class="tabs">
-        <button type="button" class="tab-btn active" data-sys="deb">
-          Debian / Ubuntu
+      <div class="tabs" role="tablist" aria-label={isEs ? "Sistema" : "System"}>
+        <button type="button" role="tab" data-sys="dnf" aria-selected="true">
+          RHEL · Fedora
         </button>
-        <button type="button" class="tab-btn" data-sys="rpm">
-          RHEL / Rocky / Fedora
+        <button type="button" role="tab" data-sys="apt" aria-selected="false">
+          Debian · Ubuntu
         </button>
-        <button type="button" class="tab-btn" data-sys="dev">
-          make run (Local Stack)
+        <button type="button" role="tab" data-sys="linux" aria-selected="false">
+          {isEs ? "Binario Linux" : "Linux binary"}
         </button>
-        <button type="button" class="tab-btn" data-sys="packages">
-          make packages (Build)
+        <button type="button" role="tab" data-sys="darwin" aria-selected="false">
+          macOS
+        </button>
+        <button type="button" role="tab" data-sys="windows" aria-selected="false">
+          Windows
         </button>
 
-        <span class="arch">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect width="20" height="8" x="2" y="2" rx="2" ry="2"/>
-            <rect width="20" height="8" x="2" y="14" rx="2" ry="2"/>
-            <line x1="6" x2="6.01" y1="6" y2="6"/>
-            <line x1="6" x2="6.01" y1="18" y2="18"/>
-          </svg>
-          amd64 · :8443
-        </span>
+        <label class="arch">
+          <span>{isEs ? "Arquitectura" : "Architecture"}</span>
+          <select data-arch>
+            <option value="amd64">x86-64</option>
+            <option value="arm64">ARM64</option>
+          </select>
+        </label>
       </div>
 
       <!-- Terminal Command Snippet -->
       <div class="cmd">
         <div class="term-bar">
-          <div class="dots">
-            <span class="dot-term dot-red"></span>
-            <span class="dot-term dot-yellow"></span>
-            <span class="dot-term dot-green"></span>
-          </div>
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
           <button 
-            type="button" 
             class="copy" 
-            id="install-copy-btn"
+            type="button" 
+            data-copy 
             data-label={isEs ? "Copiar" : "Copy"} 
-            data-done={isEs ? "¡Copiado!" : "Copied!"}
+            data-done={isEs ? "Copiado" : "Copied"}
           >
             {isEs ? "Copiar" : "Copy"}
           </button>
         </div>
 
-        <pre id="pre-deb" data-sys="deb" data-text="sudo apt install ./duckjump_0.1.0-1_amd64.deb"><span class="p"># </span>sudo apt install ./duckjump_0.1.0-1_amd64.deb</pre>
-        <pre id="pre-rpm" data-sys="rpm" data-text="sudo dnf install ./duckjump-0.1.0-1.x86_64.rpm" style="display: none;"><span class="p"># </span>sudo dnf install ./duckjump-0.1.0-1.x86_64.rpm</pre>
-        <pre id="pre-dev" data-sys="dev" data-text="git clone https://github.com/leandrofus/duckJump.git && cd duckJump && make run" style="display: none;"><span class="p"># </span>git clone https://github.com/leandrofus/duckJump.git
-<span class="p"># </span>cd duckJump && make run</pre>
-        <pre id="pre-packages" data-sys="packages" data-text="make packages" style="display: none;"><span class="p"># </span>make packages    # creates dist/packages/*.deb and *.rpm</pre>
+        <!-- RHEL / Fedora (dnf) -->
+        <pre data-sys="dnf" data-arch="amd64" data-kind="pkg" data-text={`curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest.x86_64.rpm\nsudo dnf install ./duckjump-latest.x86_64.rpm`}><span class="p">$ </span>curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest.x86_64.rpm
+<span class="p">$ </span>sudo dnf install ./duckjump-latest.x86_64.rpm</pre>
+
+        <pre data-sys="dnf" data-arch="arm64" data-kind="pkg" data-text={`curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest.aarch64.rpm\nsudo dnf install ./duckjump-latest.aarch64.rpm`} hidden><span class="p">$ </span>curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest.aarch64.rpm
+<span class="p">$ </span>sudo dnf install ./duckjump-latest.aarch64.rpm</pre>
+
+        <!-- Debian / Ubuntu (apt) -->
+        <pre data-sys="apt" data-arch="amd64" data-kind="pkg" data-text={`curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump_latest_amd64.deb\nsudo apt install ./duckjump_latest_amd64.deb`} hidden><span class="p">$ </span>curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump_latest_amd64.deb
+<span class="p">$ </span>sudo apt install ./duckjump_latest_amd64.deb</pre>
+
+        <pre data-sys="apt" data-arch="arm64" data-kind="pkg" data-text={`curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump_latest_arm64.deb\nsudo apt install ./duckjump_latest_arm64.deb`} hidden><span class="p">$ </span>curl -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump_latest_arm64.deb
+<span class="p">$ </span>sudo apt install ./duckjump_latest_arm64.deb</pre>
+
+        <!-- Linux binary -->
+        <pre data-sys="linux" data-arch="amd64" data-kind="bin" data-text={`curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-linux-amd64\nchmod +x duckjump && ./duckjump serve`} hidden><span class="p">$ </span>curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-linux-amd64
+<span class="p">$ </span>chmod +x duckjump &amp;&amp; ./duckjump serve</pre>
+
+        <pre data-sys="linux" data-arch="arm64" data-kind="bin" data-text={`curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-linux-arm64\nchmod +x duckjump && ./duckjump serve`} hidden><span class="p">$ </span>curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-linux-arm64
+<span class="p">$ </span>chmod +x duckjump &amp;&amp; ./duckjump serve</pre>
+
+        <!-- macOS -->
+        <pre data-sys="darwin" data-arch="amd64" data-kind="bin" data-text={`curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-darwin-amd64\nchmod +x duckjump && ./duckjump serve`} hidden><span class="p">$ </span>curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-darwin-amd64
+<span class="p">$ </span>chmod +x duckjump &amp;&amp; ./duckjump serve</pre>
+
+        <pre data-sys="darwin" data-arch="arm64" data-kind="bin" data-text={`curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-darwin-arm64\nchmod +x duckjump && ./duckjump serve`} hidden><span class="p">$ </span>curl -fLo duckjump https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-darwin-arm64
+<span class="p">$ </span>chmod +x duckjump &amp;&amp; ./duckjump serve</pre>
+
+        <!-- Windows -->
+        <pre data-sys="windows" data-arch="amd64" data-kind="msi" data-text={`curl.exe -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest-x64.msi\nStart-Process msiexec -Wait -ArgumentList '/i duckjump-latest-x64.msi'\n& "$env:ProgramFiles\\duckjump\\duckjump.exe" serve`} hidden><span class="p">$ </span>curl.exe -fLO https://github.com/leandrofus/duckJump/releases/latest/download/duckjump-latest-x64.msi
+<span class="p">$ </span>Start-Process msiexec -Wait -ArgumentList &#39;/i duckjump-latest-x64.msi&#39;
+<span class="p">$ </span>&amp; &quot;$env:ProgramFiles\duckjump\duckjump.exe&quot; serve</pre>
+
+        <pre data-sys="windows" data-arch="arm64" data-kind="bin" data-text hidden><span>{isEs ? "Descarga la última versión desde " : "Download the latest version from "}<a href="https://github.com/leandrofus/duckJump/releases/latest">{isEs ? "la página de versiones" : "the releases page"}</a>.</span></pre>
       </div>
 
       <!-- Context description -->
-      <p class="after">
+      <p class="after" data-after="pkg">
         {isEs ? (
           <>
-            Inicia automáticamente en <strong>https://&lt;host&gt;:8443</strong> con clave maestra del vault, usuario del sistema y contraseña inicial en <code>/etc/duckjump/initial-admin-password</code>.
+            Después abre <code>https://&lt;host&gt;:8443</code>. Contraseña inicial de superadmin en <code>/etc/duckjump/initial-admin-password</code>.
           </>
         ) : (
           <>
-            Starts automatically on <strong>https://&lt;host&gt;:8443</strong> with vault master key, system user, and initial superadmin password in <code>/etc/duckjump/initial-admin-password</code>.
+            Then open <code>https://&lt;host&gt;:8443</code>. Initial superadmin password in <code>/etc/duckjump/initial-admin-password</code>.
+          </>
+        )}
+      </p>
+
+      <p class="after" data-after="msi" hidden>
+        {isEs ? (
+          <>
+            Desde un PowerShell de administrador. El MSI instala el servicio <code>duckjump</code> en <code>https://localhost:8443</code> (menú Inicio › duckJump).
+          </>
+        ) : (
+          <>
+            From an administrator PowerShell. The MSI installs the <code>duckjump</code> service on <code>https://localhost:8443</code> (Start menu › duckJump).
+          </>
+        )}
+      </p>
+
+      <p class="after" data-after="bin" hidden>
+        {isEs ? (
+          <>
+            Modo binario directo: inicia en <code>http://127.0.0.1:8088</code>. Para servicios en segundo plano con PAM y vault, usa el paquete rpm o deb.
+          </>
+        ) : (
+          <>
+            Single binary mode: starts on <code>http://127.0.0.1:8088</code>. For background system services with PAM and vault integration, use the rpm or deb package.
           </>
         )}
       </p>
@@ -81,54 +138,53 @@ const isEs = lang === 'es';
 </div>
 
 <script>
-  const tabButtons = document.querySelectorAll('.tab-btn');
-  const preSnippets = document.querySelectorAll('.cmd pre');
-  const copyBtn = document.getElementById('install-copy-btn');
-
-  let activeSys = 'deb';
-
-  function updateTabs() {
-    tabButtons.forEach(btn => {
-      if (btn.getAttribute('data-sys') === activeSys) {
-        btn.classList.add('active');
-      } else {
-        btn.classList.remove('active');
+  const e = document.querySelector("[data-install]");
+  const r = e?.querySelector("[data-arch]");
+  if (e && r) {
+    const c = [...e.querySelectorAll('[role="tab"]')];
+    const d = navigator.userAgent;
+    let n = /Windows/.test(d) ? "windows" : /Macintosh/.test(d) ? "darwin" : /Debian|Ubuntu/i.test(d) ? "apt" : "dnf";
+    if (/arm64|aarch64/i.test(d)) (r as HTMLSelectElement).value = "arm64";
+    const s = e.querySelector("[data-copy]") as HTMLButtonElement | null;
+    const o = () => {
+      c.forEach(t => t.setAttribute("aria-selected", String(t.getAttribute("data-sys") === n)));
+      e.querySelectorAll("pre[data-sys]").forEach(t => {
+        const sys = t.getAttribute("data-sys");
+        const arch = t.getAttribute("data-arch");
+        const archVal = (r as HTMLSelectElement).value;
+        const matchesSys = sys === n;
+        const matchesArch = !arch || arch === archVal;
+        (t as HTMLElement).hidden = !(matchesSys && matchesArch);
+      });
+      const activePre = e.querySelector("pre[data-sys]:not([hidden])") as HTMLElement | null;
+      const kind = activePre?.dataset.kind;
+      e.querySelectorAll("[data-after]").forEach(t => {
+        (t as HTMLElement).hidden = t.getAttribute("data-after") !== kind;
+      });
+      if (s) {
+        s.hidden = !activePre?.dataset.text;
       }
-    });
-
-    preSnippets.forEach(pre => {
-      if (pre.getAttribute('data-sys') === activeSys) {
-        (pre as HTMLElement).style.display = 'block';
-      } else {
-        (pre as HTMLElement).style.display = 'none';
-      }
-    });
-  }
-
-  tabButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      activeSys = btn.getAttribute('data-sys') || 'deb';
-      updateTabs();
-    });
-  });
-
-  if (copyBtn) {
-    copyBtn.addEventListener('click', async () => {
-      const activePre = document.querySelector(`.cmd pre[data-sys="${activeSys}"]`);
-      const textToCopy = activePre?.getAttribute('data-text');
-      if (textToCopy) {
-        try {
-          await navigator.clipboard.writeText(textToCopy);
-          const doneLabel = copyBtn.getAttribute('data-done') || 'Copied!';
-          const originalLabel = copyBtn.getAttribute('data-label') || 'Copy';
-          copyBtn.textContent = doneLabel;
-          setTimeout(() => {
-            copyBtn.textContent = originalLabel;
-          }, 1500);
-        } catch {
-          // ignore
+    };
+    c.forEach(a => a.addEventListener("click", () => {
+      n = a.getAttribute("data-sys") || "dnf";
+      o();
+    }));
+    r.addEventListener("change", o);
+    if (s) {
+      s.addEventListener("click", async () => {
+        const activePre = e.querySelector("pre[data-sys]:not([hidden])") as HTMLElement | null;
+        const text = activePre?.dataset.text;
+        if (text) {
+          try {
+            await navigator.clipboard.writeText(text);
+            s.textContent = s.dataset.done || "Copied";
+            setTimeout(() => {
+              s.textContent = s.dataset.label || "Copy";
+            }, 1500);
+          } catch {}
         }
-      }
-    });
+      });
+    }
+    o();
   }
 </script>

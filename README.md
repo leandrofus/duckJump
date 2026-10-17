@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/brand/duckjump-logo.svg" alt="DuckJump" width="320">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/duckjump-logo.svg">
+    <img src="assets/brand/duckjump-logo-light.svg" alt="DuckJump" width="320">
+  </picture>
 </p>
 
 # duckJump

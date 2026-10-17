@@ -1,6 +1,6 @@
 # nfpm config: built by packaging/build.sh (make packages)
 name: duckjump-agent
-arch: amd64
+arch: ${ARCH}
 platform: linux
 version: ${VERSION}
 release: 1

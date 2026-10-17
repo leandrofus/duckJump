@@ -413,7 +413,19 @@ a:hover {
   border-radius: 18px;
   padding: 30px;
   border: 1px solid var(--rule);
-  box-shadow: 0 30px 70px -30px rgba(8, 22, 38, 0.55);
+  box-shadow: 0 30px 70px -30px #0816268c;
+}
+
+.panel h2 {
+  font-size: 26px;
+  margin: 0 0 4px;
+  font-weight: 800;
+}
+
+.panel p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 15px;
 }
 
 .tabs {
@@ -432,17 +444,16 @@ a:hover {
   border-radius: 999px;
   padding: 7px 14px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .tabs button:hover {
-  background: color-mix(in srgb, var(--chip) 80%, var(--link));
+  border-color: var(--rule);
 }
 
-.tabs button.active {
-  background: var(--duck);
-  color: #12253D;
-  font-weight: 600;
+.tabs button[aria-selected="true"] {
+  background: var(--navy);
+  color: #fff;
 }
 
 .arch {
@@ -454,21 +465,29 @@ a:hover {
   color: var(--muted);
 }
 
+.arch select {
+  font: 500 14px 'IBM Plex Sans', sans-serif;
+  color: var(--ink);
+  background: var(--chip);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
 .cmd {
   background: var(--code-bg);
   color: var(--code-fg);
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .term-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px 8px 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 8px 10px 8px 14px;
+  background: #ffffff0d;
 }
 
 .dots {
@@ -476,16 +495,21 @@ a:hover {
   gap: 6px;
 }
 
-.dot-term {
-  width: 10px;
-  height: 10px;
+.dots i {
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
+  background: #ff5f57;
   display: inline-block;
 }
 
-.dot-red { background: #FF5F56; }
-.dot-yellow { background: #FFBD2E; }
-.dot-green { background: #27C93F; }
+.dots i:nth-child(2) {
+  background: #febc2e;
+}
+
+.dots i:nth-child(3) {
+  background: #28c840;
+}
 
 .copy {
   font: 600 13px 'IBM Plex Sans', sans-serif;
@@ -505,22 +529,34 @@ a:hover {
 
 .cmd pre {
   margin: 0;
-  padding: 18px 20px;
-  overflow-x: auto;
+  padding: 16px 18px 18px;
+  white-space: pre-wrap;
+  word-break: break-all;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.75;
 }
 
-.p {
+.cmd pre .p {
   color: var(--duck);
   user-select: none;
-  font-weight: bold;
+}
+
+.cmd pre a {
+  color: #7fbff0;
 }
 
 .after {
   margin: 16px 0 0 !important;
   font-size: 15px;
   color: var(--muted);
+}
+
+.after code {
+  color: var(--ink);
+  background: var(--chip);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 14px;
 }
 
 /* Sections */
@@ -825,6 +861,10 @@ a:hover {
   .panel {
     padding: 20px 16px;
     border-radius: 14px;
+  }
+  .arch {
+    margin-left: 0;
+    width: 100%;
   }
   .cards,
   .hosts {

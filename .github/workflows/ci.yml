@@ -31,7 +31,7 @@ jobs:
           git diff --exit-code -- src/lib/api-types.ts
 
   go:
-    name: go (vet, test, generated code)
+    name: go (vet, test, cross-compile, generated code)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +45,14 @@ jobs:
         run: |
           make -C gateway generate
           git diff --exit-code -- gateway/internal/store/db
+      - name: Cross-compile static binaries (Linux amd64/arm64, macOS amd64/arm64, Windows amd64)
+        run: |
+          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os=${p%/*}; arch=${p#*/}; ext=; [ "$os" = "windows" ] && ext=.exe
+            echo "→ Compiling $os/$arch"
+            (cd gateway && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -o /tmp/duckjump-$os-$arch$ext ./cmd/duckjump-gw) || exit 1
+            (cd gateway && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -o /tmp/duckjump-agent-$os-$arch$ext ./cmd/duckjump-agent) || exit 1
+          done
 
   rust:
     name: rust (test)

@@ -1,0 +1,55 @@
+<!--
+  duckJump for Windows (WiX Toolset v5):
+
+    wix build packaging/windows/duckjump.wxs -arch x64 -d Version=0.1.0 -d Exe=dist/duckjump.exe -o duckjump.msi
+
+  Installs duckjump.exe in Program Files (and on the PATH) and runs it as
+  the "duckjump" service (`duckjump serve` as LocalSystem), with its data
+  in %ProgramData%\duckjump.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="duckJump" Manufacturer="duckJump" Version="$(Version)" Scope="perMachine"
+           UpgradeCode="7E1F9A2B-3C4D-5E6F-8A9B-0C1D2E3F4A5B" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of duckJump is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="duckjump.ico" SourceFile="$(sys.SOURCEFILEDIR)duckjump.ico" />
+    <Property Id="ARPPRODUCTICON" Value="duckjump.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/leandrofus/duckJump" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/leandrofus/duckJump" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="duckjump">
+        <Component Id="Service">
+          <File Id="duckjump.exe" Source="$(Exe)" KeyPath="yes" />
+          <ServiceInstall Id="ServiceInstall" Name="duckjump" DisplayName="duckJump"
+                          Description="Clientless PAM access bastion (https://localhost:8443)"
+                          Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"
+                          Arguments="serve" Vital="yes" />
+          <ServiceControl Id="ServiceControl" Name="duckjump" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+          <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" Permanent="no" />
+        </Component>
+        <Component Id="Icon">
+          <File Id="duckjump.ico" Source="$(sys.SOURCEFILEDIR)duckjump.ico" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Start menu: an internet shortcut to the UI -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenu">
+        <IniFile Id="UrlTarget" Name="duckJump.url" Directory="ProgramMenuFolder" Section="InternetShortcut" Key="URL" Value="https://localhost:8443/" Action="createLine" />
+        <IniFile Id="UrlIcon" Name="duckJump.url" Directory="ProgramMenuFolder" Section="InternetShortcut" Key="IconFile" Value="[INSTALLFOLDER]duckjump.ico" Action="createLine" />
+        <IniFile Id="UrlIconIndex" Name="duckJump.url" Directory="ProgramMenuFolder" Section="InternetShortcut" Key="IconIndex" Value="0" Action="createLine" />
+        <RemoveFile Id="Url" Name="duckJump.url" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\duckJump" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <ComponentRef Id="Service" />
+      <ComponentRef Id="Icon" />
+      <ComponentRef Id="StartMenu" />
+    </Feature>
+  </Package>
+</Wix>
