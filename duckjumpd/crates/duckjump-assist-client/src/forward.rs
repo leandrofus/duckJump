@@ -25,6 +25,7 @@ pub struct ForwardConfig {
     pub local_bind: String,
     pub local_port: u16,
     pub remote_port: Option<u16>,
+    pub virtual_host: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +33,7 @@ pub struct ForwardStats {
     pub connection: String,
     pub local_port: u16,
     pub remote_port: Option<u16>,
+    pub virtual_host: Option<String>,
     pub active_clients: u32,
     pub bytes_sent: u64,
     pub bytes_received: u64,
@@ -78,6 +80,12 @@ pub async fn start_forward(cfg: ForwardConfig) -> Result<ForwardHandle, String> 
         ws_url.push_str(&format!("&port={rp}"));
     }
 
+    if let Some(vh) = &cfg.virtual_host {
+        if !vh.is_empty() {
+            ws_url.push_str(&format!("&vhost={}", url::form_urlencoded::byte_serialize(vh.as_bytes()).collect::<String>()));
+        }
+    }
+
     let bind_addr = format!("{}:{}", cfg.local_bind, cfg.local_port);
     let listener = TcpListener::bind(&bind_addr)
         .await
@@ -100,11 +108,13 @@ pub async fn start_forward(cfg: ForwardConfig) -> Result<ForwardHandle, String> 
     let stats_running = running.clone();
     let conn_name = cfg.connection_id_or_name.clone();
     let remote_port = cfg.remote_port;
+    let virtual_host = cfg.virtual_host.clone();
 
     let stats_fn = Arc::new(move || ForwardStats {
         connection: conn_name.clone(),
         local_port: bound_port,
         remote_port,
+        virtual_host: virtual_host.clone(),
         active_clients: stats_active.load(Ordering::Relaxed),
         bytes_sent: stats_sent.load(Ordering::Relaxed),
         bytes_received: stats_recvd.load(Ordering::Relaxed),
@@ -271,12 +281,14 @@ mod tests {
             local_bind: "127.0.0.1".into(),
             local_port: 0, // OS assigns port
             remote_port: Some(5432),
+            virtual_host: Some("test.vhost.internal".into()),
         };
         let handle = start_forward(cfg).await.expect("start forward");
         let stats = handle.stats();
         assert!(stats.running);
         assert!(stats.local_port > 0);
         assert_eq!(stats.remote_port, Some(5432));
+        assert_eq!(stats.virtual_host, Some("test.vhost.internal".into()));
         assert_eq!(stats.connection, "test-conn");
 
         handle.stop();

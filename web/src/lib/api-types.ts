@@ -665,8 +665,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Open a TCP port-forwarding tunnel (WebSocket)
-         * @description Upgrades to a WebSocket carrying binary TCP streams to the destination. Destination is the connection's host:port, optionally overridden with a port whitelisted in connection params.
+         * Open a TCP/HTTP port-forwarding tunnel (WebSocket)
+         * @description Upgrades to a WebSocket carrying binary TCP streams to the destination. Destination is the connection's host:port, optionally overridden with a port whitelisted in connection params. For HTTP/HTTPS connections or when requested, automatically injects the configured or query-specified virtual host (Host header).
          *
          *     Roles: admin, auditor, superadmin, user.
          */
@@ -1769,7 +1769,7 @@ export interface components {
             params: Record<string, never>;
             port: number;
             /** @enum {string} */
-            protocol: "ssh" | "rdp" | "vnc";
+            protocol: "ssh" | "rdp" | "vnc" | "tcp" | "http" | "https";
             record: boolean;
             record_input: boolean;
             /** Format: uuid */
@@ -1802,12 +1802,12 @@ export interface components {
             folder_id?: string | null;
             host: string;
             name: string;
-            /** @description Protocol-specific settings. RDP: domain (string) and security (any, nla or tls). */
+            /** @description Protocol-specific settings. RDP: domain (string) and security (any, nla or tls). HTTP/HTTPS: virtual_host (string). */
             params?: Record<string, never>;
-            /** @description Defaults: ssh 22, rdp 3389, vnc 5900. */
+            /** @description Defaults: ssh 22, rdp 3389, vnc 5900, http 80, https 443. */
             port?: number;
             /** @enum {string} */
-            protocol: "ssh" | "rdp" | "vnc";
+            protocol: "ssh" | "rdp" | "vnc" | "tcp" | "http" | "https";
             /** @default true */
             record: boolean;
             /**
@@ -2048,7 +2048,7 @@ export interface components {
         PortalConnection: {
             /** @description May take files from this host into the tray. */
             can_download: boolean;
-            /** @description May establish a TCP port-forwarding tunnel to this host. */
+            /** @description May establish a TCP/HTTP port-forwarding tunnel to this host. */
             can_forward: boolean;
             /** @description May send files from the tray to this host. */
             can_upload: boolean;
@@ -2065,10 +2065,12 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            protocol: "ssh" | "rdp" | "vnc" | "tcp";
+            protocol: "ssh" | "rdp" | "vnc" | "tcp" | "http" | "https";
             /** @description Sessions are recorded; the UI tells the user. */
             record: boolean;
             tags: string[];
+            /** @description Virtual host header to inject for HTTP virtual servers. */
+            virtual_host?: string;
         };
         RecordingSettings: {
             /** @description Only after an update; recordings deleted right away. */
@@ -2326,7 +2328,7 @@ export interface components {
             params?: Record<string, never>;
             port?: number;
             /** @enum {string} */
-            protocol?: "ssh" | "rdp" | "vnc";
+            protocol?: "ssh" | "rdp" | "vnc" | "tcp" | "http" | "https";
             record?: boolean;
             record_input?: boolean;
             /** Format: uuid */
@@ -4244,6 +4246,8 @@ export interface operations {
             query?: {
                 /** @description Target port, if allowed by connection allow_ports. */
                 port?: number;
+                /** @description Virtual host header to inject for HTTP virtual servers. */
+                vhost?: string;
             };
             header?: never;
             path: {

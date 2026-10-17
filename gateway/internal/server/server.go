@@ -144,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/portal/connections", s.authed(anyRole, s.portalConnections))
 	mux.Handle("GET /api/v1/connections/{id}/session", s.authed(anyRole, s.tunnel))
 	mux.Handle("GET /api/v1/connections/{id}/forward", s.authed(anyRole, s.forwardTunnel))
+	mux.Handle("/api/v1/connections/{id}/http/", s.authed(anyRole, s.httpProxy))
 	mux.Handle("GET /api/v1/sessions/{id}/join", s.authed(anyRole, s.joinSessionEndpoint))
 	mux.Handle("POST /api/v1/sessions/{id}/share", s.authed(anyRole, s.createSessionShare))
 	mux.Handle("GET /api/v1/sessions/{id}/share", s.authed(anyRole, s.getSessionShare))

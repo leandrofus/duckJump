@@ -178,7 +178,7 @@ func toSecret(s db.ConfigSecret) secretDTO {
 // properties:
 //   id: { type: string, format: uuid }
 //   name: { type: string }
-//   protocol: { type: string, enum: [ssh, rdp, vnc] }
+//   protocol: { type: string, enum: [ssh, rdp, vnc, tcp, http, https] }
 //   host: { type: string }
 //   port: { type: integer }
 //   folder_id: { type: [string, 'null'], format: uuid }
@@ -365,7 +365,7 @@ var (
 	reUsername = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	reTag      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
 	roles      = map[string]bool{"superadmin": true, "admin": true, "auditor": true, "user": true}
-	protocols  = map[string]int64{"ssh": 22, "rdp": 3389, "vnc": 5900, "tcp": 0}
+	protocols  = map[string]int64{"ssh": 22, "rdp": 3389, "vnc": 5900, "tcp": 0, "http": 80, "https": 443}
 )
 
 func validName(field, v string) error {

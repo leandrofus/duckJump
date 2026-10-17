@@ -426,7 +426,9 @@ function renderForwardList(conns) {
 
     let defaultPort = 5432;
     const lowerName = c.name.toLowerCase();
-    if (lowerName.includes("mysql") || lowerName.includes("3306")) defaultPort = 3306;
+    const isWeb = c.protocol === "http" || c.protocol === "https";
+    if (isWeb) defaultPort = 8080;
+    else if (lowerName.includes("mysql") || lowerName.includes("3306")) defaultPort = 3306;
     else if (lowerName.includes("redis") || lowerName.includes("6379")) defaultPort = 6379;
     else if (lowerName.includes("mongo") || lowerName.includes("27017")) defaultPort = 27017;
     else if (c.protocol === "ssh" || lowerName.includes("2222")) defaultPort = 2222;
@@ -436,15 +438,21 @@ function renderForwardList(conns) {
         <div class="forward-title">
           <strong>${escapeHtml(c.name)}</strong>
           <span class="badge protocol">${escapeHtml(c.protocol.toUpperCase())}</span>
+          ${c.virtual_host ? `<span class="badge vhost" title="Virtual Host">vhost: ${escapeHtml(c.virtual_host)}</span>` : ""}
           <span class="badge status" id="forward-status-badge-${c.id}">Inactivo</span>
         </div>
         <div class="forward-desc hint">${escapeHtml(c.description || c.environment || "Sin descripción")}${c.folder_path ? ` · ${escapeHtml(c.folder_path)}` : ""}</div>
       </div>
       <div class="forward-controls">
         <label class="field-inline">
-          <span>Puerto local:</span>
+          <span>Puerto:</span>
           <input type="number" id="forward-port-${c.id}" min="1024" max="65535" value="${defaultPort}">
         </label>
+        ${isWeb ? `
+        <label class="field-inline">
+          <span>Virtual Host:</span>
+          <input type="text" id="forward-vhost-${c.id}" value="${escapeHtml(c.virtual_host || '')}" placeholder="ej. wiki.corp.local" style="width: 140px;">
+        </label>` : ''}
         <button type="button" class="primary forward-toggle-btn" id="forward-toggle-${c.id}">Iniciar Túnel</button>
       </div>
       <div class="forward-active-info" id="forward-active-info-${c.id}" hidden>
@@ -452,6 +460,7 @@ function renderForwardList(conns) {
           <span>Escuchando en:</span>
           <code id="forward-addr-${c.id}">127.0.0.1:${defaultPort}</code>
           <button type="button" class="link" id="forward-copy-${c.id}">Copiar</button>
+          ${isWeb ? `<a id="forward-open-${c.id}" href="http://127.0.0.1:${defaultPort}" target="_blank" class="link" style="margin-left: 8px;">Abrir en navegador ↗</a>` : ''}
         </p>
         <p class="forward-traffic hint" id="forward-traffic-${c.id}">↑ 0 B · ↓ 0 B · 0 clientes</p>
       </div>
@@ -488,12 +497,15 @@ function renderForwardList(conns) {
 async function startForwardTunnel(connId, localPort) {
   clearError();
   const toggleBtn = $(`forward-toggle-${connId}`);
+  const vhostInput = $(`forward-vhost-${connId}`);
+  const virtualHost = vhostInput ? vhostInput.value.trim() : null;
   await busy(toggleBtn, async () => {
     try {
       const stats = await invoke("start_tcp_forward", {
         connection: connId,
         localPort: parseInt(localPort, 10),
         remotePort: null,
+        virtualHost: virtualHost || null,
       });
       updateCardRunningState(connId, stats);
       startStatsPolling();
@@ -536,6 +548,14 @@ function updateCardRunningState(connId, stats) {
   const portInput = $(`forward-port-${connId}`);
   if (portInput) portInput.disabled = true;
 
+  const vhostInput = $(`forward-vhost-${connId}`);
+  if (vhostInput) vhostInput.disabled = true;
+
+  const openLink = $(`forward-open-${connId}`);
+  if (openLink) {
+    openLink.href = `http://127.0.0.1:${stats.local_port}`;
+  }
+
   const info = $(`forward-active-info-${connId}`);
   if (info) info.hidden = false;
 
@@ -567,6 +587,9 @@ function updateCardStoppedState(connId) {
 
   const portInput = $(`forward-port-${connId}`);
   if (portInput) portInput.disabled = false;
+
+  const vhostInput = $(`forward-vhost-${connId}`);
+  if (vhostInput) vhostInput.disabled = false;
 
   const info = $(`forward-active-info-${connId}`);
   if (info) info.hidden = true;

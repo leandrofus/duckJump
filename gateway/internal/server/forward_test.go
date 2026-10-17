@@ -1,11 +1,15 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -261,6 +265,122 @@ func TestTCPPortForwarding_ViaSessionEndpoint(t *testing.T) {
 	}
 	if string(buf) != string(msg) {
 		t.Fatalf("got %q, want %q", string(buf), string(msg))
+	}
+}
+
+func TestHTTPPortForwarding_VirtualHostInjection(t *testing.T) {
+	var receivedHost string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHost = r.Host
+		w.Header().Set("X-Received-Host", r.Host)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("hello from virtual host"))
+	}))
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, portStr, _ := net.SplitHostPort(u.Host)
+	port, _ := strconv.Atoi(portStr)
+
+	e := newEnv(t)
+	e.mkUser("ana", "user")
+	root := e.as("root")
+	ana := e.as("ana")
+
+	var anaMe meResponse
+	ana.do("GET", "/auth/me", nil, 200, &anaMe)
+
+	// Create HTTP connection with virtual_host configured in params
+	var conn connectionDTO
+	root.do("POST", "/connections", connectionRequest{
+		Name:     "web-vhost",
+		Protocol: "http",
+		Host:     host,
+		Port:     int64(port),
+		Params:   json.RawMessage(`{"virtual_host": "wiki.internal.corp"}`),
+	}, 201, &conn)
+
+	canForward := true
+	root.do("POST", "/policies", policyRequest{
+		SubjectType: "user",
+		SubjectID:   anaMe.User.ID,
+		ObjectType:  "connection",
+		ObjectRef:   conn.ID,
+		CanConnect:  &canForward,
+		CanForward:  true,
+	}, 201, nil)
+
+	// 1. Ana connects over forward tunnel and sends HTTP request with Host: 127.0.0.1:8080
+	ws, resp, err := ana.openForward(t, conn.ID, "")
+	if err != nil {
+		t.Fatalf("ana failed to open forward: %v", err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101, got %d", resp.StatusCode)
+	}
+	defer ws.CloseNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	netConn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
+	httpReq := "GET /dashboard HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nUser-Agent: test\r\nConnection: close\r\n\r\n"
+	if _, err := netConn.Write([]byte(httpReq)); err != nil {
+		t.Fatalf("write http request: %v", err)
+	}
+
+	res, err := http.ReadResponse(bufio.NewReader(netConn), nil)
+	if err != nil {
+		t.Fatalf("read http response: %v", err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+
+	if string(body) != "hello from virtual host" {
+		t.Fatalf("unexpected body: %q", string(body))
+	}
+	if receivedHost != "wiki.internal.corp" {
+		t.Fatalf("expected backend to receive Host wiki.internal.corp, got %q", receivedHost)
+	}
+
+	// 2. Override virtual host via query parameter ?vhost=another.vhost.org
+	ws2, _, err := ana.openForward(t, conn.ID, "vhost=another.vhost.org")
+	if err != nil {
+		t.Fatalf("open forward with query vhost: %v", err)
+	}
+	defer ws2.CloseNow()
+
+	netConn2 := websocket.NetConn(ctx, ws2, websocket.MessageBinary)
+	if _, err := netConn2.Write([]byte("GET /override HTTP/1.1\r\nHost: localhost:9999\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	res2, err := http.ReadResponse(bufio.NewReader(netConn2), nil)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer res2.Body.Close()
+	if receivedHost != "another.vhost.org" {
+		t.Fatalf("expected backend to receive overridden Host another.vhost.org, got %q", receivedHost)
+	}
+
+	// 3. Direct HTTP reverse proxy endpoint GET /api/v1/connections/{id}/http/
+	proxyReq, _ := http.NewRequestWithContext(ctx, "GET", e.srv.URL+"/api/v1/connections/"+conn.ID+"/http/testpath", nil)
+	for _, ck := range ana.http.Jar.Cookies(mustURL(e.srv.URL)) {
+		proxyReq.AddCookie(ck)
+	}
+	proxyResp, err := http.DefaultClient.Do(proxyReq)
+	if err != nil {
+		t.Fatalf("direct http proxy request failed: %v", err)
+	}
+	defer proxyResp.Body.Close()
+	if proxyResp.StatusCode != 200 {
+		t.Fatalf("expected 200 from direct http proxy, got %d", proxyResp.StatusCode)
+	}
+	if receivedHost != "wiki.internal.corp" {
+		t.Fatalf("expected direct http proxy to inject wiki.internal.corp, got %q", receivedHost)
 	}
 }
 

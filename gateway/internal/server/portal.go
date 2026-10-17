@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
@@ -12,7 +13,7 @@ import (
 // properties:
 //   id: { type: string, format: uuid }
 //   name: { type: string }
-//   protocol: { type: string, enum: [ssh, rdp, vnc, tcp] }
+//   protocol: { type: string, enum: [ssh, rdp, vnc, tcp, http, https] }
 //   environment: { type: string }
 //   description: { type: string }
 //   folder_path: { type: string, description: 'Folder names from the root, joined by " / "; empty at the root.' }
@@ -21,7 +22,8 @@ import (
 //   credentials: { type: string, enum: [vault, prompt, none], description: 'vault: injected, nothing to ask. prompt: ask the user before connecting. none: try without; the server may answer credentials_required.' }
 //   can_upload: { type: boolean, description: May send files from the tray to this host. }
 //   can_download: { type: boolean, description: May take files from this host into the tray. }
-//   can_forward: { type: boolean, description: May establish a TCP port-forwarding tunnel to this host. }
+//   can_forward: { type: boolean, description: May establish a TCP/HTTP port-forwarding tunnel to this host. }
+//   virtual_host: { type: string, description: 'Virtual host header to inject for HTTP virtual servers.' }
 
 type portalConnectionDTO struct {
 	ID          string   `json:"id"`
@@ -36,6 +38,7 @@ type portalConnectionDTO struct {
 	CanUpload   bool     `json:"can_upload"`
 	CanDownload bool     `json:"can_download"`
 	CanForward  bool     `json:"can_forward"`
+	VirtualHost string   `json:"virtual_host,omitempty"`
 }
 
 // openapi:operation
@@ -118,7 +121,16 @@ func (s *Server) portalConnections(w http.ResponseWriter, r *http.Request, p pri
 		if !p.Dev {
 			canForward, _ = s.Store.CanForward(ctx, p.User.ID, c.ID)
 		}
-		out = append(out, portalConnectionDTO{c.ID, c.Name, c.Protocol, c.Environment, c.Description, path(c.FolderID.String), t, c.Record, creds, up, down, canForward})
+		var extra struct {
+			VirtualHost string `json:"virtual_host"`
+			HTTPHost    string `json:"http_host"`
+		}
+		_ = json.Unmarshal([]byte(c.Params), &extra)
+		vhost := extra.VirtualHost
+		if vhost == "" {
+			vhost = extra.HTTPHost
+		}
+		out = append(out, portalConnectionDTO{c.ID, c.Name, c.Protocol, c.Environment, c.Description, path(c.FolderID.String), t, c.Record, creds, up, down, canForward, vhost})
 	}
 	return ok(w, out)
 }

@@ -34,10 +34,11 @@ func forwardCmd(ctx context.Context, st *store.Store, args []string) error {
 	bind := fs.String("bind", "127.0.0.1", "local IP to bind")
 	username := fs.String("user", os.Getenv("DUCKJUMP_USER"), "username for login")
 	password := fs.String("password", os.Getenv("DUCKJUMP_PASSWORD"), "password for login")
+	vhost := fs.String("vhost", "", "virtual host header to inject for HTTP virtual servers")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: duckjump forward [flags] <connection> <local-port>[:<remote-port>]\n\nflags:\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nexample:\n  duckjump forward db-prod 5432\n  duckjump forward -server https://bastion.corp.net db-prod 5432:5432\n")
+		fmt.Fprintf(os.Stderr, "\nexample:\n  duckjump forward db-prod 5432\n  duckjump forward -server https://bastion.corp.net db-prod 5432:5432\n  duckjump forward -vhost wiki.internal.corp internal-wiki 8080\n")
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -154,8 +155,15 @@ func forwardCmd(ctx context.Context, st *store.Store, args []string) error {
 		wsScheme = "wss"
 	}
 	forwardEndpoint := fmt.Sprintf("%s://%s/api/v1/connections/%s/forward", wsScheme, parsedServer.Host, url.PathEscape(connName))
+	qParams := url.Values{}
 	if remotePort > 0 {
-		forwardEndpoint += fmt.Sprintf("?port=%d", remotePort)
+		qParams.Set("port", strconv.Itoa(remotePort))
+	}
+	if *vhost != "" {
+		qParams.Set("vhost", *vhost)
+	}
+	if len(qParams) > 0 {
+		forwardEndpoint += "?" + qParams.Encode()
 	}
 
 	fmt.Printf(" duckJump Port Forwarding\n")
@@ -163,6 +171,9 @@ func forwardCmd(ctx context.Context, st *store.Store, args []string) error {
 	fmt.Printf(" Target conn:  %s", connName)
 	if remotePort > 0 {
 		fmt.Printf(" (port %d)", remotePort)
+	}
+	if *vhost != "" {
+		fmt.Printf(" [vhost: %s]", *vhost)
 	}
 	fmt.Printf("\n Gateway URL:  %s\n", rawServer)
 	fmt.Printf(" Ready to accept connections. Press Ctrl+C to terminate.\n\n")

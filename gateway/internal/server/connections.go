@@ -16,9 +16,9 @@ import (
 // additionalProperties: false
 // properties:
 //   name: { type: string, maxLength: 128 }
-//   protocol: { type: string, enum: [ssh, rdp, vnc] }
+//   protocol: { type: string, enum: [ssh, rdp, vnc, tcp, http, https] }
 //   host: { type: string }
-//   port: { type: integer, minimum: 1, maximum: 65535, description: 'Defaults: ssh 22, rdp 3389, vnc 5900.' }
+//   port: { type: integer, minimum: 1, maximum: 65535, description: 'Defaults: ssh 22, rdp 3389, vnc 5900, http 80, https 443.' }
 //   folder_id: { type: [string, 'null'], format: uuid }
 //   site_id: { type: [string, 'null'], format: uuid, description: null means reachable directly from duckjumpd. }
 //   environment: { type: string, examples: [prod, staging, dev] }
@@ -27,7 +27,7 @@ import (
 //   backend: { type: string, enum: [paltad, guacd], default: paltad }
 //   credential_mode: { type: string, enum: [vault, prompt], default: vault }
 //   secret_id: { type: [string, 'null'], format: uuid }
-//   params: { type: object, description: 'Protocol-specific settings. RDP: domain (string) and security (any, nla or tls).' }
+//   params: { type: object, description: 'Protocol-specific settings. RDP: domain (string) and security (any, nla or tls). HTTP/HTTPS: virtual_host (string).' }
 //   record: { type: boolean, default: true }
 //   record_input: { type: boolean, default: false, description: Also record keystrokes (captures typed passwords). }
 
@@ -55,7 +55,7 @@ type connectionRequest struct {
 // description: Only the fields present change. tags replaces the whole set.
 // properties:
 //   name: { type: string, maxLength: 128 }
-//   protocol: { type: string, enum: [ssh, rdp, vnc] }
+//   protocol: { type: string, enum: [ssh, rdp, vnc, tcp, http, https] }
 //   host: { type: string, description: Changing it clears the pinned host key. }
 //   port: { type: integer, minimum: 1, maximum: 65535 }
 //   folder_id: { type: [string, 'null'], format: uuid }
@@ -113,7 +113,7 @@ func checkConnection(ctx context.Context, q *db.Queries, c *db.ConfigConnection)
 	}
 	def, ok := protocols[c.Protocol]
 	if !ok {
-		return badRequest("protocol must be ssh, rdp, vnc or tcp")
+		return badRequest("protocol must be ssh, rdp, vnc, tcp, http or https")
 	}
 	if c.Port == 0 && def > 0 {
 		c.Port = def

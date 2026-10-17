@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -243,9 +244,10 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 	case "add":
 		fs := flag.NewFlagSet("conn add", flag.ExitOnError)
 		name := fs.String("name", "", "connection name")
-		protocol := fs.String("protocol", "ssh", "ssh | rdp | vnc | tcp")
+		protocol := fs.String("protocol", "ssh", "ssh | rdp | vnc | tcp | http | https")
 		host := fs.String("host", "", "target host")
-		port := fs.Int("port", 22, "target port")
+		port := fs.Int("port", 0, "target port (defaults: ssh 22, rdp 3389, vnc 5900, http 80, https 443)")
+		vhost := fs.String("vhost", "", "virtual host header for HTTP virtual servers")
 		secret := fs.String("secret", "", "vaulted credential name")
 		site := fs.String("site", "", "site the host belongs to (default: reachable directly)")
 		folder := fs.String("folder", "", "folder name to place the connection in")
@@ -260,9 +262,29 @@ func connCmd(ctx context.Context, st *store.Store, args []string) error {
 		if *name == "" || *host == "" {
 			return fmt.Errorf("need name and host: duckjump conn add <name> --host <host>")
 		}
+		targetPort := int64(*port)
+		if targetPort == 0 {
+			switch *protocol {
+			case "ssh":
+				targetPort = 22
+			case "rdp":
+				targetPort = 3389
+			case "vnc":
+				targetPort = 5900
+			case "http":
+				targetPort = 80
+			case "https":
+				targetPort = 443
+			}
+		}
+		paramsMap := map[string]any{}
+		if *vhost != "" {
+			paramsMap["virtual_host"] = *vhost
+		}
+		paramsBytes, _ := json.Marshal(paramsMap)
 		p := db.CreateConnectionParams{
-			ID: store.NewID(), Name: *name, Protocol: *protocol, Host: *host, Port: int64(*port),
-			Backend: store.BackendNative, CredentialMode: "vault", Params: "{}", Record: !*noRecord, RecordInput: *recInput, Now: store.Now(),
+			ID: store.NewID(), Name: *name, Protocol: *protocol, Host: *host, Port: targetPort,
+			Backend: store.BackendNative, CredentialMode: "vault", Params: string(paramsBytes), Record: !*noRecord, RecordInput: *recInput, Now: store.Now(),
 		}
 		if *hostKey != "" && !strings.HasPrefix(*hostKey, "SHA256:") {
 			return fmt.Errorf("-host-key must look like SHA256:...")

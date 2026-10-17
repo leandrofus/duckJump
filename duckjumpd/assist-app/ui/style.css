@@ -208,6 +208,7 @@ button.link { background: none; border: 0; color: var(--primary); font: inherit;
   letter-spacing: .04em;
 }
 .badge.protocol { background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); }
+.badge.vhost { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--text); border: 1px solid var(--accent); text-transform: none; font-weight: 600; }
 .badge.status { background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); }
 .badge.status.running { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .forward-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

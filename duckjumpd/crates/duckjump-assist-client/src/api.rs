@@ -97,6 +97,8 @@ pub struct PortalConnection {
     pub can_download: bool,
     #[serde(default)]
     pub can_forward: bool,
+    #[serde(default)]
+    pub virtual_host: String,
 }
 
 /// The answer to a password login: a user, or a TOTP step to go.

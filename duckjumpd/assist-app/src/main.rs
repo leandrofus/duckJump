@@ -249,9 +249,10 @@ async fn start_tcp_forward(
     connection: String,
     local_port: u16,
     remote_port: Option<u16>,
+    virtual_host: Option<String>,
 ) -> CmdResult<ForwardStats> {
     let gw = state.gateway().await?;
-    let token = gw.session_token().ok_or_else(|| "inicie sesión primero para abrir un túnel TCP".to_string())?;
+    let token = gw.session_token().ok_or_else(|| "inicie sesión primero para abrir un túnel".to_string())?;
     let mut forwards = state.forwards.lock().await;
     if forwards.contains_key(&connection) {
         return Err(format!("el túnel para '{connection}' ya está activo"));
@@ -263,6 +264,7 @@ async fn start_tcp_forward(
         local_bind: "127.0.0.1".into(),
         local_port,
         remote_port,
+        virtual_host,
     };
     let handle = duckjump_assist_client::start_forward(cfg).await?;
     let stats = handle.stats();

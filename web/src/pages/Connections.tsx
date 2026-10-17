@@ -271,7 +271,7 @@ function ConnectionDrawer({ id, onClose }: { id: string; onClose: () => void }) 
   )
 }
 
-const DEFAULT_PORT: Record<string, number> = { ssh: 22, rdp: 3389, vnc: 5900 }
+const DEFAULT_PORT: Record<string, number> = { ssh: 22, rdp: 3389, vnc: 5900, tcp: 0, http: 80, https: 443 }
 
 export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?: Connection; folderId?: string; onClose: () => void }) {
   const folders = useFolders()
@@ -292,9 +292,10 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
     record: initial?.record ?? true,
     record_input: initial?.record_input ?? false,
   })
-  const initialParams = (initial?.params ?? {}) as { domain?: string; security?: string }
+  const initialParams = (initial?.params ?? {}) as { domain?: string; security?: string; virtual_host?: string }
   const [rdp, setRdp] = useState({ domain: initialParams.domain ?? '', security: initialParams.security ?? 'any' })
   const [vncSecurity, setVncSecurity] = useState(initialParams.security ?? 'any')
+  const [virtualHost, setVirtualHost] = useState(initialParams.virtual_host ?? '')
   const [busy, setBusy] = useState(false)
   const set = (p: Partial<typeof v>) => setV({ ...v, ...p })
   const save = async () => {
@@ -305,7 +306,9 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
       credential_mode: v.credential_mode, secret_id: v.credential_mode === 'prompt' ? null : v.secret_id || null,
       environment: v.environment.trim(), description: v.description.trim(), tags: v.tags, record: v.record, record_input: v.record_input,
       params: v.protocol === 'rdp' ? { ...(initial?.params ?? {}), domain: rdp.domain.trim(), security: rdp.security }
-        : v.protocol === 'vnc' ? { ...(initial?.params ?? {}), security: vncSecurity } : (initial?.params ?? {}),
+        : v.protocol === 'vnc' ? { ...(initial?.params ?? {}), security: vncSecurity }
+        : (v.protocol === 'http' || v.protocol === 'https') ? { ...(initial?.params ?? {}), virtual_host: virtualHost.trim() }
+        : (initial?.params ?? {}),
     }
     try {
       const saved = initial ? await api.patch<Connection>(`/connections/${initial.id}`, body) : await api.post<Connection>('/connections', body)
@@ -329,6 +332,9 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
             <option value="ssh">SSH</option>
             <option value="rdp">RDP</option>
             <option value="vnc">VNC</option>
+            <option value="tcp">TCP (Port Forwarding)</option>
+            <option value="http">HTTP (Web)</option>
+            <option value="https">HTTPS (Web)</option>
           </select>
         </Field>
         <Field label={t('Host')}><input className="mono" value={v.host} placeholder="10.0.0.5" onChange={(e) => set({ host: e.target.value })} /></Field>
@@ -370,6 +376,11 @@ export function ConnectionFormDialog({ initial, folderId, onClose }: { initial?:
               <option value="any">{t('TLS when the server offers it')}</option>
               <option value="tls">{t('TLS only')}</option>
             </select>
+          </Field>
+        )}
+        {(v.protocol === 'http' || v.protocol === 'https') && (
+          <Field label={t('Virtual Host (Host Header)')} help={t('Host header to inject for internal virtual servers or reverse proxies. Defaults to target host.')}>
+            <input className="mono" value={virtualHost} placeholder="wiki.internal.empresa.com" onChange={(e) => setVirtualHost(e.target.value)} />
           </Field>
         )}
         <Field label={t('Environment')}><input value={v.environment} placeholder="prod" onChange={(e) => set({ environment: e.target.value })} /></Field>
