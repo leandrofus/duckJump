@@ -354,7 +354,7 @@ func serve(ctx context.Context, st *store.Store, args []string, openBrowser bool
 		Files: files, FileMaxSize: *fileMax, FileTTL: *fileTTL,
 		TrustedProxies: trusted, SecureCookies: *secureCookies, TrustOnFirstUse: *tofu, OIDC: sso,
 		FrontendURL: *frontendURL, AgentBinPath: *agentBin, AgentListen: *agentListen, AgentServerURL: *agentServerURL,
-		Dev: *dev,
+		Dev: *dev, StaticSinks: sinks,
 	}
 
 	if *agentListen != "" {
@@ -385,9 +385,9 @@ func serve(ctx context.Context, st *store.Store, args []string, openBrowser bool
 	}
 	go srv.RetentionLoop(ctx)
 	go srv.Supervise(ctx)
+	go srv.SIEMLoop(ctx)
 	if len(sinks) > 0 {
-		go st.ExportAudit(ctx, sinks, 2*time.Second)
-		slog.Info("exporting the audit log", "to", *auditExport)
+		slog.Info("exporting the audit log (static sinks)", "to", *auditExport)
 	}
 
 	// Build allowlist

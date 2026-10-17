@@ -1181,6 +1181,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/siem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get SIEM forwarding configuration and stats
+         * @description Roles: admin, superadmin.
+         */
+        get: operations["getSIEMSettings"];
+        /**
+         * Update SIEM forwarding configuration
+         * @description Roles: admin, superadmin.
+         */
+        put: operations["setSIEMSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/siem/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test SIEM endpoint connectivity by sending a test audit event
+         * @description Roles: admin, superadmin.
+         */
+        post: operations["testSIEMSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sites": {
         parameters: {
             query?: never;
@@ -2120,6 +2164,45 @@ export interface components {
          * @enum {string}
          */
         Role: "superadmin" | "admin" | "auditor" | "user";
+        SIEMSettings: {
+            /** @description Masked auth header (e.g. Bearer ****) */
+            auth_header?: string;
+            enabled: boolean;
+            /** @description Destination URL (e.g. syslog+tls://siem:6514, https://splunk:8088/services/collector, file:///var/log/audit.jsonl) */
+            endpoint: string;
+            /** @enum {string} */
+            format: "json" | "cef" | "rfc5424";
+            has_auth_header?: boolean;
+            /** @enum {string} */
+            sink_type: "syslog" | "webhook" | "file";
+            status?: components["schemas"]["SIEMStats"];
+            tls_ca_cert?: string;
+            tls_insecure?: boolean;
+        };
+        SIEMSettingsRequest: {
+            auth_header?: string;
+            enabled: boolean;
+            endpoint: string;
+            /** @enum {string} */
+            format: "json" | "cef" | "rfc5424";
+            /** @enum {string} */
+            sink_type: "syslog" | "webhook" | "file";
+            tls_ca_cert?: string;
+            tls_insecure?: boolean;
+        };
+        SIEMStats: {
+            last_error?: string;
+            /** Format: date-time */
+            last_error_at?: string;
+            /** Format: date-time */
+            last_exported_at?: string;
+            last_exported_id?: number;
+            total_exported?: number;
+        };
+        SIEMTestResponse: {
+            message: string;
+            ok: boolean;
+        };
         /** @description Credential metadata. The value is write-only and never returned. */
         Secret: {
             /** @description Only in list responses. */
@@ -6320,6 +6403,152 @@ export interface operations {
             };
             /** @description Conflicts with the current state */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSIEMSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current SIEM settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SIEMSettings"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setSIEMSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SIEMSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated SIEM settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SIEMSettings"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    testSIEMSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Required on every state-changing request. */
+                "X-DuckJump-Request": components["parameters"]["CSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SIEMSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Test result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SIEMTestResponse"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not allowed (role, grant or missing CSRF header) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

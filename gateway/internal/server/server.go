@@ -80,12 +80,17 @@ type Server struct {
 	// AgentServerURL overrides the WebSocket URL edge agents connect to.
 	AgentServerURL string
 
-	limiter  *auth.Limiter
-	appCodes appCodes
-	live     liveSessions
-	checkMu  sync.Mutex
-	nodeOnce sync.Once
-	nodeName string
+	// StaticSinks keeps audit sinks from the command-line flag -audit-export.
+	StaticSinks []io.Writer
+
+	limiter    *auth.Limiter
+	appCodes   appCodes
+	live       liveSessions
+	checkMu    sync.Mutex
+	nodeOnce   sync.Once
+	nodeName   string
+	siemNotify chan struct{}
+	siemMu     sync.Mutex
 }
 
 func (s *Server) Handler() http.Handler {
@@ -233,6 +238,9 @@ func (s *Server) Handler() http.Handler {
 	// Settings.
 	mux.Handle("GET /api/v1/settings/recordings", s.authed(admins, s.getRecordingSettings))
 	mux.Handle("PUT /api/v1/settings/recordings", s.authed(admins, s.setRecordingSettings))
+	mux.Handle("GET /api/v1/settings/siem", s.authed(admins, s.getSIEMSettings))
+	mux.Handle("PUT /api/v1/settings/siem", s.authed(admins, s.setSIEMSettings))
+	mux.Handle("POST /api/v1/settings/siem/test", s.authed(admins, s.testSIEMSettings))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, &apiError{http.StatusNotFound, "not_found", "no such endpoint"})

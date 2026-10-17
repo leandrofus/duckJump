@@ -1123,6 +1123,97 @@ components:
         - auditor
         - user
       type: string
+    SIEMSettings:
+      properties:
+        auth_header:
+          description: Masked auth header (e.g. Bearer ****)
+          type: string
+        enabled:
+          type: boolean
+        endpoint:
+          description: Destination URL (e.g. syslog+tls://siem:6514, https://splunk:8088/services/collector, file:///var/log/audit.jsonl)
+          type: string
+        format:
+          enum:
+            - json
+            - cef
+            - rfc5424
+          type: string
+        has_auth_header:
+          type: boolean
+        sink_type:
+          enum:
+            - syslog
+            - webhook
+            - file
+          type: string
+        status:
+          $ref: '#/components/schemas/SIEMStats'
+        tls_ca_cert:
+          type: string
+        tls_insecure:
+          type: boolean
+      required:
+        - enabled
+        - sink_type
+        - endpoint
+        - format
+      type: object
+    SIEMSettingsRequest:
+      properties:
+        auth_header:
+          type: string
+        enabled:
+          type: boolean
+        endpoint:
+          type: string
+        format:
+          enum:
+            - json
+            - cef
+            - rfc5424
+          type: string
+        sink_type:
+          enum:
+            - syslog
+            - webhook
+            - file
+          type: string
+        tls_ca_cert:
+          type: string
+        tls_insecure:
+          type: boolean
+      required:
+        - enabled
+        - sink_type
+        - endpoint
+        - format
+      type: object
+    SIEMStats:
+      properties:
+        last_error:
+          type: string
+        last_error_at:
+          format: date-time
+          type: string
+        last_exported_at:
+          format: date-time
+          type: string
+        last_exported_id:
+          type: integer
+        total_exported:
+          type: integer
+      type: object
+    SIEMTestResponse:
+      properties:
+        message:
+          type: string
+        ok:
+          type: boolean
+      required:
+        - ok
+        - message
+      type: object
     Secret:
       description: Credential metadata. The value is write-only and never returned.
       properties:
@@ -5086,6 +5177,120 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Conflicts with the current state
       summary: Set the recording retention
+      tags:
+        - settings
+      x-duckjump-roles:
+        - admin
+        - superadmin
+  /settings/siem:
+    get:
+      description: 'Roles: admin, superadmin.'
+      operationId: getSIEMSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SIEMSettings'
+          description: Current SIEM settings
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+      summary: Get SIEM forwarding configuration and stats
+      tags:
+        - settings
+      x-duckjump-roles:
+        - admin
+        - superadmin
+    put:
+      description: 'Roles: admin, superadmin.'
+      operationId: setSIEMSettings
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SIEMSettingsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SIEMSettings'
+          description: Updated SIEM settings
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+      summary: Update SIEM forwarding configuration
+      tags:
+        - settings
+      x-duckjump-roles:
+        - admin
+        - superadmin
+  /settings/siem/test:
+    post:
+      description: 'Roles: admin, superadmin.'
+      operationId: testSIEMSettings
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SIEMSettingsRequest'
+        required: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SIEMTestResponse'
+          description: Test result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not allowed (role, grant or missing CSRF header)
+      summary: Test SIEM endpoint connectivity by sending a test audit event
       tags:
         - settings
       x-duckjump-roles:
