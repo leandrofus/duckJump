@@ -77,6 +77,21 @@ func fromService(err error, what string) error {
 		return conflict("%s", err.Error())
 	case errors.Is(err, services.ErrNotLocalUser):
 		return conflict("%s", err.Error())
+	case errors.Is(err, services.ErrDevModeNotAllowed):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrPasswordManagedByIdP),
+		errors.Is(err, services.ErrTOTPManagedByIdP),
+		errors.Is(err, services.ErrTOTPAlreadyEnabled),
+		errors.Is(err, services.ErrTOTPAlreadyActive):
+		return conflict("%s", err.Error())
+	case errors.Is(err, services.ErrCallEnrollFirst):
+		return badRequest("%s", err.Error())
+	case errors.Is(err, services.ErrCurrentPasswordWrong):
+		return &apiError{http.StatusUnauthorized, "invalid_credentials", "current password is wrong"}
+	case errors.Is(err, services.ErrPasswordWrong):
+		return &apiError{http.StatusUnauthorized, "invalid_credentials", "password is wrong"}
+	case errors.Is(err, services.ErrInvalidCode):
+		return &apiError{http.StatusUnauthorized, "invalid_code", "invalid code"}
 	case errors.Is(err, services.ErrNameInvalid):
 		return badRequest("%s", err.Error())
 	case errors.Is(err, services.ErrProtocolInvalid):

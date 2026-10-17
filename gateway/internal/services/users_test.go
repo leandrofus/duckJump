@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/leandrofus/duckjump/gateway/internal/store"
+	"github.com/leandrofus/duckjump/gateway/internal/store/db"
 )
 
 func newTestStore(t *testing.T) *store.Store {
@@ -99,6 +100,124 @@ func TestUserService_LifecycleAndGuards(t *testing.T) {
 	err = svc.Delete(ctx, adminActor, "caller-id", "admin", u2.ID)
 	if err != nil {
 		t.Fatalf("Delete regular user failed: %v", err)
+	}
+}
+
+func TestUserService_SelfService(t *testing.T) {
+	st := newTestStore(t)
+	svc := NewUserService(st)
+	ctx := context.Background()
+	actor := store.Actor{Name: "self-user"}
+
+	u, err := svc.Create(ctx, CreateUserParams{
+		Username: "selfuser",
+		Password: "Password123!",
+		Role:     "user",
+		Actor:    actor,
+	})
+	if err != nil {
+		t.Fatalf("Create user failed: %v", err)
+	}
+
+	authMock := func(ctx context.Context, username, password string) (db.ConfigUser, error) {
+		if password == "WrongPassword!" {
+			return db.ConfigUser{}, errors.New("bad credentials")
+		}
+		return u, nil
+	}
+
+	// 1. Change password - dev mode disallowed
+	err = svc.ChangePassword(ctx, actor, u, true, "Password123!", "NewPassword123!", authMock)
+	if !errors.Is(err, ErrDevModeNotAllowed) {
+		t.Fatalf("expected ErrDevModeNotAllowed, got %v", err)
+	}
+
+	// 2. Change password - wrong current password
+	err = svc.ChangePassword(ctx, actor, u, false, "WrongPassword!", "NewPassword123!", authMock)
+	if !errors.Is(err, ErrCurrentPasswordWrong) {
+		t.Fatalf("expected ErrCurrentPasswordWrong, got %v", err)
+	}
+
+	// 3. Change password - success
+	err = svc.ChangePassword(ctx, actor, u, false, "Password123!", "NewPassword123!", authMock)
+	if err != nil {
+		t.Fatalf("ChangePassword failed: %v", err)
+	}
+
+	// 4. Enroll TOTP - dev mode disallowed
+	sealMock := func(userID, secret string) []byte {
+		return []byte("sealed:" + secret)
+	}
+	_, _, err = svc.EnrollTOTP(ctx, u, true, sealMock)
+	if !errors.Is(err, ErrDevModeNotAllowed) {
+		t.Fatalf("expected ErrDevModeNotAllowed, got %v", err)
+	}
+
+	// 5. Enroll TOTP - success
+	secret, url, err := svc.EnrollTOTP(ctx, u, false, sealMock)
+	if err != nil {
+		t.Fatalf("EnrollTOTP failed: %v", err)
+	}
+	if secret == "" || url == "" {
+		t.Fatalf("expected non-empty secret and url")
+	}
+
+	// Fetch updated user with sealed totp
+	u, err = svc.Get(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("Get user failed: %v", err)
+	}
+
+	// 6. Confirm TOTP - wrong code
+	checkMock := func(usr db.ConfigUser, code string) bool {
+		return code == "123456"
+	}
+	err = svc.ConfirmTOTP(ctx, actor, u, "000000", checkMock)
+	if !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("expected ErrInvalidCode, got %v", err)
+	}
+
+	// 7. Confirm TOTP - valid code
+	err = svc.ConfirmTOTP(ctx, actor, u, "123456", checkMock)
+	if err != nil {
+		t.Fatalf("ConfirmTOTP failed: %v", err)
+	}
+
+	u, err = svc.Get(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("Get user failed: %v", err)
+	}
+	if !u.TOTPEnabled {
+		t.Fatalf("expected TOTPEnabled = true")
+	}
+
+	// 8. Disable TOTP - wrong password
+	err = svc.DisableTOTP(ctx, actor, u, "WrongPassword!", authMock)
+	if !errors.Is(err, ErrPasswordWrong) {
+		t.Fatalf("expected ErrPasswordWrong, got %v", err)
+	}
+
+	// 9. Disable TOTP - valid password
+	err = svc.DisableTOTP(ctx, actor, u, "NewPassword123!", authMock)
+	if err != nil {
+		t.Fatalf("DisableTOTP failed: %v", err)
+	}
+
+	u, err = svc.Get(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("Get user failed: %v", err)
+	}
+	if u.TOTPEnabled {
+		t.Fatalf("expected TOTPEnabled = false after disable")
+	}
+
+	// 10. ListUserGroups
+	groups, err := svc.ListUserGroups(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("ListUserGroups failed: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("expected 0 groups for new user, got %d", len(groups))
 	}
 }
 

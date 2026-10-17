@@ -7,7 +7,6 @@ import (
 	"github.com/leandrofus/duckjump/gateway/internal/auth"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
-	"github.com/leandrofus/duckjump/gateway/internal/totp"
 )
 
 var errTooMany = &apiError{http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts, try again later"}
@@ -230,9 +229,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, p principal, _ b
 func (s *Server) me(w http.ResponseWriter, r *http.Request, p principal, pending bool) error {
 	resp := meResponse{User: toUser(p.User), MFAPending: pending, Dev: p.Dev}
 	if !pending && !p.Dev {
-		gs, err := s.Store.Q.ListUserGroups(r.Context(), p.User.ID)
+		gs, err := s.Users.ListUserGroups(r.Context(), p.User.ID)
 		if err != nil {
-			return err
+			return fromService(err, "user")
 		}
 		resp.Groups = make([]groupDTO, 0, len(gs))
 		for _, g := range gs {
@@ -251,39 +250,14 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request, p principal, pending
 //   '204': { description: Password changed }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p principal) error {
-	if p.Dev {
-		return badRequest("not available in dev mode")
-	}
-	if p.User.Source != "local" {
-		return conflict("your password is managed by the identity provider")
-	}
 	var req changePasswordRequest
 	if err := decode(r, &req); err != nil {
 		return err
 	}
 	ctx := r.Context()
-	if _, err := s.Auth.Authenticate(ctx, p.User.Username, req.Current); err != nil {
-		return &apiError{http.StatusUnauthorized, "invalid_credentials", "current password is wrong"}
-	}
-	if err := auth.CheckPasswordPolicy(req.New); err != nil {
-		return badRequest("%v", err)
-	}
-	h, err := auth.HashPassword(req.New)
+	err := s.Users.ChangePassword(ctx, p.actor(), p.User, p.Dev, req.Current, req.New, s.Auth.Authenticate)
 	if err != nil {
-		return err
-	}
-	err = s.tx(ctx, func(q *db.Queries) error {
-		if err := q.SetUserPassword(ctx, db.SetUserPasswordParams{ID: p.User.ID, PasswordHash: store.NullString(h), Now: store.Now()}); err != nil {
-			return err
-		}
-		// Every other session of this user ends; this one is re-issued below.
-		if err := q.DeleteUserWebSessions(ctx, p.User.ID); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "user.password_changed", ObjectType: "user", ObjectID: p.User.ID})
-	})
-	if err != nil {
-		return err
+		return fromService(err, "user")
 	}
 	tok, err := s.Auth.NewSession(ctx, p.User.ID, false, p.IP, r.UserAgent())
 	if err != nil {
@@ -302,23 +276,11 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p princi
 //   '409': Error
 
 func (s *Server) totpEnroll(w http.ResponseWriter, r *http.Request, p principal) error {
-	if p.Dev {
-		return badRequest("not available in dev mode")
-	}
-	if p.User.TOTPEnabled {
-		return conflict("TOTP is already enabled; disable it first")
-	}
-	if p.User.Source != "local" {
-		return conflict("your second factor is managed by the identity provider")
-	}
-	secret := totp.NewSecret()
-	err := s.Store.Q.SetUserTOTP(r.Context(), db.SetUserTOTPParams{
-		ID: p.User.ID, TOTPSealed: s.Auth.SealTOTP(p.User.ID, secret), TOTPEnabled: false, Now: store.Now(),
-	})
+	secret, otpauthURL, err := s.Users.EnrollTOTP(r.Context(), p.User, p.Dev, s.Auth.SealTOTP)
 	if err != nil {
-		return err
+		return fromService(err, "user")
 	}
-	return ok(w, totpEnrollment{Secret: secret, OTPAuthURL: totp.URL("DuckJump", p.User.Username, secret)})
+	return ok(w, totpEnrollment{Secret: secret, OTPAuthURL: otpauthURL})
 }
 
 // openapi:operation
@@ -331,28 +293,12 @@ func (s *Server) totpEnroll(w http.ResponseWriter, r *http.Request, p principal)
 //   '409': Error
 
 func (s *Server) totpConfirm(w http.ResponseWriter, r *http.Request, p principal) error {
-	if p.User.TOTPEnabled {
-		return conflict("TOTP is already enabled")
-	}
 	var req codeRequest
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	if len(p.User.TOTPSealed) == 0 {
-		return badRequest("call /auth/me/totp/enroll first")
-	}
-	if !s.Auth.CheckTOTP(p.User, req.Code) {
-		return &apiError{http.StatusUnauthorized, "invalid_code", "invalid code"}
-	}
-	ctx := r.Context()
-	err := s.tx(ctx, func(q *db.Queries) error {
-		if err := q.SetUserTOTP(ctx, db.SetUserTOTPParams{ID: p.User.ID, TOTPSealed: p.User.TOTPSealed, TOTPEnabled: true, Now: store.Now()}); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "user.totp_enabled", ObjectType: "user", ObjectID: p.User.ID})
-	})
-	if err != nil {
-		return err
+	if err := s.Users.ConfirmTOTP(r.Context(), p.actor(), p.User, req.Code, s.Auth.CheckTOTP); err != nil {
+		return fromService(err, "user")
 	}
 	return noContent(w)
 }
@@ -370,18 +316,8 @@ func (s *Server) totpDisable(w http.ResponseWriter, r *http.Request, p principal
 	if err := decode(r, &req); err != nil {
 		return err
 	}
-	ctx := r.Context()
-	if _, err := s.Auth.Authenticate(ctx, p.User.Username, req.Password); err != nil {
-		return &apiError{http.StatusUnauthorized, "invalid_credentials", "password is wrong"}
-	}
-	err := s.tx(ctx, func(q *db.Queries) error {
-		if err := q.SetUserTOTP(ctx, db.SetUserTOTPParams{ID: p.User.ID, Now: store.Now()}); err != nil {
-			return err
-		}
-		return store.Audit(ctx, q, store.Event{Actor: p.actor(), Action: "user.totp_disabled", ObjectType: "user", ObjectID: p.User.ID})
-	})
-	if err != nil {
-		return err
+	if err := s.Users.DisableTOTP(r.Context(), p.actor(), p.User, req.Password, s.Auth.Authenticate); err != nil {
+		return fromService(err, "user")
 	}
 	return noContent(w)
 }

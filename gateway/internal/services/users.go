@@ -10,6 +10,7 @@ import (
 	"github.com/leandrofus/duckjump/gateway/internal/auth"
 	"github.com/leandrofus/duckjump/gateway/internal/store"
 	"github.com/leandrofus/duckjump/gateway/internal/store/db"
+	"github.com/leandrofus/duckjump/gateway/internal/totp"
 )
 
 var (
@@ -26,6 +27,16 @@ var (
 	ErrSuperadminGuarded    = errors.New("only a superadmin can manage superadmins")
 	ErrNotLocalUser         = errors.New("only local users have a password")
 	ErrUserNotFound         = errors.New("user not found")
+
+	ErrDevModeNotAllowed    = errors.New("not available in dev mode")
+	ErrPasswordManagedByIdP = errors.New("your password is managed by the identity provider")
+	ErrTOTPManagedByIdP     = errors.New("your second factor is managed by the identity provider")
+	ErrCurrentPasswordWrong = errors.New("current password is wrong")
+	ErrPasswordWrong        = errors.New("password is wrong")
+	ErrTOTPAlreadyEnabled   = errors.New("TOTP is already enabled; disable it first")
+	ErrTOTPAlreadyActive    = errors.New("TOTP is already enabled")
+	ErrCallEnrollFirst      = errors.New("call /auth/me/totp/enroll first")
+	ErrInvalidCode          = errors.New("invalid code")
 )
 
 type OIDCManagedRoleError struct {
@@ -366,4 +377,148 @@ func (s *UserService) isLastSuperadmin(ctx context.Context, q *db.Queries, u db.
 		}
 	}
 	return n == 1, nil
+}
+
+func (s *UserService) ListUserGroups(ctx context.Context, userID string) ([]db.ConfigGroup, error) {
+	return s.store.Q.ListUserGroups(ctx, userID)
+}
+
+func (s *UserService) ChangePassword(
+	ctx context.Context,
+	actor store.Actor,
+	user db.ConfigUser,
+	isDev bool,
+	currentPassword, newPassword string,
+	authenticateFn func(ctx context.Context, username, password string) (db.ConfigUser, error),
+) error {
+	if isDev {
+		return ErrDevModeNotAllowed
+	}
+	if user.Source != "local" {
+		return ErrPasswordManagedByIdP
+	}
+	if authenticateFn != nil {
+		if _, err := authenticateFn(ctx, user.Username, currentPassword); err != nil {
+			return ErrCurrentPasswordWrong
+		}
+	}
+	if err := auth.CheckPasswordPolicy(newPassword); err != nil {
+		return fmt.Errorf("%w: %s", ErrPasswordTooShort, err.Error())
+	}
+	hash, err := auth.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	return s.store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.SetUserPassword(ctx, db.SetUserPasswordParams{
+			ID:           user.ID,
+			PasswordHash: store.NullString(hash),
+			Now:          store.Now(),
+		}); err != nil {
+			return err
+		}
+		if err := q.DeleteUserWebSessions(ctx, user.ID); err != nil {
+			return err
+		}
+		return store.Audit(ctx, q, store.Event{
+			Actor:      actor,
+			Action:     "user.password_changed",
+			ObjectType: "user",
+			ObjectID:   user.ID,
+		})
+	})
+}
+
+func (s *UserService) EnrollTOTP(
+	ctx context.Context,
+	user db.ConfigUser,
+	isDev bool,
+	sealFn func(userID, secret string) []byte,
+) (secret, otpauthURL string, err error) {
+	if isDev {
+		return "", "", ErrDevModeNotAllowed
+	}
+	if user.TOTPEnabled {
+		return "", "", ErrTOTPAlreadyEnabled
+	}
+	if user.Source != "local" {
+		return "", "", ErrTOTPManagedByIdP
+	}
+	secret = totp.NewSecret()
+	var sealed []byte
+	if sealFn != nil {
+		sealed = sealFn(user.ID, secret)
+	}
+	err = s.store.Q.SetUserTOTP(ctx, db.SetUserTOTPParams{
+		ID:          user.ID,
+		TOTPSealed:  sealed,
+		TOTPEnabled: false,
+		Now:         store.Now(),
+	})
+	if err != nil {
+		return "", "", store.Classify(err)
+	}
+	return secret, totp.URL("DuckJump", user.Username, secret), nil
+}
+
+func (s *UserService) ConfirmTOTP(
+	ctx context.Context,
+	actor store.Actor,
+	user db.ConfigUser,
+	code string,
+	checkTOTPFn func(user db.ConfigUser, code string) bool,
+) error {
+	if user.TOTPEnabled {
+		return ErrTOTPAlreadyActive
+	}
+	if len(user.TOTPSealed) == 0 {
+		return ErrCallEnrollFirst
+	}
+	if checkTOTPFn != nil && !checkTOTPFn(user, code) {
+		return ErrInvalidCode
+	}
+	return s.store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.SetUserTOTP(ctx, db.SetUserTOTPParams{
+			ID:          user.ID,
+			TOTPSealed:  user.TOTPSealed,
+			TOTPEnabled: true,
+			Now:         store.Now(),
+		}); err != nil {
+			return err
+		}
+		return store.Audit(ctx, q, store.Event{
+			Actor:      actor,
+			Action:     "user.totp_enabled",
+			ObjectType: "user",
+			ObjectID:   user.ID,
+		})
+	})
+}
+
+func (s *UserService) DisableTOTP(
+	ctx context.Context,
+	actor store.Actor,
+	user db.ConfigUser,
+	password string,
+	authenticateFn func(ctx context.Context, username, password string) (db.ConfigUser, error),
+) error {
+	if authenticateFn != nil {
+		if _, err := authenticateFn(ctx, user.Username, password); err != nil {
+			return ErrPasswordWrong
+		}
+	}
+	return s.store.Tx(ctx, func(q *db.Queries) error {
+		if err := q.SetUserTOTP(ctx, db.SetUserTOTPParams{
+			ID:  user.ID,
+			Now: store.Now(),
+		}); err != nil {
+			return err
+		}
+		return store.Audit(ctx, q, store.Event{
+			Actor:      actor,
+			Action:     "user.totp_disabled",
+			ObjectType: "user",
+			ObjectID:   user.ID,
+		})
+	})
 }
