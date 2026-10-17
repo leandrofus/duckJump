@@ -193,6 +193,7 @@ func (s *Server) testSIEMSettings(w http.ResponseWriter, r *http.Request, p prin
 
 // SIEMLoop continuously ships audit events to static sinks and dynamic SIEM target.
 func (s *Server) SIEMLoop(ctx context.Context) {
+	s.EnsureServices()
 	s.SIEM.ForwardLoop(ctx, s.StaticSinks)
 }
 

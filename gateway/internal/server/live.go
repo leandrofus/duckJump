@@ -420,6 +420,7 @@ func (s *Server) terminate(ls *liveSession, code, reason string) {
 
 // Supervise re-checks live sessions every SuperviseInterval until ctx ends.
 func (s *Server) Supervise(ctx context.Context) {
+	s.EnsureServices()
 	t := time.NewTicker(SuperviseInterval)
 	defer t.Stop()
 	for {
@@ -448,6 +449,10 @@ func (s *Server) beat(ctx context.Context) {
 // SweepStale closes open sessions no gateway holds any more (crashed or
 // stopped without closing them), on this gateway's database.
 func (s *Server) SweepStale(ctx context.Context) error {
+	s.EnsureServices()
+	if s.Sessions == nil {
+		return nil
+	}
 	closed, err := s.Sessions.SweepStale(ctx, staleAfter)
 	for _, id := range closed {
 		slog.Warn("closed a session its gateway lost", "session", id)

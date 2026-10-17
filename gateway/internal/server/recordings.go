@@ -198,6 +198,7 @@ func (s *Server) PurgeRecordings(ctx context.Context, actor store.Actor) (int, i
 
 // RetentionLoop purges expired recordings now and then every hour.
 func (s *Server) RetentionLoop(ctx context.Context) {
+	s.EnsureServices()
 	run := func() {
 		n, b, err := s.Recordings.PurgeRecordings(ctx, store.Actor{Name: "retention"})
 		if err != nil {

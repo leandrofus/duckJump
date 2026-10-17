@@ -383,6 +383,7 @@ func serve(ctx context.Context, st *store.Store, args []string, openBrowser bool
 		FrontendURL: *frontendURL, AgentBinPath: *agentBin, AgentListen: *agentListen, AgentServerURL: *agentServerURL,
 		Dev: *dev, StaticSinks: sinks,
 	}
+	srv.EnsureServices()
 
 	if *agentListen != "" {
 		al, err := net.Listen("tcp", *agentListen)

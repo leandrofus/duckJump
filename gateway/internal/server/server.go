@@ -104,8 +104,11 @@ type Server struct {
 	nodeName   string
 }
 
-func (s *Server) Handler() http.Handler {
-	s.limiter = auth.NewLimiter()
+// EnsureServices guarantees that all internal services are instantiated.
+func (s *Server) EnsureServices() {
+	if s.limiter == nil {
+		s.limiter = auth.NewLimiter()
+	}
 	if s.Users == nil && s.Store != nil {
 		s.Users = services.NewUserService(s.Store)
 	}
@@ -173,6 +176,10 @@ func (s *Server) Handler() http.Handler {
 	if s.OIDCSvc == nil && s.Store != nil {
 		s.OIDCSvc = services.NewOIDCService(s.Store)
 	}
+}
+
+func (s *Server) Handler() http.Handler {
+	s.EnsureServices()
 	mux := http.NewServeMux()
 	// Methodless so it does not clash with the /api/ catch-all; static() allows only GET/HEAD.
 	mux.Handle("/", s.static())
