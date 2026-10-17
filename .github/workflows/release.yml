@@ -140,7 +140,7 @@ jobs:
           cd web
           bun install --frozen-lockfile
           bun run build
-      - name: Build duckjump-assist (Windows Rust)
+      - name: Build duckjump-assist CLI (Windows Rust)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -148,7 +148,30 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Copy-Item "duckjumpd/target/release/duckjump-assist.exe" "dist/duckjump-assist.exe"
           Copy-Item "duckjumpd/target/release/duckjump-assist.exe" "dist/duckjump-assist-windows-amd64.exe"
-      - name: MSI
+      - name: Build duckJump Assist Desktop App (Tauri NSIS & MSI)
+        shell: pwsh
+        run: |
+          $v = "$env:GITHUB_REF_NAME".TrimStart('v')
+          if (-not $v -or $v -eq "main") {
+            $v = (git describe --tags --abbrev=0 2>$null).TrimStart('v')
+            if (-not $v) { $v = "0.1.0" }
+          }
+          bun add -g @tauri-apps/cli
+          cd duckjumpd/assist-app
+          bunx @tauri-apps/cli build --bundles nsis,msi
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cd ../..
+          $nsis = Get-ChildItem -Path "duckjumpd/assist-app/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nsis) {
+            Copy-Item $nsis.FullName "dist/duckjump-assist-app-setup.exe"
+            Copy-Item $nsis.FullName "dist/duckjump-assist-app-$v-setup.exe"
+          }
+          $appMsi = Get-ChildItem -Path "duckjumpd/assist-app/target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($appMsi) {
+            Copy-Item $appMsi.FullName "dist/duckjump-assist-app.msi"
+            Copy-Item $appMsi.FullName "dist/duckjump-assist-app-$v-x64.msi"
+          }
+      - name: Gateway MSI
         shell: pwsh
         run: |
           $v = "$env:GITHUB_REF_NAME".TrimStart('v')
@@ -175,12 +198,23 @@ jobs:
           $v = $tag.TrimStart('v')
           gh release download $tag -p SHA256SUMS -D sums --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $lines = Get-Content sums/SHA256SUMS | Where-Object { $_ -notmatch '(\.msi|duckjump-assist.*\.exe)$' }
-          foreach ($f in "duckjump-$v-x64.msi", 'duckjump-latest-x64.msi', 'duckjump-assist.exe', 'duckjump-assist-windows-amd64.exe') {
-            $lines += "$((Get-FileHash "dist/$f" -Algorithm SHA256).Hash.ToLower())  $f"
+          $lines = Get-Content sums/SHA256SUMS | Where-Object { $_ -notmatch '(\.msi|duckjump-assist.*)$' }
+          $extraFiles = @(
+            "duckjump-$v-x64.msi",
+            "duckjump-latest-x64.msi",
+            "duckjump-assist.exe",
+            "duckjump-assist-windows-amd64.exe",
+            "duckjump-assist-app-setup.exe",
+            "duckjump-assist-app.msi"
+          )
+          foreach ($f in $extraFiles) {
+            if (Test-Path "dist/$f") {
+              $lines += "$((Get-FileHash "dist/$f" -Algorithm SHA256).Hash.ToLower())  $f"
+            }
           }
           [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", ($lines -join "`n") + "`n")
-          gh release upload $tag "dist/duckjump-$v-x64.msi" dist/duckjump-latest-x64.msi dist/duckjump-assist.exe dist/duckjump-assist-windows-amd64.exe dist/SHA256SUMS --repo $env:GITHUB_REPOSITORY --clobber
+          $uploadList = Get-ChildItem dist/* | Where-Object { $_.Name -match '(duckjump.*|\.rpm|\.deb|\.tar\.gz|SHA256SUMS)' }
+          gh release upload $tag $uploadList.FullName --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   site:
