@@ -11,7 +11,7 @@ generate: $(SQLC)
 
 $(SQLC):
 	@mkdir -p bin
-	cd bin && curl -fsSL -o sqlc.tgz https://github.com/sqlc-dev/sqlc/releases/download/v$(SQLC_VERSION)/sqlc_$(SQLC_VERSION)_linux_amd64.tar.gz \
+	cd bin && curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL -o sqlc.tgz https://github.com/sqlc-dev/sqlc/releases/download/v$(SQLC_VERSION)/sqlc_$(SQLC_VERSION)_linux_amd64.tar.gz \
 	  && echo "$(SQLC_SHA256)  sqlc.tgz" | sha256sum -c - \
 	  && tar xzf sqlc.tgz sqlc && rm sqlc.tgz
 
